@@ -5,6 +5,7 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QFileSystemWatcher>
+#include <QHash>
 #include <QSet>
 #include <QStorageInfo>
 
@@ -14,6 +15,7 @@ struct PanelItem {
     bool isDir = false;
     bool isParent = false;
     qint64 size = 0;
+    bool dirSizeCalculated = false;
     QString formattedSize;
     QDateTime modified;
     QString formattedModified;
@@ -34,6 +36,8 @@ class PanelModel : public QAbstractListModel {
     Q_PROPERTY(int selectedCount READ selectedCount NOTIFY selectionChanged)
     Q_PROPERTY(QString totalSelectedSizeFormatted READ totalSelectedSizeFormatted NOTIFY selectionChanged)
     Q_PROPERTY(QString freeSpaceFormatted READ freeSpaceFormatted NOTIFY freeSpaceChanged)
+    Q_PROPERTY(bool canGoBack READ canGoBack NOTIFY historyChanged)
+    Q_PROPERTY(bool canGoForward READ canGoForward NOTIFY historyChanged)
 
 public:
     enum SortField {
@@ -84,18 +88,28 @@ public:
     QString totalSelectedSizeFormatted() const;
     QString freeSpaceFormatted() const;
 
+    bool canGoBack() const { return !m_backStack.isEmpty(); }
+    bool canGoForward() const { return !m_forwardStack.isEmpty(); }
+
     Q_INVOKABLE void cd(const QString &nameOrPath);
     Q_INVOKABLE void cdUp();
+    Q_INVOKABLE void goBack();
+    Q_INVOKABLE void goForward();
     Q_INVOKABLE void refresh();
     Q_INVOKABLE void toggleSelection(int index);
+    Q_INVOKABLE void calculateFolderSize(int index);
+    Q_INVOKABLE void calculateAllFolderSizes();
     Q_INVOKABLE void selectAll();
     Q_INVOKABLE void deselectAll();
     Q_INVOKABLE void invertSelection();
+    Q_INVOKABLE void selectDifferenceFrom(PanelModel *other);
     Q_INVOKABLE QString itemPath(int index) const;
     Q_INVOKABLE bool itemIsDir(int index) const;
     Q_INVOKABLE QString itemName(int index) const;
     Q_INVOKABLE QStringList selectedPaths() const;
     Q_INVOKABLE int findIndexByPrefix(const QString &prefix, int startIndex = 0) const;
+
+    static QString formatSize(qint64 bytes, bool isDir);
 
 signals:
     void pathChanged();
@@ -105,11 +119,12 @@ signals:
     void countChanged();
     void selectionChanged();
     void freeSpaceChanged();
+    void historyChanged();
 
 private:
     void loadDirectory();
     void sortItems();
-    static QString formatSize(qint64 bytes, bool isDir);
+    static qint64 computeDirectorySize(const QString &dirPath);
     static QString detectIconType(const QFileInfo &info);
 
     QString m_path;
@@ -118,8 +133,13 @@ private:
     int m_sortField = SortByName;
     bool m_sortAscending = true;
 
+    QStringList m_backStack;
+    QStringList m_forwardStack;
+    bool m_navigatingHistory = false;
+
     QList<PanelItem> m_allItems;
     QList<PanelItem> m_items;
     QSet<QString> m_selectedPaths;
+    QHash<QString, qint64> m_calculatedDirSizes;
     QFileSystemWatcher m_dirWatcher;
 };

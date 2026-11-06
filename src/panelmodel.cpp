@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <QDateTime>
 #include <QDir>
+#include <QDirIterator>
 #include <QFileInfo>
 #include <QLocale>
 
@@ -78,13 +79,31 @@ QHash<int, QByteArray> PanelModel::roleNames() const
 
 void PanelModel::setPath(const QString &newPath)
 {
-    QDir dir(newPath);
+    QString expanded = newPath.trimmed();
+    if (expanded == "~") {
+        expanded = QDir::homePath();
+    } else if (expanded.startsWith("~/")) {
+        expanded = QDir::homePath() + expanded.mid(1);
+    }
+
+    QDir dir(expanded);
+    if (!dir.exists())
+        return;
+
     QString cleanPath = dir.canonicalPath();
     if (cleanPath.isEmpty())
         cleanPath = dir.absolutePath();
 
     if (m_path == cleanPath)
         return;
+
+    if (!m_path.isEmpty() && !m_navigatingHistory) {
+        m_backStack.append(m_path);
+        if (m_backStack.size() > 50)
+            m_backStack.removeFirst();
+        m_forwardStack.clear();
+        emit historyChanged();
+    }
 
     if (!m_dirWatcher.directories().isEmpty())
         m_dirWatcher.removePaths(m_dirWatcher.directories());
@@ -94,6 +113,11 @@ void PanelModel::setPath(const QString &newPath)
         m_dirWatcher.addPath(m_path);
 
     m_selectedPaths.clear();
+    m_calculatedDirSizes.clear();
+    if (!m_filter.isEmpty()) {
+        m_filter.clear();
+        emit filterChanged();
+    }
     loadDirectory();
     emit pathChanged();
     emit freeSpaceChanged();
@@ -136,7 +160,6 @@ void PanelModel::setShowHidden(bool show)
 void PanelModel::setSortField(int field)
 {
     if (m_sortField == field) {
-        // Toggle direction if same field is clicked
         setSortAscending(!m_sortAscending);
         return;
     }
@@ -160,6 +183,10 @@ void PanelModel::cd(const QString &nameOrPath)
         cdUp();
         return;
     }
+    if (nameOrPath == "~" || nameOrPath.startsWith("~/")) {
+        setPath(nameOrPath);
+        return;
+    }
 
     QFileInfo info(nameOrPath);
     if (!info.isAbsolute())
@@ -178,10 +205,89 @@ void PanelModel::cdUp()
     }
 }
 
+void PanelModel::goBack()
+{
+    if (m_backStack.isEmpty())
+        return;
+
+    const QString prev = m_backStack.takeLast();
+    m_forwardStack.append(m_path);
+    m_navigatingHistory = true;
+    setPath(prev);
+    m_navigatingHistory = false;
+    emit historyChanged();
+}
+
+void PanelModel::goForward()
+{
+    if (m_forwardStack.isEmpty())
+        return;
+
+    const QString next = m_forwardStack.takeLast();
+    m_backStack.append(m_path);
+    m_navigatingHistory = true;
+    setPath(next);
+    m_navigatingHistory = false;
+    emit historyChanged();
+}
+
 void PanelModel::refresh()
 {
     loadDirectory();
     emit freeSpaceChanged();
+}
+
+qint64 PanelModel::computeDirectorySize(const QString &dirPath)
+{
+    qint64 total = 0;
+    QDirIterator it(dirPath, QDir::Files | QDir::Hidden | QDir::System | QDir::NoSymLinks,
+                    QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        it.next();
+        total += it.fileInfo().size();
+    }
+    return total;
+}
+
+void PanelModel::calculateFolderSize(int index)
+{
+    if (index < 0 || index >= m_items.size())
+        return;
+
+    PanelItem &item = m_items[index];
+    if (!item.isDir || item.isParent)
+        return;
+
+    const qint64 bytes = computeDirectorySize(item.path);
+    m_calculatedDirSizes.insert(item.path, bytes);
+    item.size = bytes;
+    item.dirSizeCalculated = true;
+    item.formattedSize = formatSize(bytes, false);
+
+    for (PanelItem &allItem : m_allItems) {
+        if (allItem.path == item.path) {
+            allItem.size = bytes;
+            allItem.dirSizeCalculated = true;
+            allItem.formattedSize = item.formattedSize;
+            break;
+        }
+    }
+
+    QModelIndex idx = createIndex(index, 0);
+    emit dataChanged(idx, idx, {SizeRole, FormattedSizeRole});
+    emit selectionChanged();
+}
+
+void PanelModel::calculateAllFolderSizes()
+{
+    for (int i = 0; i < m_items.size(); ++i) {
+        if (m_items[i].isDir && !m_items[i].isParent) {
+            calculateFolderSize(i);
+        }
+    }
+    if (m_sortField == SortBySize) {
+        sortItems();
+    }
 }
 
 void PanelModel::toggleSelection(int index)
@@ -193,13 +299,17 @@ void PanelModel::toggleSelection(int index)
     if (item.isParent)
         return;
 
+    // Total Commander behavior: pressing Space on a folder also calculates its size
+    if (item.isDir && !item.dirSizeCalculated) {
+        calculateFolderSize(index);
+    }
+
     item.isSelected = !item.isSelected;
     if (item.isSelected)
         m_selectedPaths.insert(item.path);
     else
         m_selectedPaths.remove(item.path);
 
-    // Update in m_allItems too
     for (PanelItem &allItem : m_allItems) {
         if (allItem.path == item.path) {
             allItem.isSelected = item.isSelected;
@@ -208,7 +318,7 @@ void PanelModel::toggleSelection(int index)
     }
 
     QModelIndex idx = createIndex(index, 0);
-    emit dataChanged(idx, idx, {IsSelectedRole});
+    emit dataChanged(idx, idx, {IsSelectedRole, SizeRole, FormattedSizeRole});
     emit selectionChanged();
 }
 
@@ -261,6 +371,48 @@ void PanelModel::invertSelection()
     emit selectionChanged();
 }
 
+void PanelModel::selectDifferenceFrom(PanelModel *other)
+{
+    if (!other)
+        return;
+
+    QHash<QString, PanelItem> otherFiles;
+    for (const auto &item : other->m_allItems) {
+        if (!item.isParent) {
+            otherFiles.insert(item.name, item);
+        }
+    }
+
+    m_selectedPaths.clear();
+    for (PanelItem &item : m_items) {
+        if (item.isParent || item.isDir) {
+            item.isSelected = false;
+            continue;
+        }
+        bool isDiff = false;
+        if (!otherFiles.contains(item.name)) {
+            isDiff = true;
+        } else {
+            const PanelItem &o = otherFiles.value(item.name);
+            if (item.size != o.size || item.modified > o.modified) {
+                isDiff = true;
+            }
+        }
+        item.isSelected = isDiff;
+        if (isDiff)
+            m_selectedPaths.insert(item.path);
+    }
+
+    for (PanelItem &item : m_allItems) {
+        if (!item.isParent)
+            item.isSelected = m_selectedPaths.contains(item.path);
+    }
+
+    if (!m_items.isEmpty())
+        emit dataChanged(createIndex(0, 0), createIndex(m_items.size() - 1, 0), {IsSelectedRole});
+    emit selectionChanged();
+}
+
 QString PanelModel::itemPath(int index) const
 {
     if (index >= 0 && index < m_items.size())
@@ -306,7 +458,7 @@ QString PanelModel::totalSelectedSizeFormatted() const
 {
     qint64 total = 0;
     for (const auto &item : m_items) {
-        if (!item.isParent && item.isSelected && !item.isDir)
+        if (!item.isParent && item.isSelected && (!item.isDir || item.dirSizeCalculated))
             total += item.size;
     }
     return formatSize(total, false);
@@ -360,9 +512,9 @@ QString PanelModel::detectIconType(const QFileInfo &info)
     if (ext == "png" || ext == "jpg" || ext == "jpeg" || ext == "svg" || ext == "webp" || ext == "gif")
         return QStringLiteral("image");
     if (ext == "cpp" || ext == "h" || ext == "c" || ext == "py" || ext == "js" || ext == "ts" ||
-        ext == "json" || ext == "xml" || ext == "html" || ext == "css" || ext == "sh" || ext == "qml")
+        ext == "json" || ext == "xml" || ext == "html" || ext == "css" || ext == "sh" || ext == "qml" || ext == "rs" || ext == "go")
         return QStringLiteral("code");
-    if (ext == "zip" || ext == "tar" || ext == "gz" || ext == "xz" || ext == "bz2" || ext == "7z")
+    if (ext == "zip" || ext == "tar" || ext == "gz" || ext == "xz" || ext == "bz2" || ext == "7z" || ext == "zst" || ext == "rar")
         return QStringLiteral("archive");
     if (ext == "mp3" || ext == "ogg" || ext == "wav" || ext == "flac")
         return QStringLiteral("audio");
@@ -387,7 +539,6 @@ void PanelModel::loadDirectory()
 
     m_allItems.clear();
 
-    // Always add ".." if not at root
     if (m_path != "/" && !m_path.isEmpty()) {
         PanelItem parentItem;
         parentItem.name = "..";
@@ -405,15 +556,21 @@ void PanelModel::loadDirectory()
         item.path = fi.absoluteFilePath();
         item.isDir = fi.isDir();
         item.isParent = false;
-        item.size = fi.size();
-        item.formattedSize = formatSize(fi.size(), fi.isDir());
+        if (fi.isDir() && m_calculatedDirSizes.contains(item.path)) {
+            item.size = m_calculatedDirSizes.value(item.path);
+            item.dirSizeCalculated = true;
+            item.formattedSize = formatSize(item.size, false);
+        } else {
+            item.size = fi.isDir() ? 0 : fi.size();
+            item.dirSizeCalculated = false;
+            item.formattedSize = formatSize(fi.size(), fi.isDir());
+        }
         item.modified = fi.lastModified();
         item.formattedModified = item.modified.toString("yyyy-MM-dd hh:mm");
         item.extension = fi.suffix();
         item.iconType = detectIconType(fi);
         item.isSelected = m_selectedPaths.contains(item.path);
 
-        // Permissions string (e.g. rwxr-xr-x)
         QFile::Permissions p = fi.permissions();
         QString perm;
         perm += (p & QFile::ReadUser) ? 'r' : '-';
@@ -437,7 +594,6 @@ void PanelModel::sortItems()
 {
     beginResetModel();
 
-    // Keep parent ".." at top, then separate directories and files
     QList<PanelItem> dirs;
     QList<PanelItem> files;
     PanelItem parentItem;
@@ -467,10 +623,16 @@ void PanelModel::sortItems()
                 result = QString::localeAwareCompare(a.extension.toLower(), b.extension.toLower()) < 0;
             break;
         case SortBySize:
-            result = a.size < b.size;
+            if (a.size == b.size)
+                result = QString::localeAwareCompare(a.name.toLower(), b.name.toLower()) < 0;
+            else
+                result = a.size < b.size;
             break;
         case SortByDate:
-            result = a.modified < b.modified;
+            if (a.modified == b.modified)
+                result = QString::localeAwareCompare(a.name.toLower(), b.name.toLower()) < 0;
+            else
+                result = a.modified < b.modified;
             break;
         default:
             result = QString::localeAwareCompare(a.name.toLower(), b.name.toLower()) < 0;
@@ -488,7 +650,6 @@ void PanelModel::sortItems()
     m_allItems.append(dirs);
     m_allItems.append(files);
 
-    // Apply filter
     if (m_filter.trimmed().isEmpty()) {
         m_items = m_allItems;
     } else {

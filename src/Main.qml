@@ -5,31 +5,41 @@ import QtQuick.Layouts
 
 ApplicationWindow {
     id: win
-    width: 1200
-    height: 760
-    minimumWidth: 800
-    minimumHeight: 500
+    width: 1260
+    height: 800
+    minimumWidth: 860
+    minimumHeight: 540
     visible: true
-    title: "omapanel — File Manager"
+    title: "omapanel — Total Commander for Linux"
     color: "#0f1117"
 
     Material.theme: Material.Dark
     Material.accent: theme.accent
     Material.roundedScale: theme.radius
 
-    // State
+    // UI State
     property bool helpOpen: false
     property bool previewOpen: false
     property var previewData: ({})
+    property bool quickViewActive: false
+    property var quickViewData: ({})
     property bool searchOpen: false
     property var searchResults: []
     property bool newFolderOpen: false
     property bool renameOpen: false
     property string renameOldPath: ""
     property string renameOldName: ""
+    property bool multiRenameOpen: false
+    property var multiRenamePreviewList: []
+    property bool packArchiveOpen: false
+    property bool bookmarksOpen: false
+    property bool commandOutputOpen: false
+    property string commandOutputText: ""
     property bool confirmCopyOpen: false
     property bool confirmMoveOpen: false
     property bool confirmDeleteOpen: false
+    property bool leftFilterVisible: false
+    property bool rightFilterVisible: false
 
     // Helpers
     function currentModel() {
@@ -44,6 +54,26 @@ ApplicationWindow {
         return backend.activePanel === 0 ? leftList : rightList;
     }
 
+    function currentHighlightedPath() {
+        var m = currentModel();
+        var lv = currentListView();
+        if (lv.currentIndex >= 0 && lv.currentIndex < m.itemCount) {
+            return m.itemPath(lv.currentIndex);
+        }
+        return "";
+    }
+
+    function updateQuickView() {
+        if (!win.quickViewActive)
+            return;
+        var p = currentHighlightedPath();
+        if (p.length > 0) {
+            win.quickViewData = backend.getPreview(p);
+        } else {
+            win.quickViewData = ({});
+        }
+    }
+
     function getSelectedOrCurrentPaths() {
         var m = currentModel();
         var sel = m.selectedPaths();
@@ -52,17 +82,31 @@ ApplicationWindow {
         var lv = currentListView();
         if (lv.currentIndex >= 0 && lv.currentIndex < m.itemCount) {
             var p = m.itemPath(lv.currentIndex);
-            if (p && !m.data(m.index(lv.currentIndex, 0), 258 /* IsParentRole */))
+            var name = m.itemName(lv.currentIndex);
+            if (p && name !== "..")
                 return [p];
         }
         return [];
     }
 
+    function refreshMultiRenamePreview() {
+        var paths = getSelectedOrCurrentPaths();
+        multiRenamePreviewList = backend.previewMultiRename(
+            paths,
+            mrFindField.text,
+            mrReplaceField.text,
+            mrPrefixField.text,
+            mrSuffixField.text,
+            mrCaseCombo.currentIndex,
+            mrCounterCheck.checked
+        );
+    }
+
     // Actions
     function triggerF3View() {
-        var paths = getSelectedOrCurrentPaths();
-        if (paths.length > 0) {
-            previewData = backend.getPreview(paths[0]);
+        var p = currentHighlightedPath();
+        if (p.length > 0) {
+            previewData = backend.getPreview(p);
             previewOpen = true;
         }
     }
@@ -77,6 +121,7 @@ ApplicationWindow {
     function triggerF5Copy() {
         var paths = getSelectedOrCurrentPaths();
         if (paths.length > 0) {
+            copyDestField.text = targetModel().path;
             confirmCopyOpen = true;
         } else {
             backend.showStatus(qsTr("No files selected to copy."));
@@ -86,6 +131,7 @@ ApplicationWindow {
     function triggerF6Move() {
         var paths = getSelectedOrCurrentPaths();
         if (paths.length > 0) {
+            moveDestField.text = targetModel().path;
             confirmMoveOpen = true;
         } else {
             backend.showStatus(qsTr("No files selected to move."));
@@ -102,11 +148,51 @@ ApplicationWindow {
         var lv = currentListView();
         var m = currentModel();
         if (lv.currentIndex >= 0 && lv.currentIndex < m.itemCount) {
+            var name = m.itemName(lv.currentIndex);
+            if (name === "..")
+                return;
             renameOldPath = m.itemPath(lv.currentIndex);
-            renameOldName = m.itemName(lv.currentIndex);
+            renameOldName = name;
             renameInput.text = renameOldName;
             renameOpen = true;
             renameInput.forceActiveFocus();
+        }
+    }
+
+    function triggerMultiRename() {
+        var paths = getSelectedOrCurrentPaths();
+        if (paths.length === 0) {
+            backend.showStatus(qsTr("Select files first for Multi-Rename (Ctrl+M)."));
+            return;
+        }
+        mrFindField.text = "";
+        mrReplaceField.text = "";
+        mrPrefixField.text = "";
+        mrSuffixField.text = "";
+        mrCaseCombo.currentIndex = 0;
+        mrCounterCheck.checked = false;
+        refreshMultiRenamePreview();
+        multiRenameOpen = true;
+    }
+
+    function triggerPackArchive() {
+        var paths = getSelectedOrCurrentPaths();
+        if (paths.length === 0) {
+            backend.showStatus(qsTr("Select files to pack (Alt+F5)."));
+            return;
+        }
+        var baseName = paths.length === 1 ? currentModel().itemName(currentListView().currentIndex) : "archive";
+        packArchiveField.text = targetModel().path + "/" + baseName + ".zip";
+        packArchiveOpen = true;
+        packArchiveField.forceActiveFocus();
+    }
+
+    function triggerExtractArchive() {
+        var p = currentHighlightedPath();
+        if (p.length > 0 && backend.isArchive(p)) {
+            backend.extractArchive(p, targetModel().path);
+        } else {
+            backend.showStatus(qsTr("Highlight an archive (.zip, .tar.gz, .7z) to extract (Alt+F9)."));
         }
     }
 
@@ -119,10 +205,31 @@ ApplicationWindow {
         }
     }
 
+    function toggleFilterBar() {
+        if (backend.activePanel === 0) {
+            leftFilterVisible = !leftFilterVisible;
+            if (leftFilterVisible) {
+                leftFilterField.forceActiveFocus();
+            } else {
+                backend.leftPanel.setFilter("");
+                leftList.forceActiveFocus();
+            }
+        } else {
+            rightFilterVisible = !rightFilterVisible;
+            if (rightFilterVisible) {
+                rightFilterField.forceActiveFocus();
+            } else {
+                backend.rightPanel.setFilter("");
+                rightList.forceActiveFocus();
+            }
+        }
+    }
+
     // Global Shortcuts
     Shortcut { sequence: "Tab"; context: Qt.ApplicationShortcut; onActivated: {
         backend.switchPanel();
         currentListView().forceActiveFocus();
+        updateQuickView();
     }}
     Shortcut { sequence: "?"; context: Qt.ApplicationShortcut; onActivated: win.helpOpen = !win.helpOpen }
     Shortcut { sequence: "F1"; context: Qt.ApplicationShortcut; onActivated: win.helpOpen = !win.helpOpen }
@@ -135,6 +242,28 @@ ApplicationWindow {
     Shortcut { sequence: "F8"; context: Qt.ApplicationShortcut; onActivated: triggerF8Delete() }
     Shortcut { sequence: "Delete"; context: Qt.ApplicationShortcut; onActivated: triggerF8Delete() }
     Shortcut { sequence: "F10"; context: Qt.ApplicationShortcut; onActivated: Qt.quit() }
+
+    // Total Commander Power Shortcuts
+    Shortcut { sequence: "Ctrl+Q"; context: Qt.ApplicationShortcut; onActivated: {
+        win.quickViewActive = !win.quickViewActive;
+        if (win.quickViewActive)
+            updateQuickView();
+    }}
+    Shortcut { sequence: "Ctrl+U"; context: Qt.ApplicationShortcut; onActivated: backend.swapPanels() }
+    Shortcut { sequence: "Alt+="; context: Qt.ApplicationShortcut; onActivated: backend.syncPanels() }
+    Shortcut { sequence: "Shift+F2"; context: Qt.ApplicationShortcut; onActivated: backend.compareDirectories() }
+    Shortcut { sequence: "Ctrl+M"; context: Qt.ApplicationShortcut; onActivated: triggerMultiRename() }
+    Shortcut { sequence: "Alt+F5"; context: Qt.ApplicationShortcut; onActivated: triggerPackArchive() }
+    Shortcut { sequence: "Alt+F9"; context: Qt.ApplicationShortcut; onActivated: triggerExtractArchive() }
+    Shortcut { sequence: "Alt+Shift+Return"; context: Qt.ApplicationShortcut; onActivated: {
+        currentModel().calculateAllFolderSizes();
+        backend.showStatus(qsTr("Calculated sizes for all folders."));
+    }}
+    Shortcut { sequence: "Alt+Left"; context: Qt.ApplicationShortcut; onActivated: currentModel().goBack() }
+    Shortcut { sequence: "Alt+Right"; context: Qt.ApplicationShortcut; onActivated: currentModel().goForward() }
+    Shortcut { sequence: "Ctrl+S"; context: Qt.ApplicationShortcut; onActivated: toggleFilterBar() }
+    Shortcut { sequence: "Ctrl+B"; context: Qt.ApplicationShortcut; onActivated: win.bookmarksOpen = !win.bookmarksOpen }
+    Shortcut { sequence: "Ctrl+D"; context: Qt.ApplicationShortcut; onActivated: currentModel().deselectAll() }
     Shortcut { sequence: "Alt+F7"; context: Qt.ApplicationShortcut; onActivated: {
         searchInput.text = "";
         searchResults = [];
@@ -143,7 +272,7 @@ ApplicationWindow {
     }}
     Shortcut { sequence: "Ctrl+H"; context: Qt.ApplicationShortcut; onActivated: {
         var m = currentModel();
-        m.showHidden = !m.showHidden;
+        m.setShowHidden(!m.showHidden);
     }}
     Shortcut { sequence: "Ctrl+F3"; context: Qt.ApplicationShortcut; onActivated: currentModel().setSortField(0) }
     Shortcut { sequence: "Ctrl+F4"; context: Qt.ApplicationShortcut; onActivated: currentModel().setSortField(1) }
@@ -151,7 +280,6 @@ ApplicationWindow {
     Shortcut { sequence: "Ctrl+F6"; context: Qt.ApplicationShortcut; onActivated: currentModel().setSortField(2) }
     Shortcut { sequence: "Ctrl+R"; context: Qt.ApplicationShortcut; onActivated: currentModel().refresh() }
     Shortcut { sequence: "Ctrl+A"; context: Qt.ApplicationShortcut; onActivated: currentModel().selectAll() }
-    Shortcut { sequence: "Ctrl+D"; context: Qt.ApplicationShortcut; onActivated: currentModel().deselectAll() }
     Shortcut { sequence: "Ctrl+Shift+A"; context: Qt.ApplicationShortcut; onActivated: currentModel().invertSelection() }
     Shortcut { sequence: "Ctrl+T"; context: Qt.ApplicationShortcut; onActivated: backend.openInTerminal(currentModel().path) }
     Shortcut { sequence: "Escape"; context: Qt.ApplicationShortcut; onActivated: {
@@ -160,11 +288,19 @@ ApplicationWindow {
         if (searchOpen) { searchOpen = false; return; }
         if (newFolderOpen) { newFolderOpen = false; return; }
         if (renameOpen) { renameOpen = false; return; }
+        if (multiRenameOpen) { multiRenameOpen = false; return; }
+        if (packArchiveOpen) { packArchiveOpen = false; return; }
+        if (bookmarksOpen) { bookmarksOpen = false; return; }
+        if (commandOutputOpen) { commandOutputOpen = false; return; }
         if (confirmCopyOpen) { confirmCopyOpen = false; return; }
         if (confirmMoveOpen) { confirmMoveOpen = false; return; }
         if (confirmDeleteOpen) { confirmDeleteOpen = false; return; }
+        if (win.quickViewActive) { win.quickViewActive = false; return; }
         if (currentModel().filter.length > 0) {
-            currentModel().filter = "";
+            currentModel().setFilter("");
+            leftFilterVisible = false;
+            rightFilterVisible = false;
+            currentListView().forceActiveFocus();
             return;
         }
     }}
@@ -177,14 +313,14 @@ ApplicationWindow {
         // Top App Bar
         Rectangle {
             Layout.fillWidth: true
-            height: 44
+            height: 42
             color: "#151821"
 
             RowLayout {
                 anchors.fill: parent
-                anchors.leftMargin: 14
-                anchors.rightMargin: 14
-                spacing: 12
+                anchors.leftMargin: 12
+                anchors.rightMargin: 12
+                spacing: 8
 
                 // Logo & Title
                 Rectangle {
@@ -209,25 +345,56 @@ ApplicationWindow {
                     color: "#ffffff"
                 }
 
-                Rectangle {
-                    width: 1
-                    height: 18
-                    color: "#282c37"
+                Rectangle { width: 1; height: 18; color: "#282c37" }
+
+                Button {
+                    text: qsTr("QuickView (Ctrl+Q)")
+                    flat: true
+                    font.pixelSize: 11
+                    Material.foreground: win.quickViewActive ? theme.accent : "#a0a5b5"
+                    onClicked: {
+                        win.quickViewActive = !win.quickViewActive;
+                        if (win.quickViewActive)
+                            updateQuickView();
+                    }
                 }
 
-                // Quick buttons
                 Button {
-                    text: qsTr("Terminal (Ctrl+T)")
+                    text: qsTr("Compare (Shift+F2)")
                     flat: true
-                    font.pixelSize: 12
+                    font.pixelSize: 11
                     Material.foreground: "#a0a5b5"
-                    onClicked: backend.openInTerminal(currentModel().path)
+                    onClicked: backend.compareDirectories()
+                }
+
+                Button {
+                    text: qsTr("Multi-Rename (Ctrl+M)")
+                    flat: true
+                    font.pixelSize: 11
+                    Material.foreground: "#a0a5b5"
+                    onClicked: triggerMultiRename()
+                }
+
+                Button {
+                    text: qsTr("Pack (Alt+F5)")
+                    flat: true
+                    font.pixelSize: 11
+                    Material.foreground: "#a0a5b5"
+                    onClicked: triggerPackArchive()
+                }
+
+                Button {
+                    text: qsTr("Unpack (Alt+F9)")
+                    flat: true
+                    font.pixelSize: 11
+                    Material.foreground: "#a0a5b5"
+                    onClicked: triggerExtractArchive()
                 }
 
                 Button {
                     text: qsTr("Search (Alt+F7)")
                     flat: true
-                    font.pixelSize: 12
+                    font.pixelSize: 11
                     Material.foreground: "#a0a5b5"
                     onClicked: {
                         searchInput.text = "";
@@ -238,25 +405,205 @@ ApplicationWindow {
                 }
 
                 Button {
-                    text: currentModel().showHidden ? qsTr("Hide Hidden (Ctrl+H)") : qsTr("Show Hidden (Ctrl+H)")
+                    text: qsTr("Terminal (Ctrl+T)")
                     flat: true
-                    font.pixelSize: 12
+                    font.pixelSize: 11
                     Material.foreground: "#a0a5b5"
+                    onClicked: backend.openInTerminal(currentModel().path)
+                }
+
+                Button {
+                    text: currentModel().showHidden ? qsTr("Dotfiles: ON") : qsTr("Dotfiles: OFF")
+                    flat: true
+                    font.pixelSize: 11
+                    Material.foreground: currentModel().showHidden ? theme.accent : "#a0a5b5"
                     onClicked: {
                         var m = currentModel();
-                        m.showHidden = !m.showHidden;
+                        m.setShowHidden(!m.showHidden);
                     }
                 }
 
                 Item { Layout.fillWidth: true }
 
-                // Shortcuts Help button
                 Button {
                     text: qsTr("Help (?)")
                     flat: true
-                    font.pixelSize: 12
+                    font.pixelSize: 11
                     Material.foreground: theme.accent
                     onClicked: win.helpOpen = true
+                }
+            }
+        }
+
+        // Drives & Bookmarks Bar
+        Rectangle {
+            Layout.fillWidth: true
+            height: 30
+            color: "#12141d"
+
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: 10
+                anchors.rightMargin: 10
+                spacing: 6
+
+                Text {
+                    text: qsTr("Drives:")
+                    font.pixelSize: 11
+                    font.bold: true
+                    color: "#6b7285"
+                }
+
+                Repeater {
+                    model: backend.drives
+                    delegate: Rectangle {
+                        height: 22
+                        implicitWidth: driveRow.implicitWidth + 12
+                        radius: 3
+                        color: driveMouse.containsMouse ? "#25293a" : "#1a1d2a"
+                        border.width: 1
+                        border.color: "#282d40"
+
+                        RowLayout {
+                            id: driveRow
+                            anchors.centerIn: parent
+                            spacing: 4
+                            Text {
+                                text: "💾 " + modelData.label
+                                font.pixelSize: 11
+                                color: "#d0d6e5"
+                            }
+                            Text {
+                                visible: modelData.free.length > 0
+                                text: "(" + modelData.free + ")"
+                                font.pixelSize: 10
+                                color: "#7d859c"
+                            }
+                        }
+
+                        MouseArea {
+                            id: driveMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: currentModel().setPath(modelData.path)
+                        }
+                    }
+                }
+
+                Rectangle { width: 1; height: 16; color: "#282c37" }
+
+                Text {
+                    text: qsTr("Bookmarks:")
+                    font.pixelSize: 11
+                    font.bold: true
+                    color: "#6b7285"
+                }
+
+                Repeater {
+                    model: backend.bookmarks
+                    delegate: Rectangle {
+                        height: 22
+                        implicitWidth: bmText.implicitWidth + 14
+                        radius: 3
+                        color: bmMouse.containsMouse ? "#25293a" : "#181b26"
+                        border.width: 1
+                        border.color: currentModel().path === modelData ? theme.accent : "#252938"
+
+                        Text {
+                            id: bmText
+                            anchors.centerIn: parent
+                            text: "★ " + (modelData === "/" ? "/" : modelData.split("/").pop())
+                            font.pixelSize: 11
+                            color: currentModel().path === modelData ? theme.accent : "#b8c0d4"
+                        }
+
+                        MouseArea {
+                            id: bmMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            acceptedButtons: Qt.LeftButton | Qt.RightButton
+                            onClicked: function(mouse) {
+                                if (mouse.button === Qt.RightButton) {
+                                    backend.toggleBookmark(modelData);
+                                } else {
+                                    currentModel().setPath(modelData);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    height: 22
+                    implicitWidth: addBmText.implicitWidth + 12
+                    radius: 3
+                    color: addBmMouse.containsMouse ? "#262b3d" : "transparent"
+                    border.width: 1
+                    border.color: "#2c3146"
+
+                    Text {
+                        id: addBmText
+                        anchors.centerIn: parent
+                        text: "+ ★"
+                        font.pixelSize: 11
+                        font.bold: true
+                        color: theme.accent
+                    }
+
+                    MouseArea {
+                        id: addBmMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: backend.toggleBookmark(currentModel().path)
+                    }
+                }
+
+                Item { Layout.fillWidth: true }
+
+                // Swap & Sync quick buttons
+                Rectangle {
+                    height: 22
+                    implicitWidth: swapTxt.implicitWidth + 12
+                    radius: 3
+                    color: swapMouse.containsMouse ? "#25293a" : "#181b26"
+                    Text {
+                        id: swapTxt
+                        anchors.centerIn: parent
+                        text: "⇄ Swap (Ctrl+U)"
+                        font.pixelSize: 11
+                        color: "#9da5bc"
+                    }
+                    MouseArea {
+                        id: swapMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: backend.swapPanels()
+                    }
+                }
+
+                Rectangle {
+                    height: 22
+                    implicitWidth: syncTxt.implicitWidth + 12
+                    radius: 3
+                    color: syncMouse.containsMouse ? "#25293a" : "#181b26"
+                    Text {
+                        id: syncTxt
+                        anchors.centerIn: parent
+                        text: "= Sync (Alt+=)"
+                        font.pixelSize: 11
+                        color: "#9da5bc"
+                    }
+                    MouseArea {
+                        id: syncMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: backend.syncPanels()
+                    }
                 }
             }
         }
@@ -277,6 +624,65 @@ ApplicationWindow {
                 border.color: backend.activePanel === 0 ? theme.accent : "#222530"
                 radius: Math.min(6, theme.radius)
 
+                // Quick View overlay when Right Panel is active and QuickView is ON
+                Rectangle {
+                    visible: win.quickViewActive && backend.activePanel === 1
+                    anchors.fill: parent
+                    anchors.margins: 4
+                    color: "#12151f"
+                    radius: 4
+                    z: 10
+
+                    ColumnLayout {
+                        anchors.fill: parent
+                        anchors.margins: 10
+                        spacing: 8
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Text {
+                                text: "👁 " + qsTr("Quick View: %1").arg(win.quickViewData.name || "")
+                                font.bold: true
+                                font.pixelSize: 13
+                                color: theme.accent
+                                Layout.fillWidth: true
+                                elide: Text.ElideRight
+                            }
+                            Button {
+                                text: "×"
+                                flat: true
+                                implicitWidth: 26
+                                implicitHeight: 26
+                                onClicked: win.quickViewActive = false
+                            }
+                        }
+
+                        Image {
+                            visible: win.quickViewData.isImage === true
+                            source: win.quickViewData.imagePath || ""
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            fillMode: Image.PreserveAspectFit
+                        }
+
+                        ScrollView {
+                            visible: win.quickViewData.isImage !== true
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            clip: true
+
+                            TextArea {
+                                text: win.quickViewData.text || ""
+                                readOnly: true
+                                font.family: "monospace"
+                                font.pixelSize: 12
+                                color: "#d0d6e5"
+                                background: Rectangle { color: "#0e1018"; radius: 4 }
+                            }
+                        }
+                    }
+                }
+
                 MouseArea {
                     anchors.fill: parent
                     propagateComposedEvents: true
@@ -292,7 +698,7 @@ ApplicationWindow {
                     anchors.margins: 4
                     spacing: 4
 
-                    // Panel Header: Path & Quick Jump
+                    // Panel Header: History, Path & Quick Jump
                     Rectangle {
                         Layout.fillWidth: true
                         height: 36
@@ -301,29 +707,35 @@ ApplicationWindow {
 
                         RowLayout {
                             anchors.fill: parent
-                            anchors.leftMargin: 8
-                            anchors.rightMargin: 8
-                            spacing: 6
+                            anchors.leftMargin: 6
+                            anchors.rightMargin: 6
+                            spacing: 4
 
-                            // Drive/Location jumps
+                            Button {
+                                text: "◀"
+                                flat: true
+                                enabled: backend.leftPanel.canGoBack
+                                implicitWidth: 26
+                                implicitHeight: 28
+                                onClicked: backend.leftPanel.goBack()
+                            }
+                            Button {
+                                text: "▶"
+                                flat: true
+                                enabled: backend.leftPanel.canGoForward
+                                implicitWidth: 26
+                                implicitHeight: 28
+                                onClicked: backend.leftPanel.goForward()
+                            }
                             Button {
                                 text: "~"
                                 flat: true
-                                implicitWidth: 32
+                                implicitWidth: 28
                                 implicitHeight: 28
                                 font.bold: true
-                                onClicked: backend.leftPanel.cd("~")
-                            }
-                            Button {
-                                text: "/"
-                                flat: true
-                                implicitWidth: 32
-                                implicitHeight: 28
-                                font.bold: true
-                                onClicked: backend.leftPanel.cd("/")
+                                onClicked: backend.leftPanel.setPath("~")
                             }
 
-                            // Path input / breadcrumb
                             TextField {
                                 id: leftPathField
                                 Layout.fillWidth: true
@@ -336,13 +748,69 @@ ApplicationWindow {
                                 }
                             }
 
-                            // Refresh button
+                            Button {
+                                text: "🔍"
+                                flat: true
+                                implicitWidth: 28
+                                implicitHeight: 28
+                                onClicked: {
+                                    leftFilterVisible = !leftFilterVisible;
+                                    if (leftFilterVisible)
+                                        leftFilterField.forceActiveFocus();
+                                    else
+                                        backend.leftPanel.setFilter("");
+                                }
+                            }
+
                             Button {
                                 text: "↻"
                                 flat: true
                                 implicitWidth: 28
                                 implicitHeight: 28
                                 onClicked: backend.leftPanel.refresh()
+                            }
+                        }
+                    }
+
+                    // Filter Bar (Ctrl+S)
+                    Rectangle {
+                        visible: leftFilterVisible || backend.leftPanel.filter.length > 0
+                        Layout.fillWidth: true
+                        height: 30
+                        color: "#1d2130"
+                        radius: 3
+
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: 8
+                            anchors.rightMargin: 6
+                            spacing: 6
+
+                            Text {
+                                text: qsTr("Filter:")
+                                font.pixelSize: 11
+                                color: theme.accent
+                                font.bold: true
+                            }
+                            TextField {
+                                id: leftFilterField
+                                Layout.fillWidth: true
+                                placeholderText: qsTr("Type to filter files...")
+                                text: backend.leftPanel.filter
+                                font.pixelSize: 12
+                                onTextChanged: backend.leftPanel.setFilter(text)
+                                Keys.onReturnPressed: leftList.forceActiveFocus()
+                            }
+                            Button {
+                                text: "×"
+                                flat: true
+                                implicitWidth: 24
+                                implicitHeight: 24
+                                onClicked: {
+                                    backend.leftPanel.setFilter("");
+                                    leftFilterVisible = false;
+                                    leftList.forceActiveFocus();
+                                }
                             }
                         }
                     }
@@ -488,6 +956,10 @@ ApplicationWindow {
                         clip: true
                         model: backend.leftPanel
                         focus: backend.activePanel === 0
+                        onCurrentIndexChanged: {
+                            if (backend.activePanel === 0)
+                                updateQuickView();
+                        }
 
                         ScrollBar.vertical: ScrollBar {
                             active: true
@@ -537,7 +1009,6 @@ ApplicationWindow {
                                 anchors.rightMargin: 8
                                 spacing: 8
 
-                                // Icon
                                 Text {
                                     text: {
                                         if (model.isParent) return "⬆";
@@ -553,7 +1024,6 @@ ApplicationWindow {
                                     font.pixelSize: 12
                                 }
 
-                                // Name
                                 Text {
                                     text: model.name
                                     Layout.fillWidth: true
@@ -567,29 +1037,26 @@ ApplicationWindow {
                                     }
                                 }
 
-                                // Extension
                                 Text {
                                     text: model.isDir ? "" : model.extension
-                                    Layout.preferredWidth: 45
+                                    Layout.preferredWidth: 55
                                     horizontalAlignment: Text.AlignRight
                                     font.pixelSize: 11
                                     color: "#7e859b"
                                     elide: Text.ElideRight
                                 }
 
-                                // Size
                                 Text {
                                     text: model.formattedSize
-                                    Layout.preferredWidth: 80
+                                    Layout.preferredWidth: 85
                                     horizontalAlignment: Text.AlignRight
                                     font.pixelSize: 11
                                     color: model.isDir ? theme.accent : "#9da5bc"
                                 }
 
-                                // Date
                                 Text {
                                     text: model.modified
-                                    Layout.preferredWidth: 125
+                                    Layout.preferredWidth: 130
                                     horizontalAlignment: Text.AlignRight
                                     font.pixelSize: 11
                                     color: "#72788e"
@@ -662,6 +1129,65 @@ ApplicationWindow {
                 border.color: backend.activePanel === 1 ? theme.accent : "#222530"
                 radius: Math.min(6, theme.radius)
 
+                // Quick View overlay when Left Panel is active and QuickView is ON
+                Rectangle {
+                    visible: win.quickViewActive && backend.activePanel === 0
+                    anchors.fill: parent
+                    anchors.margins: 4
+                    color: "#12151f"
+                    radius: 4
+                    z: 10
+
+                    ColumnLayout {
+                        anchors.fill: parent
+                        anchors.margins: 10
+                        spacing: 8
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Text {
+                                text: "👁 " + qsTr("Quick View: %1").arg(win.quickViewData.name || "")
+                                font.bold: true
+                                font.pixelSize: 13
+                                color: theme.accent
+                                Layout.fillWidth: true
+                                elide: Text.ElideRight
+                            }
+                            Button {
+                                text: "×"
+                                flat: true
+                                implicitWidth: 26
+                                implicitHeight: 26
+                                onClicked: win.quickViewActive = false
+                            }
+                        }
+
+                        Image {
+                            visible: win.quickViewData.isImage === true
+                            source: win.quickViewData.imagePath || ""
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            fillMode: Image.PreserveAspectFit
+                        }
+
+                        ScrollView {
+                            visible: win.quickViewData.isImage !== true
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            clip: true
+
+                            TextArea {
+                                text: win.quickViewData.text || ""
+                                readOnly: true
+                                font.family: "monospace"
+                                font.pixelSize: 12
+                                color: "#d0d6e5"
+                                background: Rectangle { color: "#0e1018"; radius: 4 }
+                            }
+                        }
+                    }
+                }
+
                 MouseArea {
                     anchors.fill: parent
                     propagateComposedEvents: true
@@ -677,7 +1203,7 @@ ApplicationWindow {
                     anchors.margins: 4
                     spacing: 4
 
-                    // Panel Header: Path & Quick Jump
+                    // Panel Header: History, Path & Quick Jump
                     Rectangle {
                         Layout.fillWidth: true
                         height: 36
@@ -686,29 +1212,35 @@ ApplicationWindow {
 
                         RowLayout {
                             anchors.fill: parent
-                            anchors.leftMargin: 8
-                            anchors.rightMargin: 8
-                            spacing: 6
+                            anchors.leftMargin: 6
+                            anchors.rightMargin: 6
+                            spacing: 4
 
-                            // Drive/Location jumps
+                            Button {
+                                text: "◀"
+                                flat: true
+                                enabled: backend.rightPanel.canGoBack
+                                implicitWidth: 26
+                                implicitHeight: 28
+                                onClicked: backend.rightPanel.goBack()
+                            }
+                            Button {
+                                text: "▶"
+                                flat: true
+                                enabled: backend.rightPanel.canGoForward
+                                implicitWidth: 26
+                                implicitHeight: 28
+                                onClicked: backend.rightPanel.goForward()
+                            }
                             Button {
                                 text: "~"
                                 flat: true
-                                implicitWidth: 32
+                                implicitWidth: 28
                                 implicitHeight: 28
                                 font.bold: true
-                                onClicked: backend.rightPanel.cd("~")
-                            }
-                            Button {
-                                text: "/"
-                                flat: true
-                                implicitWidth: 32
-                                implicitHeight: 28
-                                font.bold: true
-                                onClicked: backend.rightPanel.cd("/")
+                                onClicked: backend.rightPanel.setPath("~")
                             }
 
-                            // Path input / breadcrumb
                             TextField {
                                 id: rightPathField
                                 Layout.fillWidth: true
@@ -721,13 +1253,69 @@ ApplicationWindow {
                                 }
                             }
 
-                            // Refresh button
+                            Button {
+                                text: "🔍"
+                                flat: true
+                                implicitWidth: 28
+                                implicitHeight: 28
+                                onClicked: {
+                                    rightFilterVisible = !rightFilterVisible;
+                                    if (rightFilterVisible)
+                                        rightFilterField.forceActiveFocus();
+                                    else
+                                        backend.rightPanel.setFilter("");
+                                }
+                            }
+
                             Button {
                                 text: "↻"
                                 flat: true
                                 implicitWidth: 28
                                 implicitHeight: 28
                                 onClicked: backend.rightPanel.refresh()
+                            }
+                        }
+                    }
+
+                    // Filter Bar (Ctrl+S)
+                    Rectangle {
+                        visible: rightFilterVisible || backend.rightPanel.filter.length > 0
+                        Layout.fillWidth: true
+                        height: 30
+                        color: "#1d2130"
+                        radius: 3
+
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: 8
+                            anchors.rightMargin: 6
+                            spacing: 6
+
+                            Text {
+                                text: qsTr("Filter:")
+                                font.pixelSize: 11
+                                color: theme.accent
+                                font.bold: true
+                            }
+                            TextField {
+                                id: rightFilterField
+                                Layout.fillWidth: true
+                                placeholderText: qsTr("Type to filter files...")
+                                text: backend.rightPanel.filter
+                                font.pixelSize: 12
+                                onTextChanged: backend.rightPanel.setFilter(text)
+                                Keys.onReturnPressed: rightList.forceActiveFocus()
+                            }
+                            Button {
+                                text: "×"
+                                flat: true
+                                implicitWidth: 24
+                                implicitHeight: 24
+                                onClicked: {
+                                    backend.rightPanel.setFilter("");
+                                    rightFilterVisible = false;
+                                    rightList.forceActiveFocus();
+                                }
                             }
                         }
                     }
@@ -873,6 +1461,10 @@ ApplicationWindow {
                         clip: true
                         model: backend.rightPanel
                         focus: backend.activePanel === 1
+                        onCurrentIndexChanged: {
+                            if (backend.activePanel === 1)
+                                updateQuickView();
+                        }
 
                         ScrollBar.vertical: ScrollBar {
                             active: true
@@ -922,7 +1514,6 @@ ApplicationWindow {
                                 anchors.rightMargin: 8
                                 spacing: 8
 
-                                // Icon
                                 Text {
                                     text: {
                                         if (model.isParent) return "⬆";
@@ -938,7 +1529,6 @@ ApplicationWindow {
                                     font.pixelSize: 12
                                 }
 
-                                // Name
                                 Text {
                                     text: model.name
                                     Layout.fillWidth: true
@@ -952,29 +1542,26 @@ ApplicationWindow {
                                     }
                                 }
 
-                                // Extension
                                 Text {
                                     text: model.isDir ? "" : model.extension
-                                    Layout.preferredWidth: 45
+                                    Layout.preferredWidth: 55
                                     horizontalAlignment: Text.AlignRight
                                     font.pixelSize: 11
                                     color: "#7e859b"
                                     elide: Text.ElideRight
                                 }
 
-                                // Size
                                 Text {
                                     text: model.formattedSize
-                                    Layout.preferredWidth: 80
+                                    Layout.preferredWidth: 85
                                     horizontalAlignment: Text.AlignRight
                                     font.pixelSize: 11
                                     color: model.isDir ? theme.accent : "#9da5bc"
                                 }
 
-                                // Date
                                 Text {
                                     text: model.modified
-                                    Layout.preferredWidth: 125
+                                    Layout.preferredWidth: 130
                                     horizontalAlignment: Text.AlignRight
                                     font.pixelSize: 11
                                     color: "#72788e"
@@ -1041,7 +1628,7 @@ ApplicationWindow {
         // Status Notification / Busy Bar
         Rectangle {
             Layout.fillWidth: true
-            height: (backend.isBusy || backend.statusMessage.length > 0) ? 28 : 0
+            height: (backend.isBusy || backend.statusMessage.length > 0) ? 26 : 0
             visible: height > 0
             color: "#181a26"
 
@@ -1054,13 +1641,58 @@ ApplicationWindow {
                     text: backend.isBusy ? backend.busyTitle : backend.statusMessage
                     font.pixelSize: 11
                     color: backend.isBusy ? theme.accent : "#b0b8cb"
+                    Layout.fillWidth: true
+                    elide: Text.ElideRight
                 }
 
                 ProgressBar {
                     visible: backend.isBusy
                     value: backend.busyProgress
-                    Layout.fillWidth: true
+                    Layout.preferredWidth: 200
                     Layout.preferredHeight: 4
+                }
+            }
+        }
+
+        // Mini Command Line Bar (Total Commander style)
+        Rectangle {
+            Layout.fillWidth: true
+            height: 32
+            color: "#141620"
+
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: 10
+                anchors.rightMargin: 10
+                spacing: 8
+
+                Text {
+                    text: currentModel().path + " $"
+                    font.family: "monospace"
+                    font.bold: true
+                    font.pixelSize: 11
+                    color: theme.accent
+                    Layout.maximumWidth: 360
+                    elide: Text.ElideLeft
+                }
+
+                TextField {
+                    id: cmdLineInput
+                    Layout.fillWidth: true
+                    placeholderText: qsTr("Run command in active folder (e.g. git status, chmod +x ...)")
+                    font.family: "monospace"
+                    font.pixelSize: 12
+                    onAccepted: {
+                        if (cmdLineInput.text.trim().length > 0) {
+                            var res = backend.runCommand(cmdLineInput.text);
+                            cmdLineInput.text = "";
+                            if (res.output && res.output.indexOf("\n") !== -1) {
+                                win.commandOutputText = res.output;
+                                win.commandOutputOpen = true;
+                            }
+                            currentListView().forceActiveFocus();
+                        }
+                    }
                 }
             }
         }
@@ -1068,7 +1700,7 @@ ApplicationWindow {
         // Bottom Function Keys Bar (Total Commander classic F3-F10)
         Rectangle {
             Layout.fillWidth: true
-            height: 40
+            height: 38
             color: "#13151f"
 
             RowLayout {
@@ -1157,7 +1789,8 @@ ApplicationWindow {
             TextField {
                 id: copyDestField
                 text: targetModel().path
-                Layout.preferredWidth: 400
+                Layout.preferredWidth: 420
+                onAccepted: copyDialog.accept()
             }
         }
 
@@ -1187,7 +1820,8 @@ ApplicationWindow {
             TextField {
                 id: moveDestField
                 text: targetModel().path
-                Layout.preferredWidth: 400
+                Layout.preferredWidth: 420
+                onAccepted: moveDialog.accept()
             }
         }
 
@@ -1289,6 +1923,197 @@ ApplicationWindow {
         onRejected: win.renameOpen = false
     }
 
+    // Multi-Rename Tool Dialog (Ctrl+M)
+    Dialog {
+        id: multiRenameDialog
+        visible: win.multiRenameOpen
+        title: qsTr("Multi-Rename Tool (Ctrl+M)")
+        anchors.centerIn: parent
+        modal: true
+        width: 680
+        height: 520
+        standardButtons: Dialog.Ok | Dialog.Cancel
+
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: 10
+
+            GridLayout {
+                columns: 4
+                Layout.fillWidth: true
+                columnSpacing: 10
+                rowSpacing: 8
+
+                Text { text: qsTr("Find:"); color: "#b0b8cb"; font.pixelSize: 12 }
+                TextField {
+                    id: mrFindField
+                    Layout.fillWidth: true
+                    onTextChanged: refreshMultiRenamePreview()
+                }
+
+                Text { text: qsTr("Replace:"); color: "#b0b8cb"; font.pixelSize: 12 }
+                TextField {
+                    id: mrReplaceField
+                    Layout.fillWidth: true
+                    onTextChanged: refreshMultiRenamePreview()
+                }
+
+                Text { text: qsTr("Prefix:"); color: "#b0b8cb"; font.pixelSize: 12 }
+                TextField {
+                    id: mrPrefixField
+                    Layout.fillWidth: true
+                    onTextChanged: refreshMultiRenamePreview()
+                }
+
+                Text { text: qsTr("Suffix:"); color: "#b0b8cb"; font.pixelSize: 12 }
+                TextField {
+                    id: mrSuffixField
+                    Layout.fillWidth: true
+                    onTextChanged: refreshMultiRenamePreview()
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 16
+
+                Text { text: qsTr("Case:"); color: "#b0b8cb"; font.pixelSize: 12 }
+                ComboBox {
+                    id: mrCaseCombo
+                    model: [qsTr("Unchanged"), qsTr("lowercase"), qsTr("UPPERCASE"), qsTr("Title Case")]
+                    onCurrentIndexChanged: refreshMultiRenamePreview()
+                }
+
+                CheckBox {
+                    id: mrCounterCheck
+                    text: qsTr("Append counter (_001, _002...)")
+                    onCheckedChanged: refreshMultiRenamePreview()
+                }
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                height: 24
+                color: "#1c1f2b"
+                radius: 3
+
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: 8
+                    anchors.rightMargin: 8
+                    Text { text: qsTr("Original Name"); font.bold: true; font.pixelSize: 11; color: "#8b92a5"; Layout.fillWidth: true }
+                    Text { text: qsTr("New Name Preview"); font.bold: true; font.pixelSize: 11; color: theme.accent; Layout.fillWidth: true }
+                }
+            }
+
+            ListView {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+                model: win.multiRenamePreviewList
+
+                delegate: Rectangle {
+                    width: parent.width
+                    height: 24
+                    color: index % 2 === 0 ? "#141722" : "transparent"
+
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: 8
+                        anchors.rightMargin: 8
+                        Text {
+                            text: modelData.oldName
+                            color: "#9da5bc"
+                            font.pixelSize: 12
+                            Layout.fillWidth: true
+                            elide: Text.ElideRight
+                        }
+                        Text {
+                            text: "→ " + modelData.newName
+                            color: theme.accent
+                            font.bold: true
+                            font.pixelSize: 12
+                            Layout.fillWidth: true
+                            elide: Text.ElideRight
+                        }
+                    }
+                }
+            }
+        }
+
+        onAccepted: {
+            win.multiRenameOpen = false;
+            backend.executeMultiRename(
+                getSelectedOrCurrentPaths(),
+                mrFindField.text,
+                mrReplaceField.text,
+                mrPrefixField.text,
+                mrSuffixField.text,
+                mrCaseCombo.currentIndex,
+                mrCounterCheck.checked
+            );
+        }
+        onRejected: win.multiRenameOpen = false
+    }
+
+    // Pack Archive Dialog (Alt+F5)
+    Dialog {
+        id: packDialog
+        visible: win.packArchiveOpen
+        title: qsTr("Pack Files into Archive (Alt+F5)")
+        anchors.centerIn: parent
+        modal: true
+        standardButtons: Dialog.Ok | Dialog.Cancel
+
+        ColumnLayout {
+            spacing: 10
+            Text {
+                text: qsTr("Create archive (.zip, .tar.gz, .tar.xz) from %1 item(s):").arg(getSelectedOrCurrentPaths().length)
+                color: "#ffffff"
+                font.pixelSize: 13
+            }
+            TextField {
+                id: packArchiveField
+                Layout.preferredWidth: 440
+                onAccepted: packDialog.accept()
+            }
+        }
+
+        onAccepted: {
+            win.packArchiveOpen = false;
+            backend.packArchive(getSelectedOrCurrentPaths(), packArchiveField.text);
+        }
+        onRejected: win.packArchiveOpen = false
+    }
+
+    // Command Output Modal
+    Dialog {
+        id: cmdOutputDialog
+        visible: win.commandOutputOpen
+        title: qsTr("Command Output")
+        anchors.centerIn: parent
+        modal: true
+        width: 660
+        height: 440
+        standardButtons: Dialog.Close
+
+        ScrollView {
+            anchors.fill: parent
+            clip: true
+
+            TextArea {
+                text: win.commandOutputText
+                readOnly: true
+                font.family: "monospace"
+                font.pixelSize: 12
+                color: "#d0d6e5"
+                background: Rectangle { color: "#12151f"; radius: 4 }
+            }
+        }
+
+        onRejected: win.commandOutputOpen = false
+    }
+
     // File Preview Modal (F3 View)
     Dialog {
         id: previewDialog
@@ -1296,24 +2121,22 @@ ApplicationWindow {
         title: qsTr("Preview: %1").arg(previewData.name || "")
         anchors.centerIn: parent
         modal: true
-        width: 700
-        height: 520
+        width: 740
+        height: 540
         standardButtons: Dialog.Close
 
         ColumnLayout {
             anchors.fill: parent
             spacing: 8
 
-            // Metadata row
             Text {
-                text: qsTr("Path: %1 | Size: %2 | Modified: %3").arg(previewData.path || "").arg(previewData.size || 0).arg(previewData.modified || "")
+                text: qsTr("Path: %1 | Size: %2 | Modified: %3").arg(previewData.path || "").arg(previewData.formattedSize || "").arg(previewData.modified || "")
                 font.pixelSize: 11
                 color: "#8b92a5"
                 Layout.fillWidth: true
                 elide: Text.ElideMiddle
             }
 
-            // Image Preview
             Image {
                 visible: previewData.isImage === true
                 source: previewData.imagePath || ""
@@ -1322,7 +2145,6 @@ ApplicationWindow {
                 fillMode: Image.PreserveAspectFit
             }
 
-            // Text Preview
             ScrollView {
                 visible: previewData.isImage !== true
                 Layout.fillWidth: true
@@ -1429,8 +2251,8 @@ ApplicationWindow {
         title: qsTr("omapanel — Keyboard Shortcuts")
         anchors.centerIn: parent
         modal: true
-        width: 550
-        height: 500
+        width: 580
+        height: 540
         standardButtons: Dialog.Close
 
         ScrollView {
@@ -1439,35 +2261,31 @@ ApplicationWindow {
 
             ColumnLayout {
                 width: parent.width
-                spacing: 8
+                spacing: 6
 
                 Repeater {
                     model: [
                         { key: "Tab", desc: qsTr("Switch active panel (Left / Right)") },
-                        { key: "Up / Down", desc: qsTr("Navigate files in active panel") },
-                        { key: "Enter", desc: qsTr("Open directory or launch file") },
-                        { key: "Backspace", desc: qsTr("Go to parent directory (..)") },
-                        { key: "Space / Insert", desc: qsTr("Toggle item selection and advance cursor") },
-                        { key: "Ctrl + A", desc: qsTr("Select all items in active panel") },
-                        { key: "Ctrl + D", desc: qsTr("Deselect all items") },
-                        { key: "Ctrl + Shift + A", desc: qsTr("Invert selection") },
-                        { key: "F3", desc: qsTr("View file preview (Text, Image, Hex)") },
+                        { key: "Space / Insert", desc: qsTr("Select item (and calculate folder size) + advance") },
+                        { key: "Alt + Shift + Enter", desc: qsTr("Calculate sizes for all folders in panel") },
+                        { key: "Ctrl + Q", desc: qsTr("Toggle live Quick View in opposite panel") },
+                        { key: "Ctrl + S", desc: qsTr("Toggle real-time quick filter bar") },
+                        { key: "Ctrl + U / Alt + =", desc: qsTr("Swap panels / Sync target panel") },
+                        { key: "Shift + F2", desc: qsTr("Compare Left & Right directories (select differences)") },
+                        { key: "Ctrl + M", desc: qsTr("Multi-Rename Tool for selected items") },
+                        { key: "Alt + F5 / Alt + F9", desc: qsTr("Pack files to archive / Extract archive") },
+                        { key: "Alt + Left / Right", desc: qsTr("Navigate directory history Back / Forward") },
+                        { key: "F3", desc: qsTr("View file/folder/archive preview (Text, Image, Hex)") },
                         { key: "F4", desc: qsTr("Edit file with default editor ($EDITOR)") },
-                        { key: "F5", desc: qsTr("Copy selected item(s) to target panel") },
-                        { key: "F6", desc: qsTr("Move selected item(s) to target panel") },
+                        { key: "F5 / F6", desc: qsTr("Copy / Move selected item(s) to target panel") },
                         { key: "Shift + F6", desc: qsTr("Rename highlighted item") },
-                        { key: "F7", desc: qsTr("Create new folder") },
-                        { key: "F8 / Delete", desc: qsTr("Delete selected item(s)") },
+                        { key: "F7 / F8", desc: qsTr("Create new folder / Delete selected item(s)") },
                         { key: "Alt + F7", desc: qsTr("Search files recursively") },
+                        { key: "Ctrl + F3..F6", desc: qsTr("Sort by Name, Ext, Date, or Size") },
+                        { key: "Ctrl + A / Ctrl + D", desc: qsTr("Select all / Deselect all") },
                         { key: "Ctrl + H", desc: qsTr("Toggle show/hide hidden dotfiles") },
-                        { key: "Ctrl + F3", desc: qsTr("Sort by Name (toggle Asc/Desc)") },
-                        { key: "Ctrl + F4", desc: qsTr("Sort by Extension (toggle Asc/Desc)") },
-                        { key: "Ctrl + F5", desc: qsTr("Sort by Date (toggle Asc/Desc)") },
-                        { key: "Ctrl + F6", desc: qsTr("Sort by Size (toggle Asc/Desc)") },
-                        { key: "Ctrl + R", desc: qsTr("Refresh active directory list") },
                         { key: "Ctrl + T", desc: qsTr("Open terminal in active folder") },
-                        { key: "F10", desc: qsTr("Quit omapanel") },
-                        { key: "Esc", desc: qsTr("Close any open dialog or clear filter") }
+                        { key: "F10 / Esc", desc: qsTr("Quit omapanel / Close dialog") }
                     ]
 
                     delegate: Rectangle {
@@ -1484,7 +2302,7 @@ ApplicationWindow {
                             Rectangle {
                                 color: "#222636"
                                 radius: 4
-                                implicitWidth: 120
+                                implicitWidth: 145
                                 implicitHeight: 22
 
                                 Text {

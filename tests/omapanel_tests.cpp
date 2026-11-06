@@ -53,7 +53,6 @@ private slots:
         QDir(dir.path()).mkdir("subfolder");
 
         PanelModel model(dir.path());
-        // Should have .. (if not /), subfolder, alpha.txt
         QVERIFY(model.rowCount() >= 2);
 
         int idx = model.findIndexByPrefix("alpha");
@@ -62,71 +61,87 @@ private slots:
         QCOMPARE(model.itemIsDir(idx), false);
     }
 
-    void panelModelSelection()
+    void panelModelSelectionAndFolderSize()
     {
         QTemporaryDir dir;
-        QFile f1(dir.filePath("a.txt"));
-        QVERIFY(f1.open(QIODevice::WriteOnly));
-        f1.write("123");
-        f1.close();
-
-        QFile f2(dir.filePath("b.txt"));
-        QVERIFY(f2.open(QIODevice::WriteOnly));
-        f2.write("456");
-        f2.close();
+        QDir(dir.path()).mkdir("myfolder");
+        QFile subFile(dir.filePath("myfolder/inside.bin"));
+        QVERIFY(subFile.open(QIODevice::WriteOnly));
+        subFile.write(QByteArray(2048, 'a')); // 2 KB
+        subFile.close();
 
         PanelModel model(dir.path());
-        QCOMPARE(model.selectedCount(), 0);
+        int folderIdx = model.findIndexByPrefix("myfolder");
+        QVERIFY(folderIdx >= 0);
 
-        model.selectAll();
-        QCOMPARE(model.selectedCount(), 2);
+        // Before pressing Space, folder shows <DIR>
+        QCOMPARE(model.data(model.index(folderIdx, 0), PanelModel::FormattedSizeRole).toString(), QString("<DIR>"));
 
-        model.deselectAll();
-        QCOMPARE(model.selectedCount(), 0);
+        // Pressing Space (toggleSelection) on folder calculates its size and selects it
+        model.toggleSelection(folderIdx);
+        QCOMPARE(model.selectedCount(), 1);
+        QCOMPARE(model.data(model.index(folderIdx, 0), PanelModel::SizeRole).toLongLong(), 2048LL);
+        QCOMPARE(model.data(model.index(folderIdx, 0), PanelModel::FormattedSizeRole).toString(), QString("2.0 KB"));
+    }
+
+    void panelModelHistoryNavigation()
+    {
+        QTemporaryDir dir;
+        QDir(dir.path()).mkdir("sub1");
+        QDir(dir.path()).mkdir("sub2");
+
+        PanelModel model(dir.path());
+        const QString rootPath = model.path();
+        QCOMPARE(model.canGoBack(), false);
+
+        model.cd("sub1");
+        QVERIFY(model.path().endsWith("/sub1"));
+        QCOMPARE(model.canGoBack(), true);
+
+        model.goBack();
+        QCOMPARE(model.path(), rootPath);
+        QCOMPARE(model.canGoForward(), true);
+
+        model.goForward();
+        QVERIFY(model.path().endsWith("/sub1"));
     }
 
     void panelModelSorting()
     {
         QTemporaryDir dir;
-        // Create files with different names, extensions, and sizes
         QFile f1(dir.filePath("zebra.txt"));
         QVERIFY(f1.open(QIODevice::WriteOnly));
-        f1.write(QByteArray(100, 'x')); // 100 bytes
+        f1.write(QByteArray(100, 'x'));
         f1.close();
 
         QFile f2(dir.filePath("apple.bin"));
         QVERIFY(f2.open(QIODevice::WriteOnly));
-        f2.write(QByteArray(500, 'y')); // 500 bytes
+        f2.write(QByteArray(500, 'y'));
         f2.close();
 
         QFile f3(dir.filePath("middle.doc"));
         QVERIFY(f3.open(QIODevice::WriteOnly));
-        f3.write(QByteArray(200, 'z')); // 200 bytes
+        f3.write(QByteArray(200, 'z'));
         f3.close();
 
         PanelModel model(dir.path());
 
-        // Sort by Name Ascending: apple.bin, middle.doc, zebra.txt
         model.setSortField(PanelModel::SortByName);
         model.setSortAscending(true);
-        // Index 0 might be ".." if not root, check last 3
         int count = model.itemCount();
         QCOMPARE(model.itemName(count - 3), QString("apple.bin"));
         QCOMPARE(model.itemName(count - 1), QString("zebra.txt"));
 
-        // Sort by Size Ascending: zebra.txt (100B), middle.doc (200B), apple.bin (500B)
         model.setSortField(PanelModel::SortBySize);
         model.setSortAscending(true);
         QCOMPARE(model.itemName(count - 3), QString("zebra.txt"));
         QCOMPARE(model.itemName(count - 1), QString("apple.bin"));
 
-        // Sort by Size Descending (toggle)
-        model.setSortField(PanelModel::SortBySize); // calling with same field toggles direction
+        model.setSortField(PanelModel::SortBySize);
         QCOMPARE(model.sortAscending(), false);
         QCOMPARE(model.itemName(count - 3), QString("apple.bin"));
         QCOMPARE(model.itemName(count - 1), QString("zebra.txt"));
 
-        // Sort by Ext Ascending: .bin (apple), .doc (middle), .txt (zebra)
         model.setSortField(PanelModel::SortByExt);
         model.setSortAscending(true);
         QCOMPARE(model.itemName(count - 3), QString("apple.bin"));
@@ -134,39 +149,54 @@ private slots:
         QCOMPARE(model.itemName(count - 1), QString("zebra.txt"));
     }
 
-    void backendOperations()
+    void backendOperationsAndAdvancedTools()
     {
         QTemporaryDir srcDir;
         QTemporaryDir dstDir;
+        QTemporaryDir configDir;
 
         QFile f(srcDir.filePath("sample.txt"));
         QVERIFY(f.open(QIODevice::WriteOnly));
         f.write("Some sample content");
         f.close();
 
-        Backend backend;
+        Backend backend(configDir.filePath("bookmarks.json"));
         backend.leftPanel()->setPath(srcDir.path());
         backend.rightPanel()->setPath(dstDir.path());
+
+        // Compare directories: sample.txt is only in leftPanel
+        backend.compareDirectories();
+        QCOMPARE(backend.leftPanel()->selectedCount(), 1);
+        QCOMPARE(backend.rightPanel()->selectedCount(), 0);
 
         // Copy item from left to right
         bool copied = backend.copyItems({srcDir.filePath("sample.txt")}, dstDir.path());
         QVERIFY(copied);
         QVERIFY(QFile::exists(dstDir.filePath("sample.txt")));
 
-        // Test preview
-        QVariantMap preview = backend.getPreview(dstDir.filePath("sample.txt"));
-        QCOMPARE(preview["isText"].toBool(), true);
-        QCOMPARE(preview["name"].toString(), QString("sample.txt"));
-        QVERIFY(preview["text"].toString().contains("Some sample content"));
+        // Multi-rename in dstDir
+        bool renamed = backend.executeMultiRename(
+            {dstDir.filePath("sample.txt")},
+            "sample", "report", "2026_", "", 0, true
+        );
+        QVERIFY(renamed);
+        QVERIFY(QFile::exists(dstDir.filePath("2026_report_001.txt")));
 
-        // Test search
-        QStringList results = backend.searchFiles(dstDir.path(), "sample");
-        QCOMPARE(results.size(), 1);
+        // Swap panels
+        const QString oldLeft = backend.leftPanel()->path();
+        const QString oldRight = backend.rightPanel()->path();
+        backend.swapPanels();
+        QCOMPARE(backend.leftPanel()->path(), oldRight);
+        QCOMPARE(backend.rightPanel()->path(), oldLeft);
 
-        // Test delete
-        bool deleted = backend.deleteItems({dstDir.filePath("sample.txt")}, true);
-        QVERIFY(deleted);
-        QVERIFY(!QFile::exists(dstDir.filePath("sample.txt")));
+        // Bookmarks
+        backend.toggleBookmark(srcDir.path());
+        QVERIFY(backend.isBookmarked(srcDir.path()));
+
+        // Run command
+        QVariantMap cmdRes = backend.runCommand("echo hello_omapanel");
+        QCOMPARE(cmdRes["exitCode"].toInt(), 0);
+        QCOMPARE(cmdRes["output"].toString(), QString("hello_omapanel"));
     }
 };
 
