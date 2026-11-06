@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=omapanel
+Name[ro]=omapanel
+Comment=Modern dual-panel file manager
+Comment[ro]=Manager de fișiere cu două panouri
+Exec=omapanel %f
+Icon=omapanel
+Terminal=false
+Categories=Utility;FileManager;
+StartupWMClass=omapanel

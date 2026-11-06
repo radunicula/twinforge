@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1e2230"/>
+      <stop offset="100%" stop-color="#11131b"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="url(#grad)" stroke="#2b3044" stroke-width="2"/>
+  <!-- Left panel outline -->
+  <rect x="7" y="10" width="22" height="44" rx="4" fill="#181b26" stroke="#FFD60A" stroke-width="1.8"/>
+  <rect x="10" y="14" width="16" height="3" rx="1" fill="#FFD60A"/>
+  <rect x="10" y="21" width="12" height="2" rx="1" fill="#717a94"/>
+  <rect x="10" y="26" width="14" height="2" rx="1" fill="#717a94"/>
+  <rect x="10" y="31" width="10" height="2" rx="1" fill="#717a94"/>
+  <!-- Right panel outline -->
+  <rect x="35" y="10" width="22" height="44" rx="4" fill="#181b26" stroke="#373d52" stroke-width="1.5"/>
+  <rect x="38" y="14" width="16" height="3" rx="1" fill="#4d5570"/>
+  <rect x="38" y="21" width="13" height="2" rx="1" fill="#4d5570"/>
+  <rect x="38" y="26" width="11" height="2" rx="1" fill="#4d5570"/>
+  <rect x="38" y="31" width="15" height="2" rx="1" fill="#4d5570"/>
+  <!-- Center transfer indicator arrow -->
+  <path d="M30 32 L34 32 M32 30 L34 32 L32 34" stroke="#FFD60A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
