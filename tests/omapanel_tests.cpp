@@ -85,6 +85,55 @@ private slots:
         QCOMPARE(model.selectedCount(), 0);
     }
 
+    void panelModelSorting()
+    {
+        QTemporaryDir dir;
+        // Create files with different names, extensions, and sizes
+        QFile f1(dir.filePath("zebra.txt"));
+        QVERIFY(f1.open(QIODevice::WriteOnly));
+        f1.write(QByteArray(100, 'x')); // 100 bytes
+        f1.close();
+
+        QFile f2(dir.filePath("apple.bin"));
+        QVERIFY(f2.open(QIODevice::WriteOnly));
+        f2.write(QByteArray(500, 'y')); // 500 bytes
+        f2.close();
+
+        QFile f3(dir.filePath("middle.doc"));
+        QVERIFY(f3.open(QIODevice::WriteOnly));
+        f3.write(QByteArray(200, 'z')); // 200 bytes
+        f3.close();
+
+        PanelModel model(dir.path());
+
+        // Sort by Name Ascending: apple.bin, middle.doc, zebra.txt
+        model.setSortField(PanelModel::SortByName);
+        model.setSortAscending(true);
+        // Index 0 might be ".." if not root, check last 3
+        int count = model.itemCount();
+        QCOMPARE(model.itemName(count - 3), QString("apple.bin"));
+        QCOMPARE(model.itemName(count - 1), QString("zebra.txt"));
+
+        // Sort by Size Ascending: zebra.txt (100B), middle.doc (200B), apple.bin (500B)
+        model.setSortField(PanelModel::SortBySize);
+        model.setSortAscending(true);
+        QCOMPARE(model.itemName(count - 3), QString("zebra.txt"));
+        QCOMPARE(model.itemName(count - 1), QString("apple.bin"));
+
+        // Sort by Size Descending (toggle)
+        model.setSortField(PanelModel::SortBySize); // calling with same field toggles direction
+        QCOMPARE(model.sortAscending(), false);
+        QCOMPARE(model.itemName(count - 3), QString("apple.bin"));
+        QCOMPARE(model.itemName(count - 1), QString("zebra.txt"));
+
+        // Sort by Ext Ascending: .bin (apple), .doc (middle), .txt (zebra)
+        model.setSortField(PanelModel::SortByExt);
+        model.setSortAscending(true);
+        QCOMPARE(model.itemName(count - 3), QString("apple.bin"));
+        QCOMPARE(model.itemName(count - 2), QString("middle.doc"));
+        QCOMPARE(model.itemName(count - 1), QString("zebra.txt"));
+    }
+
     void backendOperations()
     {
         QTemporaryDir srcDir;

@@ -145,6 +145,10 @@ ApplicationWindow {
         var m = currentModel();
         m.showHidden = !m.showHidden;
     }}
+    Shortcut { sequence: "Ctrl+F3"; context: Qt.ApplicationShortcut; onActivated: currentModel().setSortField(0) }
+    Shortcut { sequence: "Ctrl+F4"; context: Qt.ApplicationShortcut; onActivated: currentModel().setSortField(1) }
+    Shortcut { sequence: "Ctrl+F5"; context: Qt.ApplicationShortcut; onActivated: currentModel().setSortField(3) }
+    Shortcut { sequence: "Ctrl+F6"; context: Qt.ApplicationShortcut; onActivated: currentModel().setSortField(2) }
     Shortcut { sequence: "Ctrl+R"; context: Qt.ApplicationShortcut; onActivated: currentModel().refresh() }
     Shortcut { sequence: "Ctrl+A"; context: Qt.ApplicationShortcut; onActivated: currentModel().selectAll() }
     Shortcut { sequence: "Ctrl+D"; context: Qt.ApplicationShortcut; onActivated: currentModel().deselectAll() }
@@ -1316,6 +1320,10 @@ ApplicationWindow {
                         { key: "F8 / Delete", desc: qsTr("Delete selected item(s)") },
                         { key: "Alt + F7", desc: qsTr("Search files recursively") },
                         { key: "Ctrl + H", desc: qsTr("Toggle show/hide hidden dotfiles") },
+                        { key: "Ctrl + F3", desc: qsTr("Sort by Name (toggle Asc/Desc)") },
+                        { key: "Ctrl + F4", desc: qsTr("Sort by Extension (toggle Asc/Desc)") },
+                        { key: "Ctrl + F5", desc: qsTr("Sort by Date (toggle Asc/Desc)") },
+                        { key: "Ctrl + F6", desc: qsTr("Sort by Size (toggle Asc/Desc)") },
                         { key: "Ctrl + R", desc: qsTr("Refresh active directory list") },
                         { key: "Ctrl + T", desc: qsTr("Open terminal in active folder") },
                         { key: "F10", desc: qsTr("Quit omapanel") },
