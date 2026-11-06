@@ -65,19 +65,19 @@ public:
     QHash<int, QByteArray> roleNames() const override;
 
     QString path() const { return m_path; }
-    void setPath(const QString &newPath);
+    Q_INVOKABLE void setPath(const QString &newPath);
 
     QString filter() const { return m_filter; }
-    void setFilter(const QString &filter);
+    Q_INVOKABLE void setFilter(const QString &filter);
 
     bool showHidden() const { return m_showHidden; }
-    void setShowHidden(bool show);
+    Q_INVOKABLE void setShowHidden(bool show);
 
     int sortField() const { return m_sortField; }
-    void setSortField(int field);
+    Q_INVOKABLE void setSortField(int field);
 
     bool sortAscending() const { return m_sortAscending; }
-    void setSortAscending(bool asc);
+    Q_INVOKABLE void setSortAscending(bool asc);
 
     int itemCount() const { return m_items.size(); }
     int selectedCount() const;

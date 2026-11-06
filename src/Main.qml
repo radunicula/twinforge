@@ -356,54 +356,124 @@ ApplicationWindow {
 
                         RowLayout {
                             anchors.fill: parent
-                            anchors.leftMargin: 8
-                            anchors.rightMargin: 8
-                            spacing: 8
+                            anchors.leftMargin: 4
+                            anchors.rightMargin: 4
+                            spacing: 4
 
-                            Text {
-                                text: qsTr("Name") + (backend.leftPanel.sortField === 0 ? (backend.leftPanel.sortAscending ? " ▲" : " ▼") : "")
-                                color: backend.leftPanel.sortField === 0 ? theme.accent : "#8b92a5"
-                                font.bold: true
-                                font.pixelSize: 11
+                            Item {
                                 Layout.fillWidth: true
-                                MouseArea {
+                                Layout.fillHeight: true
+
+                                Rectangle {
                                     anchors.fill: parent
+                                    color: leftNameMouse.containsMouse ? "#262b3b" : "transparent"
+                                    radius: 2
+                                }
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 4
+                                    Text {
+                                        text: qsTr("Name") + (backend.leftPanel.sortField === 0 ? (backend.leftPanel.sortAscending ? " ▲" : " ▼") : "")
+                                        color: backend.leftPanel.sortField === 0 ? theme.accent : "#8b92a5"
+                                        font.bold: true
+                                        font.pixelSize: 11
+                                    }
+                                }
+                                MouseArea {
+                                    id: leftNameMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
                                     onClicked: backend.leftPanel.setSortField(0)
                                 }
                             }
-                            Text {
-                                text: qsTr("Ext") + (backend.leftPanel.sortField === 1 ? (backend.leftPanel.sortAscending ? " ▲" : " ▼") : "")
-                                color: backend.leftPanel.sortField === 1 ? theme.accent : "#8b92a5"
-                                font.bold: true
-                                font.pixelSize: 11
-                                Layout.preferredWidth: 45
-                                horizontalAlignment: Text.AlignRight
-                                MouseArea {
+
+                            Item {
+                                Layout.preferredWidth: 55
+                                Layout.fillHeight: true
+
+                                Rectangle {
                                     anchors.fill: parent
+                                    color: leftExtMouse.containsMouse ? "#262b3b" : "transparent"
+                                    radius: 2
+                                }
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.rightMargin: 4
+                                    Text {
+                                        text: qsTr("Ext") + (backend.leftPanel.sortField === 1 ? (backend.leftPanel.sortAscending ? " ▲" : " ▼") : "")
+                                        color: backend.leftPanel.sortField === 1 ? theme.accent : "#8b92a5"
+                                        font.bold: true
+                                        font.pixelSize: 11
+                                        Layout.fillWidth: true
+                                        horizontalAlignment: Text.AlignRight
+                                    }
+                                }
+                                MouseArea {
+                                    id: leftExtMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
                                     onClicked: backend.leftPanel.setSortField(1)
                                 }
                             }
-                            Text {
-                                text: qsTr("Size") + (backend.leftPanel.sortField === 2 ? (backend.leftPanel.sortAscending ? " ▲" : " ▼") : "")
-                                color: backend.leftPanel.sortField === 2 ? theme.accent : "#8b92a5"
-                                font.bold: true
-                                font.pixelSize: 11
-                                Layout.preferredWidth: 80
-                                horizontalAlignment: Text.AlignRight
-                                MouseArea {
+
+                            Item {
+                                Layout.preferredWidth: 85
+                                Layout.fillHeight: true
+
+                                Rectangle {
                                     anchors.fill: parent
+                                    color: leftSizeMouse.containsMouse ? "#262b3b" : "transparent"
+                                    radius: 2
+                                }
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.rightMargin: 4
+                                    Text {
+                                        text: qsTr("Size") + (backend.leftPanel.sortField === 2 ? (backend.leftPanel.sortAscending ? " ▲" : " ▼") : "")
+                                        color: backend.leftPanel.sortField === 2 ? theme.accent : "#8b92a5"
+                                        font.bold: true
+                                        font.pixelSize: 11
+                                        Layout.fillWidth: true
+                                        horizontalAlignment: Text.AlignRight
+                                    }
+                                }
+                                MouseArea {
+                                    id: leftSizeMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
                                     onClicked: backend.leftPanel.setSortField(2)
                                 }
                             }
-                            Text {
-                                text: qsTr("Date") + (backend.leftPanel.sortField === 3 ? (backend.leftPanel.sortAscending ? " ▲" : " ▼") : "")
-                                color: backend.leftPanel.sortField === 3 ? theme.accent : "#8b92a5"
-                                font.bold: true
-                                font.pixelSize: 11
-                                Layout.preferredWidth: 125
-                                horizontalAlignment: Text.AlignRight
-                                MouseArea {
+
+                            Item {
+                                Layout.preferredWidth: 130
+                                Layout.fillHeight: true
+
+                                Rectangle {
                                     anchors.fill: parent
+                                    color: leftDateMouse.containsMouse ? "#262b3b" : "transparent"
+                                    radius: 2
+                                }
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.rightMargin: 4
+                                    Text {
+                                        text: qsTr("Date") + (backend.leftPanel.sortField === 3 ? (backend.leftPanel.sortAscending ? " ▲" : " ▼") : "")
+                                        color: backend.leftPanel.sortField === 3 ? theme.accent : "#8b92a5"
+                                        font.bold: true
+                                        font.pixelSize: 11
+                                        Layout.fillWidth: true
+                                        horizontalAlignment: Text.AlignRight
+                                    }
+                                }
+                                MouseArea {
+                                    id: leftDateMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
                                     onClicked: backend.leftPanel.setSortField(3)
                                 }
                             }
@@ -671,54 +741,124 @@ ApplicationWindow {
 
                         RowLayout {
                             anchors.fill: parent
-                            anchors.leftMargin: 8
-                            anchors.rightMargin: 8
-                            spacing: 8
+                            anchors.leftMargin: 4
+                            anchors.rightMargin: 4
+                            spacing: 4
 
-                            Text {
-                                text: qsTr("Name") + (backend.rightPanel.sortField === 0 ? (backend.rightPanel.sortAscending ? " ▲" : " ▼") : "")
-                                color: backend.rightPanel.sortField === 0 ? theme.accent : "#8b92a5"
-                                font.bold: true
-                                font.pixelSize: 11
+                            Item {
                                 Layout.fillWidth: true
-                                MouseArea {
+                                Layout.fillHeight: true
+
+                                Rectangle {
                                     anchors.fill: parent
+                                    color: rightNameMouse.containsMouse ? "#262b3b" : "transparent"
+                                    radius: 2
+                                }
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 4
+                                    Text {
+                                        text: qsTr("Name") + (backend.rightPanel.sortField === 0 ? (backend.rightPanel.sortAscending ? " ▲" : " ▼") : "")
+                                        color: backend.rightPanel.sortField === 0 ? theme.accent : "#8b92a5"
+                                        font.bold: true
+                                        font.pixelSize: 11
+                                    }
+                                }
+                                MouseArea {
+                                    id: rightNameMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
                                     onClicked: backend.rightPanel.setSortField(0)
                                 }
                             }
-                            Text {
-                                text: qsTr("Ext") + (backend.rightPanel.sortField === 1 ? (backend.rightPanel.sortAscending ? " ▲" : " ▼") : "")
-                                color: backend.rightPanel.sortField === 1 ? theme.accent : "#8b92a5"
-                                font.bold: true
-                                font.pixelSize: 11
-                                Layout.preferredWidth: 45
-                                horizontalAlignment: Text.AlignRight
-                                MouseArea {
+
+                            Item {
+                                Layout.preferredWidth: 55
+                                Layout.fillHeight: true
+
+                                Rectangle {
                                     anchors.fill: parent
+                                    color: rightExtMouse.containsMouse ? "#262b3b" : "transparent"
+                                    radius: 2
+                                }
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.rightMargin: 4
+                                    Text {
+                                        text: qsTr("Ext") + (backend.rightPanel.sortField === 1 ? (backend.rightPanel.sortAscending ? " ▲" : " ▼") : "")
+                                        color: backend.rightPanel.sortField === 1 ? theme.accent : "#8b92a5"
+                                        font.bold: true
+                                        font.pixelSize: 11
+                                        Layout.fillWidth: true
+                                        horizontalAlignment: Text.AlignRight
+                                    }
+                                }
+                                MouseArea {
+                                    id: rightExtMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
                                     onClicked: backend.rightPanel.setSortField(1)
                                 }
                             }
-                            Text {
-                                text: qsTr("Size") + (backend.rightPanel.sortField === 2 ? (backend.rightPanel.sortAscending ? " ▲" : " ▼") : "")
-                                color: backend.rightPanel.sortField === 2 ? theme.accent : "#8b92a5"
-                                font.bold: true
-                                font.pixelSize: 11
-                                Layout.preferredWidth: 80
-                                horizontalAlignment: Text.AlignRight
-                                MouseArea {
+
+                            Item {
+                                Layout.preferredWidth: 85
+                                Layout.fillHeight: true
+
+                                Rectangle {
                                     anchors.fill: parent
+                                    color: rightSizeMouse.containsMouse ? "#262b3b" : "transparent"
+                                    radius: 2
+                                }
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.rightMargin: 4
+                                    Text {
+                                        text: qsTr("Size") + (backend.rightPanel.sortField === 2 ? (backend.rightPanel.sortAscending ? " ▲" : " ▼") : "")
+                                        color: backend.rightPanel.sortField === 2 ? theme.accent : "#8b92a5"
+                                        font.bold: true
+                                        font.pixelSize: 11
+                                        Layout.fillWidth: true
+                                        horizontalAlignment: Text.AlignRight
+                                    }
+                                }
+                                MouseArea {
+                                    id: rightSizeMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
                                     onClicked: backend.rightPanel.setSortField(2)
                                 }
                             }
-                            Text {
-                                text: qsTr("Date") + (backend.rightPanel.sortField === 3 ? (backend.rightPanel.sortAscending ? " ▲" : " ▼") : "")
-                                color: backend.rightPanel.sortField === 3 ? theme.accent : "#8b92a5"
-                                font.bold: true
-                                font.pixelSize: 11
-                                Layout.preferredWidth: 125
-                                horizontalAlignment: Text.AlignRight
-                                MouseArea {
+
+                            Item {
+                                Layout.preferredWidth: 130
+                                Layout.fillHeight: true
+
+                                Rectangle {
                                     anchors.fill: parent
+                                    color: rightDateMouse.containsMouse ? "#262b3b" : "transparent"
+                                    radius: 2
+                                }
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.rightMargin: 4
+                                    Text {
+                                        text: qsTr("Date") + (backend.rightPanel.sortField === 3 ? (backend.rightPanel.sortAscending ? " ▲" : " ▼") : "")
+                                        color: backend.rightPanel.sortField === 3 ? theme.accent : "#8b92a5"
+                                        font.bold: true
+                                        font.pixelSize: 11
+                                        Layout.fillWidth: true
+                                        horizontalAlignment: Text.AlignRight
+                                    }
+                                }
+                                MouseArea {
+                                    id: rightDateMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
                                     onClicked: backend.rightPanel.setSortField(3)
                                 }
                             }
