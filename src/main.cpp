@@ -18,7 +18,10 @@ int main(int argc, char *argv[]) {
     app.setApplicationVersion("0.1.0");
 
     app.setDesktopFileName("omapanel");
-    app.setWindowIcon(QIcon::fromTheme("omapanel"));
+    QIcon appIcon(":/logo.png");
+    if (appIcon.isNull())
+        appIcon = QIcon::fromTheme("omapanel");
+    app.setWindowIcon(appIcon);
 
     QQuickStyle::setStyle("Material");
 

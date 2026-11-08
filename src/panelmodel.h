@@ -8,6 +8,13 @@
 #include <QHash>
 #include <QSet>
 #include <QStorageInfo>
+#include <QVariantList>
+
+struct PanelTab {
+    QString path;
+    QStringList backStack;
+    QStringList forwardStack;
+};
 
 struct PanelItem {
     QString name;
@@ -22,6 +29,7 @@ struct PanelItem {
     QString extension;
     QString permissions;
     QString iconType;
+    QString gitStatus; // "", "modified", "untracked", "staged", "deleted"
     bool isSelected = false;
 };
 
@@ -38,6 +46,15 @@ class PanelModel : public QAbstractListModel {
     Q_PROPERTY(QString freeSpaceFormatted READ freeSpaceFormatted NOTIFY freeSpaceChanged)
     Q_PROPERTY(bool canGoBack READ canGoBack NOTIFY historyChanged)
     Q_PROPERTY(bool canGoForward READ canGoForward NOTIFY historyChanged)
+    Q_PROPERTY(QVariantList tabs READ tabs NOTIFY tabsChanged)
+    Q_PROPERTY(int activeTab READ activeTab WRITE setActiveTab NOTIFY tabsChanged)
+    Q_PROPERTY(int tabCount READ tabCount NOTIFY tabsChanged)
+    Q_PROPERTY(int viewMode READ viewMode WRITE setViewMode NOTIFY viewModeChanged)
+    Q_PROPERTY(bool isGitRepo READ isGitRepo NOTIFY gitChanged)
+    Q_PROPERTY(QString gitBranch READ gitBranch NOTIFY gitChanged)
+    Q_PROPERTY(int gitModifiedCount READ gitModifiedCount NOTIFY gitChanged)
+    Q_PROPERTY(int gitUntrackedCount READ gitUntrackedCount NOTIFY gitChanged)
+    Q_PROPERTY(bool isWritable READ isWritable NOTIFY pathChanged)
 
 public:
     enum SortField {
@@ -47,6 +64,12 @@ public:
         SortByDate = 3
     };
     Q_ENUM(SortField)
+
+    enum ViewMode {
+        ViewModeList = 0,
+        ViewModeGrid = 1
+    };
+    Q_ENUM(ViewMode)
 
     enum PanelRoles {
         NameRole = Qt::UserRole + 1,
@@ -59,6 +82,8 @@ public:
         ExtensionRole,
         PermissionsRole,
         IconTypeRole,
+        GitStatusRole,
+        ThumbnailUrlRole,
         IsSelectedRole
     };
 
@@ -91,12 +116,40 @@ public:
     bool canGoBack() const { return !m_backStack.isEmpty(); }
     bool canGoForward() const { return !m_forwardStack.isEmpty(); }
 
+    QVariantList tabs() const;
+    int activeTab() const { return m_activeTab; }
+    int tabCount() const { return m_tabs.size(); }
+    int viewMode() const { return m_viewMode; }
+    Q_INVOKABLE void setViewMode(int mode);
+    Q_INVOKABLE void toggleViewMode();
+
+    bool isGitRepo() const { return m_isGitRepo; }
+    QString gitBranch() const { return m_gitBranch; }
+    int gitModifiedCount() const { return m_gitModifiedCount; }
+    int gitUntrackedCount() const { return m_gitUntrackedCount; }
+    bool isWritable() const;
+
+    Q_INVOKABLE void setActiveTab(int index);
+    Q_INVOKABLE int addTab(const QString &path = {});
+    Q_INVOKABLE void closeTab(int index = -1);
+    Q_INVOKABLE void nextTab();
+    Q_INVOKABLE void prevTab();
+
+    QStringList tabPaths() const;
+    void restoreTabs(const QStringList &paths, int activeIndex);
+
     Q_INVOKABLE void cd(const QString &nameOrPath);
     Q_INVOKABLE void cdUp();
     Q_INVOKABLE void goBack();
     Q_INVOKABLE void goForward();
     Q_INVOKABLE void refresh();
     Q_INVOKABLE void toggleSelection(int index);
+    Q_INVOKABLE bool itemIsSelected(int index) const;
+    Q_INVOKABLE void setItemSelected(int index, bool selected);
+    Q_INVOKABLE void selectRange(int fromIndex, int toIndex, bool select = true);
+    Q_INVOKABLE void setSelectedIndices(const QList<int> &indices, bool addToExisting = false);
+    Q_INVOKABLE void selectByPattern(const QString &pattern, bool select = true);
+    Q_INVOKABLE void deselectByPattern(const QString &pattern) { selectByPattern(pattern, false); }
     Q_INVOKABLE void calculateFolderSize(int index);
     Q_INVOKABLE void calculateAllFolderSizes();
     Q_INVOKABLE void selectAll();
@@ -106,7 +159,10 @@ public:
     Q_INVOKABLE QString itemPath(int index) const;
     Q_INVOKABLE bool itemIsDir(int index) const;
     Q_INVOKABLE QString itemName(int index) const;
+    Q_INVOKABLE QString itemGitStatus(int index) const;
     Q_INVOKABLE QStringList selectedPaths() const;
+    Q_INVOKABLE QStringList allItemNames(bool excludeParent = true) const;
+    Q_INVOKABLE QStringList allItemPaths(bool excludeParent = true) const;
     Q_INVOKABLE int findIndexByPrefix(const QString &prefix, int startIndex = 0) const;
 
     static QString formatSize(qint64 bytes, bool isDir);
@@ -120,9 +176,16 @@ signals:
     void selectionChanged();
     void freeSpaceChanged();
     void historyChanged();
+    void tabsChanged();
+    void viewModeChanged();
+    void gitChanged();
 
 private:
+    void syncActiveTabState();
+    static QString resolveDirectoryPath(const QString &rawPath);
+    static QString tabTitleForPath(const QString &path);
     void loadDirectory();
+    void updateGitStatus();
     void sortItems();
     static qint64 computeDirectorySize(const QString &dirPath);
     static QString detectIconType(const QFileInfo &info);
@@ -132,10 +195,19 @@ private:
     bool m_showHidden = false;
     int m_sortField = SortByName;
     bool m_sortAscending = true;
+    int m_viewMode = ViewModeList;
+
+    bool m_isGitRepo = false;
+    QString m_gitBranch;
+    int m_gitModifiedCount = 0;
+    int m_gitUntrackedCount = 0;
 
     QStringList m_backStack;
     QStringList m_forwardStack;
     bool m_navigatingHistory = false;
+    bool m_switchingTab = false;
+    QList<PanelTab> m_tabs;
+    int m_activeTab = 0;
 
     QList<PanelItem> m_allItems;
     QList<PanelItem> m_items;

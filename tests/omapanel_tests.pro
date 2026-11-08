@@ -7,6 +7,7 @@ INCLUDEPATH += ../src
 
 HEADERS += \
     ../src/backend.h \
+    ../src/fileoperation.h \
     ../src/panelmodel.h \
     ../src/theme.h \
     ../src/translator.h
@@ -14,6 +15,7 @@ HEADERS += \
 SOURCES += \
     omapanel_tests.cpp \
     ../src/backend.cpp \
+    ../src/fileoperation.cpp \
     ../src/panelmodel.cpp \
     ../src/theme.cpp \
     ../src/translator.cpp

@@ -6,6 +6,10 @@
 #include <QDirIterator>
 #include <QFileInfo>
 #include <QLocale>
+#include <QProcess>
+#include <QRegularExpression>
+#include <QUrl>
+#include <QVariantMap>
 
 PanelModel::PanelModel(const QString &initialPath, QObject *parent)
     : QAbstractListModel(parent)
@@ -53,6 +57,12 @@ QVariant PanelModel::data(const QModelIndex &index, int role) const
         return item.permissions;
     case IconTypeRole:
         return item.iconType;
+    case GitStatusRole:
+        return item.gitStatus;
+    case ThumbnailUrlRole:
+        return (item.iconType == QLatin1String("image") && !item.isParent)
+                   ? QUrl::fromLocalFile(item.path).toString()
+                   : QString();
     case IsSelectedRole:
         return item.isSelected;
     default:
@@ -73,31 +83,216 @@ QHash<int, QByteArray> PanelModel::roleNames() const
     roles[ExtensionRole] = "extension";
     roles[PermissionsRole] = "permissions";
     roles[IconTypeRole] = "iconType";
+    roles[GitStatusRole] = "gitStatus";
+    roles[ThumbnailUrlRole] = "thumbnailUrl";
     roles[IsSelectedRole] = "isSelected";
     return roles;
 }
 
-void PanelModel::setPath(const QString &newPath)
+QString PanelModel::resolveDirectoryPath(const QString &rawPath)
 {
-    QString expanded = newPath.trimmed();
+    QString expanded = rawPath.trimmed();
     if (expanded == "~") {
         expanded = QDir::homePath();
     } else if (expanded.startsWith("~/")) {
         expanded = QDir::homePath() + expanded.mid(1);
     }
+    if (expanded.isEmpty())
+        return {};
 
     QDir dir(expanded);
     if (!dir.exists())
+        return {};
+
+    const QString canonical = dir.canonicalPath();
+    return canonical.isEmpty() ? dir.absolutePath() : canonical;
+}
+
+QString PanelModel::tabTitleForPath(const QString &path)
+{
+    if (path.isEmpty() || path == "/")
+        return QStringLiteral("/");
+    const QString name = QFileInfo(path).fileName();
+    return name.isEmpty() ? path : name;
+}
+
+void PanelModel::syncActiveTabState()
+{
+    if (m_activeTab >= 0 && m_activeTab < m_tabs.size()) {
+        m_tabs[m_activeTab].path = m_path;
+        m_tabs[m_activeTab].backStack = m_backStack;
+        m_tabs[m_activeTab].forwardStack = m_forwardStack;
+    }
+}
+
+QVariantList PanelModel::tabs() const
+{
+    QVariantList out;
+    out.reserve(m_tabs.size());
+    for (int i = 0; i < m_tabs.size(); ++i) {
+        const QString p = (i == m_activeTab && !m_path.isEmpty()) ? m_path : m_tabs.at(i).path;
+        QVariantMap entry;
+        entry["path"] = p;
+        entry["title"] = tabTitleForPath(p);
+        out.append(entry);
+    }
+    return out;
+}
+
+void PanelModel::setActiveTab(int index)
+{
+    if (index < 0 || index >= m_tabs.size() || index == m_activeTab)
         return;
 
-    QString cleanPath = dir.canonicalPath();
+    syncActiveTabState();
+    m_activeTab = index;
+    m_backStack = m_tabs.at(m_activeTab).backStack;
+    m_forwardStack = m_tabs.at(m_activeTab).forwardStack;
+
+    const QString targetPath = m_tabs.at(m_activeTab).path;
+    m_switchingTab = true;
+    if (m_path != targetPath) {
+        setPath(targetPath);
+    } else {
+        m_selectedPaths.clear();
+        if (!m_filter.isEmpty()) {
+            m_filter.clear();
+            emit filterChanged();
+        }
+        loadDirectory();
+        emit selectionChanged();
+    }
+    m_switchingTab = false;
+    emit historyChanged();
+    emit tabsChanged();
+}
+
+int PanelModel::addTab(const QString &path)
+{
+    syncActiveTabState();
+
+    QString target = resolveDirectoryPath(path);
+    if (target.isEmpty())
+        target = m_path.isEmpty() ? QDir::homePath() : m_path;
+
+    m_tabs.append(PanelTab{target, {}, {}});
+    m_activeTab = m_tabs.size() - 1;
+    m_backStack.clear();
+    m_forwardStack.clear();
+
+    m_switchingTab = true;
+    if (m_path != target) {
+        setPath(target);
+    } else {
+        m_selectedPaths.clear();
+        if (!m_filter.isEmpty()) {
+            m_filter.clear();
+            emit filterChanged();
+        }
+        loadDirectory();
+        emit selectionChanged();
+    }
+    m_switchingTab = false;
+    emit historyChanged();
+    emit tabsChanged();
+    return m_activeTab;
+}
+
+void PanelModel::closeTab(int index)
+{
+    if (m_tabs.size() <= 1)
+        return;
+
+    const int targetIdx = (index < 0) ? m_activeTab : index;
+    if (targetIdx < 0 || targetIdx >= m_tabs.size())
+        return;
+
+    syncActiveTabState();
+    m_tabs.removeAt(targetIdx);
+
+    if (targetIdx < m_activeTab) {
+        --m_activeTab;
+        emit tabsChanged();
+        return;
+    }
+
+    if (targetIdx == m_activeTab) {
+        m_activeTab = std::min(targetIdx, static_cast<int>(m_tabs.size()) - 1);
+        m_backStack = m_tabs.at(m_activeTab).backStack;
+        m_forwardStack = m_tabs.at(m_activeTab).forwardStack;
+
+        const QString nextPath = m_tabs.at(m_activeTab).path;
+        m_switchingTab = true;
+        if (m_path != nextPath) {
+            setPath(nextPath);
+        } else {
+            m_selectedPaths.clear();
+            loadDirectory();
+            emit selectionChanged();
+        }
+        m_switchingTab = false;
+        emit historyChanged();
+    }
+    emit tabsChanged();
+}
+
+void PanelModel::nextTab()
+{
+    if (m_tabs.size() > 1)
+        setActiveTab((m_activeTab + 1) % m_tabs.size());
+}
+
+void PanelModel::prevTab()
+{
+    if (m_tabs.size() > 1)
+        setActiveTab((m_activeTab - 1 + m_tabs.size()) % m_tabs.size());
+}
+
+QStringList PanelModel::tabPaths() const
+{
+    QStringList out;
+    for (int i = 0; i < m_tabs.size(); ++i)
+        out.append((i == m_activeTab && !m_path.isEmpty()) ? m_path : m_tabs.at(i).path);
+    return out;
+}
+
+void PanelModel::restoreTabs(const QStringList &paths, int activeIndex)
+{
+    QList<PanelTab> validTabs;
+    for (const QString &raw : paths) {
+        const QString resolved = resolveDirectoryPath(raw);
+        if (!resolved.isEmpty())
+            validTabs.append(PanelTab{resolved, {}, {}});
+    }
+    if (validTabs.isEmpty())
+        return;
+
+    m_tabs = validTabs;
+    m_activeTab = std::clamp(activeIndex, 0, static_cast<int>(m_tabs.size()) - 1);
+    m_backStack.clear();
+    m_forwardStack.clear();
+
+    const QString target = m_tabs.at(m_activeTab).path;
+    m_switchingTab = true;
+    if (m_path != target)
+        setPath(target);
+    else
+        loadDirectory();
+    m_switchingTab = false;
+    emit historyChanged();
+    emit tabsChanged();
+}
+
+void PanelModel::setPath(const QString &newPath)
+{
+    const QString cleanPath = resolveDirectoryPath(newPath);
     if (cleanPath.isEmpty())
-        cleanPath = dir.absolutePath();
+        return;
 
     if (m_path == cleanPath)
         return;
 
-    if (!m_path.isEmpty() && !m_navigatingHistory) {
+    if (!m_path.isEmpty() && !m_navigatingHistory && !m_switchingTab) {
         m_backStack.append(m_path);
         if (m_backStack.size() > 50)
             m_backStack.removeFirst();
@@ -112,6 +307,15 @@ void PanelModel::setPath(const QString &newPath)
     if (QFileInfo::exists(m_path))
         m_dirWatcher.addPath(m_path);
 
+    if (m_tabs.isEmpty()) {
+        m_tabs.append(PanelTab{m_path, m_backStack, m_forwardStack});
+        m_activeTab = 0;
+    } else if (m_activeTab >= 0 && m_activeTab < m_tabs.size()) {
+        m_tabs[m_activeTab].path = m_path;
+        m_tabs[m_activeTab].backStack = m_backStack;
+        m_tabs[m_activeTab].forwardStack = m_forwardStack;
+    }
+
     m_selectedPaths.clear();
     m_calculatedDirSizes.clear();
     if (!m_filter.isEmpty()) {
@@ -120,6 +324,7 @@ void PanelModel::setPath(const QString &newPath)
     }
     loadDirectory();
     emit pathChanged();
+    emit tabsChanged();
     emit freeSpaceChanged();
     emit selectionChanged();
 }
@@ -322,6 +527,115 @@ void PanelModel::toggleSelection(int index)
     emit selectionChanged();
 }
 
+bool PanelModel::itemIsSelected(int index) const
+{
+    if (index < 0 || index >= m_items.size())
+        return false;
+    return m_items[index].isSelected;
+}
+
+void PanelModel::setItemSelected(int index, bool selected)
+{
+    if (index < 0 || index >= m_items.size())
+        return;
+
+    PanelItem &item = m_items[index];
+    if (item.isParent || item.isSelected == selected)
+        return;
+
+    item.isSelected = selected;
+    if (selected)
+        m_selectedPaths.insert(item.path);
+    else
+        m_selectedPaths.remove(item.path);
+
+    for (PanelItem &allItem : m_allItems) {
+        if (allItem.path == item.path) {
+            allItem.isSelected = selected;
+            break;
+        }
+    }
+
+    QModelIndex idx = createIndex(index, 0);
+    emit dataChanged(idx, idx, {IsSelectedRole});
+    emit selectionChanged();
+}
+
+void PanelModel::selectRange(int fromIndex, int toIndex, bool select)
+{
+    if (m_items.isEmpty())
+        return;
+
+    int start = qBound(0, qMin(fromIndex, toIndex), m_items.size() - 1);
+    int end = qBound(0, qMax(fromIndex, toIndex), m_items.size() - 1);
+
+    bool changed = false;
+    for (int i = start; i <= end; ++i) {
+        PanelItem &item = m_items[i];
+        if (item.isParent || item.isSelected == select)
+            continue;
+        item.isSelected = select;
+        if (select)
+            m_selectedPaths.insert(item.path);
+        else
+            m_selectedPaths.remove(item.path);
+        changed = true;
+    }
+
+    if (changed) {
+        for (PanelItem &allItem : m_allItems) {
+            allItem.isSelected = m_selectedPaths.contains(allItem.path);
+        }
+        emit dataChanged(createIndex(start, 0), createIndex(end, 0), {IsSelectedRole});
+        emit selectionChanged();
+    }
+}
+
+void PanelModel::setSelectedIndices(const QList<int> &indices, bool addToExisting)
+{
+    QSet<int> targetSet(indices.begin(), indices.end());
+    bool changed = false;
+
+    if (!addToExisting) {
+        for (int i = 0; i < m_items.size(); ++i) {
+            PanelItem &item = m_items[i];
+            if (item.isParent)
+                continue;
+            bool shouldBeSelected = targetSet.contains(i);
+            if (item.isSelected != shouldBeSelected) {
+                item.isSelected = shouldBeSelected;
+                if (shouldBeSelected)
+                    m_selectedPaths.insert(item.path);
+                else
+                    m_selectedPaths.remove(item.path);
+                changed = true;
+                QModelIndex idx = createIndex(i, 0);
+                emit dataChanged(idx, idx, {IsSelectedRole});
+            }
+        }
+    } else {
+        for (int i : targetSet) {
+            if (i >= 0 && i < m_items.size()) {
+                PanelItem &item = m_items[i];
+                if (!item.isParent && !item.isSelected) {
+                    item.isSelected = true;
+                    m_selectedPaths.insert(item.path);
+                    changed = true;
+                    QModelIndex idx = createIndex(i, 0);
+                    emit dataChanged(idx, idx, {IsSelectedRole});
+                }
+            }
+        }
+    }
+
+    if (changed) {
+        for (PanelItem &allItem : m_allItems) {
+            allItem.isSelected = m_selectedPaths.contains(allItem.path);
+        }
+        emit selectionChanged();
+    }
+}
+
 void PanelModel::selectAll()
 {
     for (PanelItem &item : m_items) {
@@ -349,6 +663,182 @@ void PanelModel::deselectAll()
     if (!m_items.isEmpty())
         emit dataChanged(createIndex(0, 0), createIndex(m_items.size() - 1, 0), {IsSelectedRole});
     emit selectionChanged();
+}
+
+void PanelModel::selectByPattern(const QString &pattern, bool select)
+{
+    const QString trimmed = pattern.trimmed();
+    if (trimmed.isEmpty())
+        return;
+
+    QStringList patterns;
+    for (const QString &part : trimmed.split(QRegularExpression(R"([;,\s]+)"), Qt::SkipEmptyParts)) {
+        QString pat = part.trimmed();
+        if (!pat.isEmpty()) {
+            if (!pat.contains('*') && !pat.contains('?'))
+                pat = "*" + pat + "*";
+            patterns.append(pat);
+        }
+    }
+    if (patterns.isEmpty())
+        return;
+
+    bool anyChanged = false;
+    for (PanelItem &item : m_items) {
+        if (item.isParent)
+            continue;
+
+        if (QDir::match(patterns, item.name)) {
+            if (item.isSelected != select) {
+                item.isSelected = select;
+                anyChanged = true;
+                if (select)
+                    m_selectedPaths.insert(item.path);
+                else
+                    m_selectedPaths.remove(item.path);
+            }
+        }
+    }
+
+    for (PanelItem &allItem : m_allItems) {
+        if (!allItem.isParent)
+            allItem.isSelected = m_selectedPaths.contains(allItem.path);
+    }
+
+    if (anyChanged) {
+        if (!m_items.isEmpty())
+            emit dataChanged(createIndex(0, 0), createIndex(m_items.size() - 1, 0), {IsSelectedRole});
+        emit selectionChanged();
+    }
+}
+
+void PanelModel::setViewMode(int mode)
+{
+    const int clean = (mode == ViewModeGrid) ? ViewModeGrid : ViewModeList;
+    if (m_viewMode != clean) {
+        m_viewMode = clean;
+        emit viewModeChanged();
+    }
+}
+
+void PanelModel::toggleViewMode()
+{
+    setViewMode(m_viewMode == ViewModeList ? ViewModeGrid : ViewModeList);
+}
+
+void PanelModel::updateGitStatus()
+{
+    m_isGitRepo = false;
+    m_gitBranch.clear();
+    m_gitModifiedCount = 0;
+    m_gitUntrackedCount = 0;
+
+    if (m_path.isEmpty() || !QDir(m_path).exists()) {
+        emit gitChanged();
+        return;
+    }
+
+    QDir checkDir(m_path);
+    bool foundGit = false;
+    while (true) {
+        if (checkDir.exists(".git")) {
+            foundGit = true;
+            break;
+        }
+        if (!checkDir.cdUp())
+            break;
+    }
+
+    if (!foundGit) {
+        emit gitChanged();
+        return;
+    }
+
+    m_isGitRepo = true;
+
+    QProcess branchProc;
+    branchProc.setWorkingDirectory(m_path);
+    branchProc.start("git", {"branch", "--show-current"});
+    if (branchProc.waitForFinished(1000) && branchProc.exitCode() == 0) {
+        m_gitBranch = QString::fromUtf8(branchProc.readAllStandardOutput()).trimmed();
+    }
+    if (m_gitBranch.isEmpty()) {
+        QProcess headProc;
+        headProc.setWorkingDirectory(m_path);
+        headProc.start("git", {"rev-parse", "--short", "HEAD"});
+        if (headProc.waitForFinished(1000) && headProc.exitCode() == 0) {
+            m_gitBranch = QString::fromUtf8(headProc.readAllStandardOutput()).trimmed();
+        }
+    }
+
+    QProcess statusProc;
+    statusProc.setWorkingDirectory(m_path);
+    statusProc.start("git", {"status", "--porcelain=v1", "."});
+    if (statusProc.waitForFinished(2000) && statusProc.exitCode() == 0) {
+        const QByteArray rawOut = statusProc.readAllStandardOutput();
+        const QList<QByteArray> lines = rawOut.split('\n');
+        QHash<QString, QString> statusMap;
+
+        for (const QByteArray &line : lines) {
+            if (line.size() < 4)
+                continue;
+            const char x = line.at(0);
+            const char y = line.at(1);
+            QByteArray relPath = line.mid(3).trimmed();
+            const int arrow = relPath.indexOf(" -> ");
+            if (arrow != -1)
+                relPath = relPath.mid(arrow + 4);
+
+            if (relPath.startsWith('"') && relPath.endsWith('"'))
+                relPath = relPath.mid(1, relPath.size() - 2);
+
+            QString fileName = QString::fromUtf8(relPath);
+            const int slash = fileName.indexOf('/');
+            if (slash != -1)
+                fileName = fileName.left(slash);
+
+            QString status;
+            if (x == '?' && y == '?') {
+                status = QStringLiteral("untracked");
+                ++m_gitUntrackedCount;
+            } else if (x == 'A' || y == 'A') {
+                status = QStringLiteral("staged");
+                ++m_gitModifiedCount;
+            } else if (x == 'D' || y == 'D') {
+                status = QStringLiteral("deleted");
+                ++m_gitModifiedCount;
+            } else {
+                status = QStringLiteral("modified");
+                ++m_gitModifiedCount;
+            }
+
+            if (!statusMap.contains(fileName) || status == "modified") {
+                statusMap.insert(fileName, status);
+            }
+        }
+
+        for (PanelItem &item : m_allItems) {
+            if (!item.isParent && statusMap.contains(item.name))
+                item.gitStatus = statusMap.value(item.name);
+            else
+                item.gitStatus.clear();
+        }
+        for (PanelItem &item : m_items) {
+            if (!item.isParent && statusMap.contains(item.name))
+                item.gitStatus = statusMap.value(item.name);
+            else
+                item.gitStatus.clear();
+        }
+    }
+
+    emit gitChanged();
+}
+
+QString PanelModel::itemGitStatus(int index) const
+{
+    if (index >= 0 && index < m_items.size())
+        return m_items.at(index).gitStatus;
+    return {};
 }
 
 void PanelModel::invertSelection()
@@ -442,6 +932,35 @@ QStringList PanelModel::selectedPaths() const
             result.append(item.path);
     }
     return result;
+}
+
+QStringList PanelModel::allItemNames(bool excludeParent) const
+{
+    QStringList result;
+    result.reserve(m_items.size());
+    for (const auto &item : m_items) {
+        if (excludeParent && (item.isParent || item.name == QLatin1String("..")))
+            continue;
+        result.append(item.name);
+    }
+    return result;
+}
+
+QStringList PanelModel::allItemPaths(bool excludeParent) const
+{
+    QStringList result;
+    result.reserve(m_items.size());
+    for (const auto &item : m_items) {
+        if (excludeParent && (item.isParent || item.name == QLatin1String("..")))
+            continue;
+        result.append(item.path);
+    }
+    return result;
+}
+
+bool PanelModel::isWritable() const
+{
+    return QFileInfo(m_path).isWritable();
 }
 
 int PanelModel::selectedCount() const
@@ -573,9 +1092,9 @@ void PanelModel::loadDirectory()
 
         QFile::Permissions p = fi.permissions();
         QString perm;
-        perm += (p & QFile::ReadUser) ? 'r' : '-';
-        perm += (p & QFile::WriteUser) ? 'w' : '-';
-        perm += (p & QFile::ExeUser) ? 'x' : '-';
+        perm += (p & QFile::ReadOwner) ? 'r' : '-';
+        perm += (p & QFile::WriteOwner) ? 'w' : '-';
+        perm += (p & QFile::ExeOwner) ? 'x' : '-';
         perm += (p & QFile::ReadGroup) ? 'r' : '-';
         perm += (p & QFile::WriteGroup) ? 'w' : '-';
         perm += (p & QFile::ExeGroup) ? 'x' : '-';
@@ -588,6 +1107,7 @@ void PanelModel::loadDirectory()
     }
 
     sortItems();
+    updateGitStatus();
 }
 
 void PanelModel::sortItems()
