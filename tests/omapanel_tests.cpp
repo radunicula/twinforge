@@ -1,8 +1,10 @@
+#include <QBuffer>
 #include <QClipboard>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QGuiApplication>
+#include <QImage>
 #include <QMimeData>
 #include <QProcess>
 #include <QQmlApplicationEngine>
@@ -369,7 +371,10 @@ private slots:
         QSignalSpy finished(&backend, &Backend::operationFinished);
         QVERIFY(backend.copyItems({src.filePath("1.txt"), src.filePath("2.txt")}, dst.path()));
         QVERIFY(backend.isBusy());
-        QVERIFY(!backend.copyItems({src.filePath("2.txt")}, dst.path())); // one operation at a time
+        QVERIFY(backend.copyItems({src.filePath("2.txt")}, dst.path())); // queued while busy
+        QCOMPARE(backend.queueCount(), 1);
+        backend.clearOperationQueue();
+        QCOMPARE(backend.queueCount(), 0);
         QVERIFY(finished.wait(5000));
         QCOMPARE(finished.first().at(0).toBool(), false);
         QVERIFY(!backend.isBusy());
@@ -1576,6 +1581,532 @@ private slots:
         QCOMPARE(backend.leftPanel()->isCollectionView(), true);
         backend.leftPanel()->exitCollectionView();
         QCOMPARE(backend.leftPanel()->isCollectionView(), false);
+
+        // Exercise Productivity Suite #3 Queue monitor, Next-Gen F3 Preview, and Multi-Rename QML bindings
+        QVERIFY(QMetaObject::invokeMethod(root, "openOperationQueueDialog"));
+        QCOMPARE(root->property("queueDialogOpen").toBool(), true);
+        root->setProperty("queueDialogOpen", false);
+        QCOMPARE(root->property("queueDialogOpen").toBool(), false);
+
+        const QString mdPath = cfg.filePath("qml_preview.md");
+        writeFile(mdPath, "# Hello\n\n**Bold** text\n");
+        root->setProperty("previewData", backend.getPreview(mdPath));
+        root->setProperty("previewOpen", true);
+        QCOMPARE(root->property("previewOpen").toBool(), true);
+        root->setProperty("previewOpen", false);
+        QCOMPARE(root->property("previewOpen").toBool(), false);
+
+        backend.leftPanel()->setPath(cfg.path());
+        backend.leftPanel()->selectAll();
+        QVERIFY(QMetaObject::invokeMethod(root, "triggerMultiRename"));
+        QCOMPARE(root->property("multiRenameOpen").toBool(), true);
+        root->setProperty("multiRenameOpen", false);
+        QCOMPARE(root->property("multiRenameOpen").toBool(), false);
+
+        // Exercise Productivity Suite #4 Remote Connections & Open With / Custom Actions dialogs
+        QVERIFY(QMetaObject::invokeMethod(root, "openRemoteConnectionsDialog", Q_ARG(QVariant, QVariant(QString()))));
+        QCOMPARE(root->property("remoteConnectionsOpen").toBool(), true);
+        root->setProperty("remoteConnectionsOpen", false);
+        QCOMPARE(root->property("remoteConnectionsOpen").toBool(), false);
+
+        QVERIFY(QMetaObject::invokeMethod(root, "openOpenWithDialog", Q_ARG(QVariant, QVariant(mdPath)), Q_ARG(QVariant, QVariant(0))));
+        QCOMPARE(root->property("openWithOpen").toBool(), true);
+        root->setProperty("openWithOpen", false);
+        QCOMPARE(root->property("openWithOpen").toBool(), false);
+    }
+
+    void operationQueueSpeedEtaAndPauseResume()
+    {
+        QTemporaryDir src, dst1, dst2, cfg;
+        writeFile(src.filePath("big.bin"), QByteArray(2 * 1024 * 1024, 'M'));
+        writeFile(src.filePath("queued.txt"), "queued-payload");
+        writeFile(src.filePath("skipped.txt"), "removed-payload");
+
+        Backend backend(cfg.filePath("bookmarks.json"));
+        QSignalSpy finishedSpy(&backend, &Backend::operationFinished);
+        bool sawSpeed = false;
+        bool sawTotalBytes = false;
+        QObject::connect(&backend, &Backend::busyChanged, &backend, [&]() {
+            if (!backend.busySpeed().isEmpty())
+                sawSpeed = true;
+            if (backend.busyTotalBytes() > 0)
+                sawTotalBytes = true;
+        });
+
+        QVERIFY(backend.copyItems({src.filePath("big.bin")}, dst1.path()));
+        QVERIFY(backend.isBusy());
+
+        backend.pauseOperation();
+        QCOMPARE(backend.isPaused(), true);
+
+        QVERIFY(backend.copyItems({src.filePath("queued.txt")}, dst2.path()));
+        QVERIFY(backend.copyItems({src.filePath("skipped.txt")}, dst1.path()));
+        QCOMPARE(backend.queueCount(), 2);
+        const QVariantList qList = backend.operationQueue();
+        QCOMPARE(qList.size(), 2);
+
+        const int secondId = qList.at(1).toMap().value(QStringLiteral("id")).toInt();
+        QVERIFY(backend.removeQueuedOperation(secondId));
+        QCOMPARE(backend.queueCount(), 1);
+
+        QTest::qWait(80);
+        QCOMPARE(backend.isPaused(), true);
+
+        backend.resumeOperation();
+        QCOMPARE(backend.isPaused(), false);
+
+        QTRY_VERIFY_WITH_TIMEOUT(!backend.isBusy() && backend.queueCount() == 0 && finishedSpy.count() == 2, 10000);
+        QCOMPARE(finishedSpy.at(0).at(0).toBool(), true);
+        QCOMPARE(finishedSpy.at(1).at(0).toBool(), true);
+        QCOMPARE(QFileInfo(dst1.filePath("big.bin")).size(), static_cast<qint64>(2 * 1024 * 1024));
+        QCOMPARE(readFile(dst2.filePath("queued.txt")), QByteArray("queued-payload"));
+        QVERIFY(!QFile::exists(dst1.filePath("skipped.txt")));
+        QVERIFY(sawSpeed);
+        QVERIFY(sawTotalBytes);
+    }
+
+    void nextGenPreviewCodeMarkdownExifPdfFontAndMedia()
+    {
+        QTemporaryDir dir, cfg;
+        Backend backend(cfg.filePath("bookmarks.json"));
+
+        // 1. Source Code Syntax Highlighting
+        const QString cppPath = dir.filePath("main.cpp");
+        writeFile(cppPath, "// header\n#include <iostream>\nint main() { return 42; }\n");
+        const QVariantMap cppPrev = backend.getPreview(cppPath);
+        QCOMPARE(cppPrev.value(QStringLiteral("isCode")).toBool(), true);
+        QCOMPARE(cppPrev.value(QStringLiteral("syntaxLanguage")).toString(), QStringLiteral("C++"));
+        QVERIFY(cppPrev.value(QStringLiteral("highlightedHtml")).toString().contains(QStringLiteral("<span")));
+
+        // 2. Markdown Rendering
+        const QString mdPath = dir.filePath("README.md");
+        writeFile(mdPath, "# AeroCommander\n\nFeatures **bold** and `code`.\n- item 1\n");
+        const QVariantMap mdPrev = backend.getPreview(mdPath);
+        QCOMPARE(mdPrev.value(QStringLiteral("isMarkdown")).toBool(), true);
+        const QString mdHtml = mdPrev.value(QStringLiteral("renderedHtml")).toString();
+        QVERIFY(mdHtml.contains(QStringLiteral("<h1")));
+        QVERIFY(mdHtml.contains(QStringLiteral("<b>bold</b>")));
+
+        // 3. Synthetic JPEG with EXIF APP1 (Canon EOS R5, ISO 400, f/2.8, 1/250s, 50 mm, GPS)
+        QByteArray tiff;
+        auto pushU16 = [&](quint16 v) { tiff.append(static_cast<char>(v & 0xFF)); tiff.append(static_cast<char>((v >> 8) & 0xFF)); };
+        auto pushU32 = [&](quint32 v) {
+            tiff.append(static_cast<char>(v & 0xFF));
+            tiff.append(static_cast<char>((v >> 8) & 0xFF));
+            tiff.append(static_cast<char>((v >> 16) & 0xFF));
+            tiff.append(static_cast<char>((v >> 24) & 0xFF));
+        };
+        auto setU32 = [&](int pos, quint32 v) {
+            tiff[pos] = static_cast<char>(v & 0xFF);
+            tiff[pos + 1] = static_cast<char>((v >> 8) & 0xFF);
+            tiff[pos + 2] = static_cast<char>((v >> 16) & 0xFF);
+            tiff[pos + 3] = static_cast<char>((v >> 24) & 0xFF);
+        };
+        tiff.append("II*\0", 4);
+        pushU32(8); // IFD0 offset
+
+        // IFD0: 4 entries (0x010F Make, 0x0110 Model, 0x8769 ExifIFD, 0x8825 GPSIFD)
+        pushU16(4);
+        const int makeOffPos = tiff.size() + 8;   pushU16(0x010F); pushU16(2); pushU32(6); pushU32(0);
+        const int modelOffPos = tiff.size() + 8;  pushU16(0x0110); pushU16(2); pushU32(7); pushU32(0);
+        const int exifPtrPos = tiff.size() + 8;   pushU16(0x8769); pushU16(4); pushU32(1); pushU32(0);
+        const int gpsPtrPos = tiff.size() + 8;    pushU16(0x8825); pushU16(4); pushU32(1); pushU32(0);
+        pushU32(0); // next IFD
+
+        setU32(makeOffPos, static_cast<quint32>(tiff.size()));  tiff.append("Canon\0", 6);
+        setU32(modelOffPos, static_cast<quint32>(tiff.size())); tiff.append("EOS R5\0", 7);
+
+        // Exif SubIFD: 5 entries
+        setU32(exifPtrPos, static_cast<quint32>(tiff.size()));
+        pushU16(5);
+        const int expOffPos = tiff.size() + 8;   pushU16(0x829A); pushU16(5); pushU32(1); pushU32(0);
+        const int fnumOffPos = tiff.size() + 8;  pushU16(0x829D); pushU16(5); pushU32(1); pushU32(0);
+        pushU16(0x8827); pushU16(3); pushU32(1); pushU32(400); // inline ISO 400
+        const int dateOffPos = tiff.size() + 8;  pushU16(0x9003); pushU16(2); pushU32(20); pushU32(0);
+        const int flOffPos = tiff.size() + 8;    pushU16(0x920A); pushU16(5); pushU32(1); pushU32(0);
+        pushU32(0);
+
+        setU32(expOffPos, static_cast<quint32>(tiff.size()));   pushU32(1); pushU32(250);
+        setU32(fnumOffPos, static_cast<quint32>(tiff.size()));  pushU32(28); pushU32(10);
+        setU32(dateOffPos, static_cast<quint32>(tiff.size()));  tiff.append("2026:11:15 12:30:00\0", 20);
+        setU32(flOffPos, static_cast<quint32>(tiff.size()));    pushU32(50); pushU32(1);
+
+        // GPS SubIFD: 4 entries
+        setU32(gpsPtrPos, static_cast<quint32>(tiff.size()));
+        pushU16(4);
+        pushU16(0x0001); pushU16(2); pushU32(2); tiff.append("N\0\0\0", 4);
+        const int latOffPos = tiff.size() + 8; pushU16(0x0002); pushU16(5); pushU32(3); pushU32(0);
+        pushU16(0x0003); pushU16(2); pushU32(2); tiff.append("E\0\0\0", 4);
+        const int lonOffPos = tiff.size() + 8; pushU16(0x0004); pushU16(5); pushU32(3); pushU32(0);
+        pushU32(0);
+
+        setU32(latOffPos, static_cast<quint32>(tiff.size()));
+        pushU32(44); pushU32(1); pushU32(25); pushU32(1); pushU32(3648); pushU32(100);
+        setU32(lonOffPos, static_cast<quint32>(tiff.size()));
+        pushU32(26); pushU32(1); pushU32(6); pushU32(1); pushU32(900); pushU32(100);
+
+        QImage img(2, 2, QImage::Format_RGB32);
+        img.fill(Qt::darkCyan);
+        QByteArray baseJpeg;
+        QBuffer jpegBuf(&baseJpeg);
+        QVERIFY(jpegBuf.open(QIODevice::WriteOnly));
+        QVERIFY(img.save(&jpegBuf, "JPEG", 90));
+        QVERIFY(baseJpeg.startsWith(QByteArray("\xFF\xD8", 2)));
+
+        QByteArray app1;
+        const quint16 app1Len = static_cast<quint16>(2 + 6 + tiff.size());
+        app1.append("\xFF\xE1", 2);
+        app1.append(static_cast<char>((app1Len >> 8) & 0xFF));
+        app1.append(static_cast<char>(app1Len & 0xFF));
+        app1.append("Exif\0\0", 6);
+        app1.append(tiff);
+
+        QByteArray jpeg = baseJpeg.left(2) + app1 + baseJpeg.mid(2);
+
+        const QString jpgPath = dir.filePath("photo.jpg");
+        writeFile(jpgPath, jpeg);
+        const QVariantMap jpgPrev = backend.getPreview(jpgPath);
+        QCOMPARE(jpgPrev.value(QStringLiteral("isImage")).toBool(), true);
+        QCOMPARE(jpgPrev.value(QStringLiteral("hasExif")).toBool(), true);
+        const QVariantMap exif = jpgPrev.value(QStringLiteral("exif")).toMap();
+        QCOMPARE(exif.value(QStringLiteral("cameraMake")).toString(), QStringLiteral("Canon"));
+        QCOMPARE(exif.value(QStringLiteral("cameraModel")).toString(), QStringLiteral("EOS R5"));
+        QCOMPARE(exif.value(QStringLiteral("iso")).toInt(), 400);
+        QCOMPARE(exif.value(QStringLiteral("aperture")).toString(), QStringLiteral("f/2.8"));
+        QCOMPARE(exif.value(QStringLiteral("exposure")).toString(), QStringLiteral("1/250s"));
+        QCOMPARE(exif.value(QStringLiteral("focalLength")).toString(), QStringLiteral("50 mm"));
+        QVERIFY(!exif.value(QStringLiteral("gpsCoordinates")).toString().isEmpty());
+
+        // 4. Valid 2-Page PDF Preview & Page Navigation
+        QByteArray pdf = "%PDF-1.4\n";
+        QList<int> offsets;
+        auto addObj = [&](const QByteArray &body) {
+            offsets.append(pdf.size());
+            pdf.append(body);
+        };
+        addObj("1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
+        addObj("2 0 obj\n<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>\nendobj\n");
+        addObj("3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 5 0 R >>\nendobj\n");
+        addObj("4 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 6 0 R >>\nendobj\n");
+        const QByteArray st1 = "BT /F1 12 Tf 10 100 Td (PageOneHello) Tj ET";
+        addObj("5 0 obj\n<< /Length " + QByteArray::number(st1.size()) + " >>\nstream\n" + st1 + "\nendstream\nendobj\n");
+        const QByteArray st2 = "BT /F1 12 Tf 10 100 Td (PageTwoWorld) Tj ET";
+        addObj("6 0 obj\n<< /Length " + QByteArray::number(st2.size()) + " >>\nstream\n" + st2 + "\nendstream\nendobj\n");
+        addObj("7 0 obj\n<< /Title (Suite3 PDF Title) >>\nendobj\n");
+        const int xrefPos = pdf.size();
+        pdf.append("xref\n0 8\n0000000000 65535 f \n");
+        for (int off : offsets)
+            pdf.append(QStringLiteral("%1 00000 n \n").arg(off, 10, 10, QLatin1Char('0')).toLatin1());
+        pdf.append("trailer\n<< /Size 8 /Root 1 0 R /Info 7 0 R >>\nstartxref\n" + QByteArray::number(xrefPos) + "\n%%EOF\n");
+
+        const QString pdfPath = dir.filePath("sample.pdf");
+        writeFile(pdfPath, pdf);
+        const QVariantMap pdfP1 = backend.getPreview(pdfPath, 1);
+        QCOMPARE(pdfP1.value(QStringLiteral("isPdf")).toBool(), true);
+        QCOMPARE(pdfP1.value(QStringLiteral("pdfPageCount")).toInt(), 2);
+        QCOMPARE(pdfP1.value(QStringLiteral("pdfPage")).toInt(), 1);
+        QCOMPARE(pdfP1.value(QStringLiteral("pdfTitle")).toString(), QStringLiteral("Suite3 PDF Title"));
+        QVERIFY(pdfP1.value(QStringLiteral("pdfPageText")).toString().contains(QStringLiteral("PageOneHello")));
+
+        const QVariantMap pdfP2 = backend.getPreview(pdfPath, 2);
+        QCOMPARE(pdfP2.value(QStringLiteral("pdfPage")).toInt(), 2);
+        QVERIFY(pdfP2.value(QStringLiteral("pdfPageText")).toString().contains(QStringLiteral("PageTwoWorld")));
+
+        // 5. Font Preview (copies first system .ttf if installed, else verifies extension path)
+        QString systemTtf;
+        QDirIterator fontIt(QStringLiteral("/usr/share/fonts"), {QStringLiteral("*.ttf")}, QDir::Files, QDirIterator::Subdirectories);
+        if (fontIt.hasNext())
+            systemTtf = fontIt.next();
+        if (!systemTtf.isEmpty()) {
+            const QString localTtf = dir.filePath("testfont.ttf");
+            QVERIFY(QFile::copy(systemTtf, localTtf));
+            const QVariantMap fontPrev = backend.getPreview(localTtf);
+            QCOMPARE(fontPrev.value(QStringLiteral("isFont")).toBool(), true);
+            QCOMPARE(fontPrev.value(QStringLiteral("fontFormat")).toString(), QStringLiteral("TTF"));
+            QVERIFY(!fontPrev.value(QStringLiteral("fontUrl")).toString().isEmpty());
+            QVERIFY(!fontPrev.value(QStringLiteral("fontFamily")).toString().isEmpty());
+        }
+
+        // 6. RIFF PCM WAV Audio Preview & Metadata
+        QByteArray wav;
+        auto pushLe32 = [&](quint32 v) {
+            wav.append(static_cast<char>(v & 0xFF));
+            wav.append(static_cast<char>((v >> 8) & 0xFF));
+            wav.append(static_cast<char>((v >> 16) & 0xFF));
+            wav.append(static_cast<char>((v >> 24) & 0xFF));
+        };
+        auto pushLe16 = [&](quint16 v) {
+            wav.append(static_cast<char>(v & 0xFF));
+            wav.append(static_cast<char>((v >> 8) & 0xFF));
+        };
+        const quint32 pcmBytes = 32000; // 1.0 sec @ 16000 Hz mono 16-bit
+        wav.append("RIFF", 4);
+        pushLe32(36 + pcmBytes);
+        wav.append("WAVEfmt ", 8);
+        pushLe32(16);
+        pushLe16(1);     // PCM
+        pushLe16(1);     // mono
+        pushLe32(16000); // sampleRate
+        pushLe32(32000); // byteRate
+        pushLe16(2);     // blockAlign
+        pushLe16(16);    // bitsPerSample
+        wav.append("data", 4);
+        pushLe32(pcmBytes);
+        wav.append(QByteArray(static_cast<int>(pcmBytes), '\0'));
+
+        const QString wavPath = dir.filePath("tone.wav");
+        writeFile(wavPath, wav);
+        const QVariantMap wavPrev = backend.getPreview(wavPath);
+        QCOMPARE(wavPrev.value(QStringLiteral("isMedia")).toBool(), true);
+        QCOMPARE(wavPrev.value(QStringLiteral("isAudio")).toBool(), true);
+        QVERIFY(!wavPrev.value(QStringLiteral("mediaUrl")).toString().isEmpty());
+        QCOMPARE(wavPrev.value(QStringLiteral("mediaSampleRate")).toString(), QStringLiteral("16000 Hz"));
+        QCOMPARE(wavPrev.value(QStringLiteral("mediaChannels")).toInt(), 1);
+        QVERIFY(!wavPrev.value(QStringLiteral("mediaDuration")).toString().isEmpty());
+    }
+
+    void multiRenameRegexDynamicTagsAndPresets()
+    {
+        QTemporaryDir root, cfg;
+        const QString tripDir = root.filePath("Trips");
+        QVERIFY(QDir().mkpath(tripDir));
+
+        const QString p1 = tripDir + "/photo_2025-07_orig.txt";
+        const QString p2 = tripDir + "/clip_2025-07_orig.txt";
+        writeFile(p1, "p1");
+        writeFile(p2, "p2");
+
+        {
+            Backend backend(cfg.filePath("bookmarks.json"));
+
+            // Preview [Date] tag before renaming
+            const QVariantList datePrev = backend.previewMultiRename(
+                {p1}, QString(), QString(), QString(), QString(), 0, false,
+                false, QStringLiteral("[Date]_[N].[Ext]"));
+            QCOMPARE(datePrev.size(), 1);
+            const QString dateNewName = datePrev.first().toMap().value(QStringLiteral("newName")).toString();
+            QVERIFY(QRegularExpression(QStringLiteral("^\\d{4}-\\d{2}-\\d{2}_photo_2025-07_orig\\.txt$")).match(dateNewName).hasMatch());
+
+            // Execute RegEx capture + [ParentFolder] + custom Counter start=10, step=2, digits=2
+            QVERIFY(backend.executeMultiRename(
+                {p1, p2},
+                QStringLiteral("(\\d{4})-(\\d{2})_orig"),
+                QStringLiteral("$2_$1"),
+                QString(), QString(), 0, false,
+                true,
+                QStringLiteral("[ParentFolder]_[N]_[C]"),
+                10, 2, 2));
+
+            QVERIFY(QFile::exists(tripDir + "/Trips_photo_07_2025_10.txt"));
+            QVERIFY(QFile::exists(tripDir + "/Trips_clip_07_2025_12.txt"));
+
+            // Preset save & retrieve
+            QVariantMap preset;
+            preset[QStringLiteral("nameMask")] = QStringLiteral("[Date]_[ParentFolder]_[N]");
+            preset[QStringLiteral("findText")] = QStringLiteral("orig");
+            preset[QStringLiteral("replaceText")] = QStringLiteral("final");
+            preset[QStringLiteral("useRegex")] = true;
+            preset[QStringLiteral("counterStart")] = 5;
+            preset[QStringLiteral("counterDigits")] = 4;
+            QVERIFY(backend.saveMultiRenamePreset(QStringLiteral("TripPreset"), preset));
+            QCOMPARE(backend.multiRenamePresets().size(), 1);
+            QCOMPARE(backend.getMultiRenamePreset(QStringLiteral("TripPreset")).value(QStringLiteral("counterStart")).toInt(), 5);
+        }
+
+        // Reload Backend from same config dir to confirm preset persistence
+        Backend backendReloaded(cfg.filePath("bookmarks.json"));
+        QCOMPARE(backendReloaded.multiRenamePresets().size(), 1);
+        QCOMPARE(backendReloaded.getMultiRenamePreset(QStringLiteral("TripPreset")).value(QStringLiteral("nameMask")).toString(),
+                 QStringLiteral("[Date]_[ParentFolder]_[N]"));
+        QVERIFY(backendReloaded.deleteMultiRenamePreset(QStringLiteral("TripPreset")));
+        QCOMPARE(backendReloaded.multiRenamePresets().size(), 0);
+    }
+
+    void remoteConnectionsUriGvfsMountAndPersistence()
+    {
+        QTemporaryDir gvfsDir, cfg;
+        qputenv("OMAPANEL_GVFS_DIR", gvfsDir.path().toUtf8());
+        struct EnvCleanup {
+            ~EnvCleanup() { qunsetenv("OMAPANEL_GVFS_DIR"); }
+        } cleanup;
+
+        const QString gvfsSftpRoot = gvfsDir.filePath("sftp:host=10.10.0.5,user=radu");
+        const QString gvfsWebDir = gvfsSftpRoot + "/var/www";
+        QVERIFY(QDir().mkpath(gvfsWebDir));
+        writeFile(gvfsWebDir + "/index.html", "<h1>ok</h1>");
+
+        {
+            Backend backend(cfg.filePath("bookmarks.json"));
+
+            const QVariantMap parsedSftp = backend.parseRemoteUri(QStringLiteral("sftp://radu@10.10.0.5:2222/var/www"));
+            QCOMPARE(parsedSftp.value(QStringLiteral("protocol")).toString(), QStringLiteral("sftp"));
+            QCOMPARE(parsedSftp.value(QStringLiteral("host")).toString(), QStringLiteral("10.10.0.5"));
+            QCOMPARE(parsedSftp.value(QStringLiteral("port")).toInt(), 2222);
+            QCOMPARE(parsedSftp.value(QStringLiteral("user")).toString(), QStringLiteral("radu"));
+            QCOMPARE(parsedSftp.value(QStringLiteral("remotePath")).toString(), QStringLiteral("/var/www"));
+            QCOMPARE(backend.buildRemoteUri(parsedSftp), QStringLiteral("sftp://radu@10.10.0.5:2222/var/www"));
+
+            const QVariantMap parsedSmb = backend.parseRemoteUri(QStringLiteral("smb://WORKGROUP;radu@nas.local/media/films"));
+            QCOMPARE(parsedSmb.value(QStringLiteral("protocol")).toString(), QStringLiteral("smb"));
+            QCOMPARE(parsedSmb.value(QStringLiteral("domain")).toString(), QStringLiteral("WORKGROUP"));
+            QCOMPARE(parsedSmb.value(QStringLiteral("host")).toString(), QStringLiteral("nas.local"));
+            QCOMPARE(parsedSmb.value(QStringLiteral("remotePath")).toString(), QStringLiteral("/media/films"));
+
+            const QVariantMap parsedSshfs = backend.parseRemoteUri(QStringLiteral("sshfs://dev@box.local:/srv/app"));
+            QCOMPARE(parsedSshfs.value(QStringLiteral("protocol")).toString(), QStringLiteral("sshfs"));
+            QCOMPARE(parsedSshfs.value(QStringLiteral("host")).toString(), QStringLiteral("box.local"));
+            QCOMPARE(parsedSshfs.value(QStringLiteral("remotePath")).toString(), QStringLiteral("/srv/app"));
+
+            QVariantMap sftpConn;
+            sftpConn[QStringLiteral("id")] = QStringLiteral("web_srv");
+            sftpConn[QStringLiteral("name")] = QStringLiteral("Web Server");
+            sftpConn[QStringLiteral("protocol")] = QStringLiteral("sftp");
+            sftpConn[QStringLiteral("host")] = QStringLiteral("10.10.0.5");
+            sftpConn[QStringLiteral("port")] = 22;
+            sftpConn[QStringLiteral("user")] = QStringLiteral("radu");
+            sftpConn[QStringLiteral("remotePath")] = QStringLiteral("/var/www");
+            QVERIFY(backend.saveRemoteConnection(sftpConn));
+
+            QVariantMap smbConn;
+            smbConn[QStringLiteral("id")] = QStringLiteral("nas_media");
+            smbConn[QStringLiteral("name")] = QStringLiteral("NAS Media");
+            smbConn[QStringLiteral("protocol")] = QStringLiteral("smb");
+            smbConn[QStringLiteral("host")] = QStringLiteral("nas.local");
+            smbConn[QStringLiteral("user")] = QStringLiteral("radu");
+            smbConn[QStringLiteral("domain")] = QStringLiteral("WORKGROUP");
+            smbConn[QStringLiteral("remotePath")] = QStringLiteral("/media");
+            QVERIFY(backend.saveRemoteConnection(smbConn));
+
+            QCOMPARE(backend.remoteConnections().size(), 2);
+
+            const QString resolved = backend.resolveRemoteMountPath(sftpConn);
+            QCOMPARE(resolved, QDir::cleanPath(gvfsWebDir));
+
+            const QString connectedPath = backend.connectRemote(QStringLiteral("web_srv"));
+            QCOMPARE(connectedPath, QDir::cleanPath(gvfsWebDir));
+            QCOMPARE(backend.activeModel()->path(), QDir::cleanPath(gvfsWebDir));
+
+            bool foundMountedRemoteDrive = false;
+            const QVariantList driveList = backend.drives();
+            for (const QVariant &v : driveList) {
+                const QVariantMap d = v.toMap();
+                if (d.value(QStringLiteral("remoteId")).toString() == QStringLiteral("web_srv")) {
+                    QCOMPARE(d.value(QStringLiteral("isRemote")).toBool(), true);
+                    QCOMPARE(d.value(QStringLiteral("isMounted")).toBool(), true);
+                    QCOMPARE(d.value(QStringLiteral("canUnmount")).toBool(), true);
+                    foundMountedRemoteDrive = true;
+                }
+            }
+            QVERIFY(foundMountedRemoteDrive);
+
+            QVERIFY(backend.disconnectRemote(QStringLiteral("web_srv")));
+            QVERIFY(!QDir(gvfsSftpRoot).exists());
+            QVERIFY(backend.resolveRemoteMountPath(sftpConn).isEmpty());
+        }
+
+        // Reload Backend from same config to verify persistence of remote connections
+        Backend backendReloaded(cfg.filePath("bookmarks.json"));
+        QCOMPARE(backendReloaded.remoteConnections().size(), 2);
+        QVERIFY(backendReloaded.deleteRemoteConnection(QStringLiteral("web_srv")));
+        QCOMPARE(backendReloaded.remoteConnections().size(), 1);
+    }
+
+    void openWithMimeDesktopAppsAndCustomActions()
+    {
+        QTemporaryDir appsDir, workDir, cfg;
+        const QString mimeAppsPath = cfg.filePath("mimeapps.list");
+        qputenv("OMAPANEL_APPS_DIR", appsDir.path().toUtf8());
+        qputenv("OMAPANEL_APPS_ONLY_OVERRIDE", "1");
+        qputenv("OMAPANEL_MIMEAPPS_FILE", mimeAppsPath.toUtf8());
+        struct EnvCleanup {
+            ~EnvCleanup() {
+                qunsetenv("OMAPANEL_APPS_DIR");
+                qunsetenv("OMAPANEL_APPS_ONLY_OVERRIDE");
+                qunsetenv("OMAPANEL_MIMEAPPS_FILE");
+            }
+        } cleanup;
+
+        QString trueBin = QStandardPaths::findExecutable(QStringLiteral("true"));
+        if (trueBin.isEmpty())
+            trueBin = QStringLiteral("/usr/bin/true");
+
+        writeFile(appsDir.filePath("md-editor.desktop"),
+                  QStringLiteral("[Desktop Entry]\nType=Application\nName=Markdown Writer\nGenericName=Editor\nExec=%1 %f\nMimeType=text/markdown;text/plain;\n")
+                      .arg(trueBin).toUtf8());
+        writeFile(appsDir.filePath("png-viewer.desktop"),
+                  QStringLiteral("[Desktop Entry]\nType=Application\nName=Image Looker\nExec=%1 %u\nMimeType=image/png;\n")
+                      .arg(trueBin).toUtf8());
+
+        const QString mdPath = workDir.filePath("notes with space.md");
+        writeFile(mdPath, "# Title\nline2\n");
+
+        {
+            Backend backend(cfg.filePath("bookmarks.json"));
+
+            const QVariantMap mimeInfo = backend.getFileMimeInfo(mdPath);
+            QCOMPARE(mimeInfo.value(QStringLiteral("mimeType")).toString(), QStringLiteral("text/markdown"));
+
+            const QVariantList appsBefore = backend.getApplicationsForFile(mdPath);
+            QCOMPARE(appsBefore.size(), 1);
+            QCOMPARE(appsBefore.first().toMap().value(QStringLiteral("desktopId")).toString(), QStringLiteral("md-editor.desktop"));
+            QCOMPARE(appsBefore.first().toMap().value(QStringLiteral("isDefault")).toBool(), false);
+
+            QVERIFY(backend.setDefaultApplicationForMime(QStringLiteral("text/markdown"), QStringLiteral("md-editor.desktop")));
+            const QVariantList appsAfter = backend.getApplicationsForFile(mdPath);
+            QCOMPARE(appsAfter.size(), 1);
+            QCOMPARE(appsAfter.first().toMap().value(QStringLiteral("isDefault")).toBool(), true);
+            QCOMPARE(backend.getFileMimeInfo(mdPath).value(QStringLiteral("defaultApp")).toString(), QStringLiteral("md-editor.desktop"));
+
+            QVERIFY(backend.openWithApplication({mdPath}, QStringLiteral("md-editor.desktop"), false));
+
+            // Seeded default custom actions
+            QVERIFY(backend.customActions().size() >= 3);
+
+            // Custom Action: pattern filtering, % placeholders, execution & persistence
+            QVariantMap customAct;
+            customAct[QStringLiteral("id")] = QStringLiteral("count_bytes_md");
+            customAct[QStringLiteral("name")] = QStringLiteral("Count Bytes in MD");
+            customAct[QStringLiteral("command")] = QStringLiteral("wc -c < %f");
+            customAct[QStringLiteral("pattern")] = QStringLiteral("*.md");
+            customAct[QStringLiteral("runInTerminal")] = false;
+            customAct[QStringLiteral("showOutput")] = true;
+            QVERIFY(backend.saveCustomAction(customAct));
+
+            const QVariantList matchedForMd = backend.getCustomActionsForFile(mdPath);
+            bool foundMdAction = false;
+            for (const QVariant &v : matchedForMd) {
+                if (v.toMap().value(QStringLiteral("id")).toString() == QStringLiteral("count_bytes_md"))
+                    foundMdAction = true;
+            }
+            QVERIFY(foundMdAction);
+
+            const QString otherFile = workDir.filePath("pic.png");
+            writeFile(otherFile, "PNGDATA");
+            const QVariantList matchedForPng = backend.getCustomActionsForFile(otherFile);
+            for (const QVariant &v : matchedForPng)
+                QVERIFY(v.toMap().value(QStringLiteral("id")).toString() != QStringLiteral("count_bytes_md"));
+
+            const QString expanded = backend.expandCustomActionCommand(QStringLiteral("echo %n %b %e %f"), {mdPath});
+            QVERIFY(expanded.contains(QStringLiteral("notes with space.md")));
+            QVERIFY(expanded.contains(QStringLiteral("'md'")));
+
+            const QVariantMap execRes = backend.executeCustomAction(QStringLiteral("count_bytes_md"), {mdPath});
+            QCOMPARE(execRes.value(QStringLiteral("ok")).toBool(), true);
+            QCOMPARE(execRes.value(QStringLiteral("exitCode")).toInt(), 0);
+            QCOMPARE(execRes.value(QStringLiteral("showOutput")).toBool(), true);
+            QCOMPARE(execRes.value(QStringLiteral("output")).toString().trimmed().toInt(), 14);
+        }
+
+        // Verify persistence across Backend reload
+        Backend backendReloaded(cfg.filePath("bookmarks.json"));
+        const QVariantList reloadedForMd = backendReloaded.getCustomActionsForFile(mdPath);
+        bool persistedFound = false;
+        for (const QVariant &v : reloadedForMd) {
+            if (v.toMap().value(QStringLiteral("id")).toString() == QStringLiteral("count_bytes_md"))
+                persistedFound = true;
+        }
+        QVERIFY(persistedFound);
+        QVERIFY(backendReloaded.deleteCustomAction(QStringLiteral("count_bytes_md")));
     }
 };
 

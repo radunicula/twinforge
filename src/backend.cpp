@@ -14,6 +14,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QFont>
+#include <QFontDatabase>
 #include <QFontMetrics>
 #include <QGuiApplication>
 #include <QImageReader>
@@ -22,19 +23,23 @@
 #include <QLocale>
 #include <QMimeData>
 #include <QMimeDatabase>
+#include <QMimeType>
 #include <QPainter>
 #include <QPixmap>
 #include <QProcess>
 #include <QRegularExpression>
+#include <QSet>
 #include <QSettings>
 #include <QStandardPaths>
 #include <QStorageInfo>
 #include <QTemporaryDir>
 #include <QThread>
 #include <QUrl>
+#include <QtEndian>
 
 #include <algorithm>
 #include <sys/stat.h>
+#include <unistd.h>
 
 namespace {
 
@@ -336,6 +341,927 @@ QString formatHexDumpText(const QByteArray &chunk, const QString &formattedSize,
     return hexDump;
 }
 
+QString formatEtaSeconds(qint64 secs)
+{
+    if (secs < 0)
+        return {};
+    if (secs == 0)
+        return QStringLiteral("< 1s");
+    if (secs < 60)
+        return QStringLiteral("%1s").arg(secs);
+    if (secs < 3600) {
+        return QStringLiteral("%1:%2")
+            .arg(secs / 60, 2, 10, QLatin1Char('0'))
+            .arg(secs % 60, 2, 10, QLatin1Char('0'));
+    }
+    return QStringLiteral("%1h %2m").arg(secs / 3600).arg((secs % 3600) / 60);
+}
+
+QString formatDurationMs(qint64 ms)
+{
+    if (ms <= 0)
+        return {};
+    const qint64 totalSecs = ms / 1000;
+    const qint64 hrs = totalSecs / 3600;
+    const qint64 mins = (totalSecs % 3600) / 60;
+    const qint64 secs = totalSecs % 60;
+    if (hrs > 0) {
+        return QStringLiteral("%1:%2:%3")
+            .arg(hrs)
+            .arg(mins, 2, 10, QLatin1Char('0'))
+            .arg(secs, 2, 10, QLatin1Char('0'));
+    }
+    return QStringLiteral("%1:%2")
+        .arg(mins, 2, 10, QLatin1Char('0'))
+        .arg(secs, 2, 10, QLatin1Char('0'));
+}
+
+bool isFontExtension(const QString &ext)
+{
+    const QString l = ext.toLower();
+    return l == QLatin1String("ttf") || l == QLatin1String("otf") || l == QLatin1String("ttc")
+           || l == QLatin1String("woff") || l == QLatin1String("woff2");
+}
+
+bool isAudioExtension(const QString &ext)
+{
+    const QString l = ext.toLower();
+    return l == QLatin1String("mp3") || l == QLatin1String("wav") || l == QLatin1String("flac")
+           || l == QLatin1String("ogg") || l == QLatin1String("opus") || l == QLatin1String("aac")
+           || l == QLatin1String("m4a") || l == QLatin1String("wma") || l == QLatin1String("aiff");
+}
+
+bool isVideoExtension(const QString &ext)
+{
+    const QString l = ext.toLower();
+    return l == QLatin1String("mp4") || l == QLatin1String("mkv") || l == QLatin1String("avi")
+           || l == QLatin1String("mov") || l == QLatin1String("webm") || l == QLatin1String("flv")
+           || l == QLatin1String("wmv") || l == QLatin1String("m4v") || l == QLatin1String("mpg")
+           || l == QLatin1String("mpeg") || l == QLatin1String("ts");
+}
+
+QString syntaxLanguageForFile(const QString &fileName, const QString &ext)
+{
+    const QString lowerName = fileName.toLower();
+    if (lowerName == QLatin1String("cmakelists.txt"))
+        return QStringLiteral("CMake");
+    if (lowerName == QLatin1String("makefile") || lowerName == QLatin1String("gnumakefile"))
+        return QStringLiteral("Makefile");
+    if (lowerName == QLatin1String("dockerfile"))
+        return QStringLiteral("Dockerfile");
+
+    static const QHash<QString, QString> langMap = {
+        {QStringLiteral("cpp"), QStringLiteral("C++")},       {QStringLiteral("cc"), QStringLiteral("C++")},
+        {QStringLiteral("cxx"), QStringLiteral("C++")},       {QStringLiteral("hpp"), QStringLiteral("C++")},
+        {QStringLiteral("hh"), QStringLiteral("C++")},        {QStringLiteral("c"), QStringLiteral("C")},
+        {QStringLiteral("h"), QStringLiteral("C/C++")},       {QStringLiteral("qml"), QStringLiteral("QML")},
+        {QStringLiteral("js"), QStringLiteral("JavaScript")}, {QStringLiteral("mjs"), QStringLiteral("JavaScript")},
+        {QStringLiteral("jsx"), QStringLiteral("JSX")},       {QStringLiteral("ts"), QStringLiteral("TypeScript")},
+        {QStringLiteral("tsx"), QStringLiteral("TSX")},       {QStringLiteral("py"), QStringLiteral("Python")},
+        {QStringLiteral("rs"), QStringLiteral("Rust")},       {QStringLiteral("go"), QStringLiteral("Go")},
+        {QStringLiteral("java"), QStringLiteral("Java")},     {QStringLiteral("kt"), QStringLiteral("Kotlin")},
+        {QStringLiteral("cs"), QStringLiteral("C#")},         {QStringLiteral("json"), QStringLiteral("JSON")},
+        {QStringLiteral("toml"), QStringLiteral("TOML")},     {QStringLiteral("yaml"), QStringLiteral("YAML")},
+        {QStringLiteral("yml"), QStringLiteral("YAML")},      {QStringLiteral("xml"), QStringLiteral("XML")},
+        {QStringLiteral("html"), QStringLiteral("HTML")},     {QStringLiteral("htm"), QStringLiteral("HTML")},
+        {QStringLiteral("css"), QStringLiteral("CSS")},       {QStringLiteral("scss"), QStringLiteral("SCSS")},
+        {QStringLiteral("sh"), QStringLiteral("Shell")},      {QStringLiteral("bash"), QStringLiteral("Bash")},
+        {QStringLiteral("zsh"), QStringLiteral("Zsh")},       {QStringLiteral("sql"), QStringLiteral("SQL")},
+        {QStringLiteral("cmake"), QStringLiteral("CMake")},   {QStringLiteral("pro"), QStringLiteral("QMake")},
+        {QStringLiteral("pri"), QStringLiteral("QMake")},     {QStringLiteral("ini"), QStringLiteral("INI")},
+        {QStringLiteral("conf"), QStringLiteral("Config")},   {QStringLiteral("md"), QStringLiteral("Markdown")},
+        {QStringLiteral("markdown"), QStringLiteral("Markdown")}
+    };
+    return langMap.value(ext.toLower());
+}
+
+QString highlightCodeToHtml(const QString &code, const QString &ext, bool isDark)
+{
+    const QString cComment = isDark ? QStringLiteral("#7f848e") : QStringLiteral("#64748b");
+    const QString cKeyword = isDark ? QStringLiteral("#c678dd") : QStringLiteral("#7c3aed");
+    const QString cType    = isDark ? QStringLiteral("#e5c07b") : QStringLiteral("#b45309");
+    const QString cString  = isDark ? QStringLiteral("#98c379") : QStringLiteral("#047857");
+    const QString cNumber  = isDark ? QStringLiteral("#d19a66") : QStringLiteral("#c2410c");
+    const QString cPreproc = isDark ? QStringLiteral("#61afef") : QStringLiteral("#1d4ed8");
+    const QString cPlain   = isDark ? QStringLiteral("#d4d4d8") : QStringLiteral("#1e293b");
+
+    static const QSet<QString> keywords = {
+        QStringLiteral("if"), QStringLiteral("else"), QStringLiteral("for"), QStringLiteral("while"),
+        QStringLiteral("do"), QStringLiteral("switch"), QStringLiteral("case"), QStringLiteral("default"),
+        QStringLiteral("break"), QStringLiteral("continue"), QStringLiteral("return"), QStringLiteral("class"),
+        QStringLiteral("struct"), QStringLiteral("enum"), QStringLiteral("union"), QStringLiteral("namespace"),
+        QStringLiteral("using"), QStringLiteral("public"), QStringLiteral("private"), QStringLiteral("protected"),
+        QStringLiteral("virtual"), QStringLiteral("override"), QStringLiteral("final"), QStringLiteral("const"),
+        QStringLiteral("constexpr"), QStringLiteral("static"), QStringLiteral("inline"), QStringLiteral("explicit"),
+        QStringLiteral("template"), QStringLiteral("typename"), QStringLiteral("auto"), QStringLiteral("nullptr"),
+        QStringLiteral("true"), QStringLiteral("false"), QStringLiteral("null"), QStringLiteral("None"),
+        QStringLiteral("True"), QStringLiteral("False"), QStringLiteral("function"), QStringLiteral("property"),
+        QStringLiteral("signal"), QStringLiteral("import"), QStringLiteral("from"), QStringLiteral("def"),
+        QStringLiteral("async"), QStringLiteral("await"), QStringLiteral("fn"), QStringLiteral("let"),
+        QStringLiteral("mut"), QStringLiteral("pub"), QStringLiteral("impl"), QStringLiteral("var"),
+        QStringLiteral("SELECT"), QStringLiteral("FROM"), QStringLiteral("WHERE"), QStringLiteral("INSERT"),
+        QStringLiteral("UPDATE"), QStringLiteral("DELETE"), QStringLiteral("JOIN"), QStringLiteral("AND"),
+        QStringLiteral("OR"), QStringLiteral("try"), QStringLiteral("catch"), QStringLiteral("throw"),
+        QStringLiteral("new"), QStringLiteral("export"), QStringLiteral("readonly"), QStringLiteral("id")
+    };
+    static const QSet<QString> types = {
+        QStringLiteral("void"), QStringLiteral("bool"), QStringLiteral("int"), QStringLiteral("qint64"),
+        QStringLiteral("quint64"), QStringLiteral("double"), QStringLiteral("float"), QStringLiteral("char"),
+        QStringLiteral("size_t"), QStringLiteral("string"), QStringLiteral("QString"), QStringLiteral("QStringList"),
+        QStringLiteral("QVariant"), QStringLiteral("QVariantMap"), QStringLiteral("QVariantList"),
+        QStringLiteral("QObject"), QStringLiteral("Rectangle"), QStringLiteral("Item"), QStringLiteral("Text"),
+        QStringLiteral("RowLayout"), QStringLiteral("ColumnLayout"), QStringLiteral("ListView"),
+        QStringLiteral("AppDialog"), QStringLiteral("Button"), QStringLiteral("real"), QStringLiteral("color")
+    };
+
+    const QString lowerExt = ext.toLower();
+    const bool usesHashComment = (lowerExt == QLatin1String("py") || lowerExt == QLatin1String("sh")
+                                  || lowerExt == QLatin1String("bash") || lowerExt == QLatin1String("zsh")
+                                  || lowerExt == QLatin1String("yaml") || lowerExt == QLatin1String("yml")
+                                  || lowerExt == QLatin1String("toml") || lowerExt == QLatin1String("cmake")
+                                  || lowerExt == QLatin1String("pro") || lowerExt == QLatin1String("pri")
+                                  || lowerExt == QLatin1String("ini") || lowerExt == QLatin1String("conf")
+                                  || lowerExt == QLatin1String("txt"));
+
+    auto emitSpan = [](QString &out, const QString &color, const QString &text, bool italic = false, bool bold = false) {
+        out += QStringLiteral("<span style=\"color:") + color;
+        if (italic) out += QStringLiteral("; font-style:italic");
+        if (bold) out += QStringLiteral("; font-weight:600");
+        out += QStringLiteral(";\">") + text.toHtmlEscaped() + QStringLiteral("</span>");
+    };
+
+    QString html = QStringLiteral("<pre style=\"margin:0; font-family:monospace; white-space:pre-wrap; color:%1;\">").arg(cPlain);
+    const QStringList lines = code.split('\n');
+    bool inBlockComment = false;
+
+    for (int li = 0; li < lines.size(); ++li) {
+        const QString &line = lines.at(li);
+        if (li > 0)
+            html += '\n';
+
+        const QString trimmed = line.trimmed();
+        if (!inBlockComment && !usesHashComment && trimmed.startsWith('#')) {
+            emitSpan(html, cPreproc, line, false, true);
+            continue;
+        }
+
+        int i = 0;
+        const int n = line.size();
+        while (i < n) {
+            if (inBlockComment) {
+                const int end = line.indexOf(QLatin1String("*/"), i);
+                if (end < 0) {
+                    emitSpan(html, cComment, line.mid(i), true);
+                    i = n;
+                } else {
+                    emitSpan(html, cComment, line.mid(i, end - i + 2), true);
+                    i = end + 2;
+                    inBlockComment = false;
+                }
+                continue;
+            }
+
+            if (line.mid(i, 2) == QLatin1String("//") || (usesHashComment && line.at(i) == '#')) {
+                emitSpan(html, cComment, line.mid(i), true);
+                break;
+            }
+            if (line.mid(i, 2) == QLatin1String("/*")) {
+                const int end = line.indexOf(QLatin1String("*/"), i + 2);
+                if (end < 0) {
+                    emitSpan(html, cComment, line.mid(i), true);
+                    inBlockComment = true;
+                    break;
+                }
+                emitSpan(html, cComment, line.mid(i, end - i + 2), true);
+                i = end + 2;
+                continue;
+            }
+
+            const QChar ch = line.at(i);
+            if (ch == '"' || ch == '\'' || ch == '`') {
+                const QChar quote = ch;
+                int j = i + 1;
+                while (j < n) {
+                    if (line.at(j) == '\\' && j + 1 < n) {
+                        j += 2;
+                        continue;
+                    }
+                    if (line.at(j) == quote) {
+                        ++j;
+                        break;
+                    }
+                    ++j;
+                }
+                emitSpan(html, cString, line.mid(i, j - i));
+                i = j;
+                continue;
+            }
+
+            if (ch.isDigit()) {
+                int j = i + 1;
+                while (j < n && (line.at(j).isLetterOrNumber() || line.at(j) == '.' || line.at(j) == '_'))
+                    ++j;
+                emitSpan(html, cNumber, line.mid(i, j - i));
+                i = j;
+                continue;
+            }
+
+            if (ch.isLetter() || ch == '_') {
+                int j = i + 1;
+                while (j < n && (line.at(j).isLetterOrNumber() || line.at(j) == '_'))
+                    ++j;
+                const QString word = line.mid(i, j - i);
+                if (keywords.contains(word))
+                    emitSpan(html, cKeyword, word, false, true);
+                else if (types.contains(word))
+                    emitSpan(html, cType, word);
+                else
+                    html += word.toHtmlEscaped();
+                i = j;
+                continue;
+            }
+
+            html += QString(ch).toHtmlEscaped();
+            ++i;
+        }
+    }
+
+    html += QStringLiteral("</pre>");
+    return html;
+}
+
+QString renderMarkdownToHtml(const QString &md, bool isDark)
+{
+    const QString textColor   = isDark ? QStringLiteral("#e4e4e7") : QStringLiteral("#1e293b");
+    const QString mutedColor  = isDark ? QStringLiteral("#a1a1aa") : QStringLiteral("#475569");
+    const QString accentColor = isDark ? QStringLiteral("#60a5fa") : QStringLiteral("#2563eb");
+    const QString codeBg      = isDark ? QStringLiteral("#18181b") : QStringLiteral("#f1f5f9");
+    const QString borderCol   = isDark ? QStringLiteral("#3f3f46") : QStringLiteral("#cbd5e1");
+
+    auto formatInline = [&](const QString &src) -> QString {
+        QString s = src.toHtmlEscaped();
+        static const QRegularExpression codeRe(QStringLiteral("`([^`]+)`"));
+        s.replace(codeRe, QStringLiteral("<code style=\"background:%1; padding:1px 4px; font-family:monospace;\">\\1</code>").arg(codeBg));
+        static const QRegularExpression linkRe(QStringLiteral("\\[([^\\]]+)\\]\\(([^)]+)\\)"));
+        s.replace(linkRe, QStringLiteral("<a href=\"\\2\" style=\"color:%1;\">\\1</a>").arg(accentColor));
+        static const QRegularExpression boldRe(QStringLiteral("\\*\\*([^*]+)\\*\\*"));
+        s.replace(boldRe, QStringLiteral("<b>\\1</b>"));
+        static const QRegularExpression italicRe(QStringLiteral("(?<!\\*)\\*([^*]+)\\*(?!\\*)"));
+        s.replace(italicRe, QStringLiteral("<i>\\1</i>"));
+        return s;
+    };
+
+    QString html = QStringLiteral("<div style=\"color:%1; font-size:13px; line-height:1.5;\">").arg(textColor);
+    const QStringList lines = md.split('\n');
+    bool inCode = false;
+    bool inList = false;
+    QString codeLang;
+    QStringList codeBuf;
+
+    auto flushList = [&]() {
+        if (inList) {
+            html += QStringLiteral("</ul>");
+            inList = false;
+        }
+    };
+
+    for (const QString &rawLine : lines) {
+        const QString trimmed = rawLine.trimmed();
+        if (trimmed.startsWith(QLatin1String("```"))) {
+            flushList();
+            if (!inCode) {
+                inCode = true;
+                codeLang = trimmed.mid(3).trimmed();
+                codeBuf.clear();
+            } else {
+                const QString highlighted = highlightCodeToHtml(codeBuf.join('\n'), codeLang, isDark);
+                html += QStringLiteral("<div style=\"background:%1; border:1px solid %2; padding:8px; margin:6px 0;\">%3</div>")
+                            .arg(codeBg, borderCol, highlighted);
+                inCode = false;
+                codeLang.clear();
+            }
+            continue;
+        }
+        if (inCode) {
+            codeBuf.append(rawLine);
+            continue;
+        }
+
+        if (trimmed.isEmpty()) {
+            flushList();
+            html += QStringLiteral("<div style=\"height:6px;\"></div>");
+            continue;
+        }
+        if (trimmed == QLatin1String("---") || trimmed == QLatin1String("***")) {
+            flushList();
+            html += QStringLiteral("<hr style=\"border:none; border-top:1px solid %1;\"/>").arg(borderCol);
+            continue;
+        }
+        int headingLevel = 0;
+        while (headingLevel < 6 && headingLevel < trimmed.size() && trimmed.at(headingLevel) == '#')
+            ++headingLevel;
+        if (headingLevel > 0 && headingLevel < trimmed.size() && trimmed.at(headingLevel) == ' ') {
+            flushList();
+            const int px = std::max(13, 23 - headingLevel * 2);
+            html += QStringLiteral("<h%1 style=\"color:%2; font-size:%3px; margin:8px 0 4px 0;\">%4</h%1>")
+                        .arg(headingLevel)
+                        .arg(accentColor)
+                        .arg(px)
+                        .arg(formatInline(trimmed.mid(headingLevel + 1)));
+            continue;
+        }
+        if (trimmed.startsWith(QLatin1String("> "))) {
+            flushList();
+            html += QStringLiteral("<blockquote style=\"margin:4px 0; padding:4px 10px; border-left:3px solid %1; color:%2;\">%3</blockquote>")
+                        .arg(accentColor, mutedColor, formatInline(trimmed.mid(2)));
+            continue;
+        }
+        if (trimmed.startsWith(QLatin1String("- ")) || trimmed.startsWith(QLatin1String("* "))) {
+            if (!inList) {
+                html += QStringLiteral("<ul style=\"margin:4px 0 4px 18px;\">");
+                inList = true;
+            }
+            html += QStringLiteral("<li>%1</li>").arg(formatInline(trimmed.mid(2)));
+            continue;
+        }
+        static const QRegularExpression olRe(QStringLiteral("^\\d+\\.\\s+(.*)$"));
+        const QRegularExpressionMatch olMatch = olRe.match(trimmed);
+        if (olMatch.hasMatch()) {
+            if (!inList) {
+                html += QStringLiteral("<ul style=\"margin:4px 0 4px 18px;\">");
+                inList = true;
+            }
+            html += QStringLiteral("<li>%1</li>").arg(formatInline(olMatch.captured(1)));
+            continue;
+        }
+
+        flushList();
+        html += QStringLiteral("<p style=\"margin:3px 0;\">%1</p>").arg(formatInline(rawLine));
+    }
+
+    if (inCode) {
+        html += QStringLiteral("<div style=\"background:%1; border:1px solid %2; padding:8px; margin:6px 0;\">%3</div>")
+                    .arg(codeBg, borderCol, highlightCodeToHtml(codeBuf.join('\n'), codeLang, isDark));
+    }
+    flushList();
+    html += QStringLiteral("</div>");
+    return html;
+}
+
+QVariantMap parseExifMetadata(const QString &filePath)
+{
+    QVariantMap exif;
+    QFile file(filePath);
+    if (!file.open(QIODevice::ReadOnly))
+        return exif;
+
+    const QByteArray head = file.read(256 * 1024);
+    if (head.size() < 12)
+        return exif;
+
+    QByteArray tiff;
+    const auto u8 = [&](int pos) -> quint8 { return static_cast<quint8>(head.at(pos)); };
+    if (u8(0) == 0xFF && u8(1) == 0xD8) {
+        int pos = 2;
+        while (pos + 4 <= head.size()) {
+            if (u8(pos) != 0xFF)
+                break;
+            while (pos < head.size() && u8(pos) == 0xFF)
+                ++pos;
+            if (pos >= head.size())
+                break;
+            const quint8 marker = u8(pos++);
+            if (marker == 0xD9 || marker == 0xDA)
+                break;
+            if (marker == 0x01 || (marker >= 0xD0 && marker <= 0xD7))
+                continue;
+            if (pos + 2 > head.size())
+                break;
+            const quint16 segLen = qFromBigEndian<quint16>(reinterpret_cast<const uchar *>(head.constData() + pos));
+            if (segLen < 2 || pos + segLen > head.size())
+                break;
+            if (marker == 0xE1 && segLen >= 8 && head.mid(pos + 2, 6) == QByteArray("Exif\0\0", 6)) {
+                tiff = head.mid(pos + 8, segLen - 8);
+                break;
+            }
+            pos += segLen;
+        }
+    } else if ((head.startsWith(QByteArray("II*\0", 4))) || head.startsWith(QByteArray("MM\0*", 4))) {
+        tiff = head;
+    }
+
+    if (tiff.size() < 8)
+        return exif;
+
+    const bool littleEndian = (tiff.at(0) == 'I' && tiff.at(1) == 'I');
+    const bool bigEndian = (tiff.at(0) == 'M' && tiff.at(1) == 'M');
+    if (!littleEndian && !bigEndian)
+        return exif;
+
+    auto readU16 = [&](int off) -> quint16 {
+        if (off < 0 || off + 2 > tiff.size()) return 0;
+        const uchar *p = reinterpret_cast<const uchar *>(tiff.constData() + off);
+        return littleEndian ? qFromLittleEndian<quint16>(p) : qFromBigEndian<quint16>(p);
+    };
+    auto readU32 = [&](int off) -> quint32 {
+        if (off < 0 || off + 4 > tiff.size()) return 0;
+        const uchar *p = reinterpret_cast<const uchar *>(tiff.constData() + off);
+        return littleEndian ? qFromLittleEndian<quint32>(p) : qFromBigEndian<quint32>(p);
+    };
+
+    if (readU16(2) != 42)
+        return exif;
+
+    const quint32 ifd0Offset = readU32(4);
+
+    auto readValueOffset = [&](int entryOff, quint16 type, quint32 count) -> int {
+        const qint64 typeSize = (type == 1 || type == 2 || type == 7) ? 1
+                                : (type == 3) ? 2
+                                : (type == 4 || type == 9) ? 4
+                                : (type == 5 || type == 10) ? 8 : 1;
+        const qint64 totalBytes = static_cast<qint64>(count) * typeSize;
+        if (totalBytes <= 4)
+            return entryOff + 8;
+        const quint32 ptr = readU32(entryOff + 8);
+        if (ptr >= static_cast<quint32>(tiff.size()) || ptr + totalBytes > static_cast<quint32>(tiff.size()))
+            return -1;
+        return static_cast<int>(ptr);
+    };
+
+    auto readAscii = [&](int dataOff, quint32 count) -> QString {
+        if (dataOff < 0 || dataOff + static_cast<int>(count) > tiff.size() || count == 0)
+            return {};
+        QByteArray raw = tiff.mid(dataOff, static_cast<qsizetype>(count));
+        const int nul = raw.indexOf('\0');
+        if (nul >= 0)
+            raw.truncate(nul);
+        return QString::fromUtf8(raw).trimmed();
+    };
+
+    auto readRational = [&](int dataOff, int idx, quint32 *numOut, quint32 *denOut) -> double {
+        const int off = dataOff + idx * 8;
+        if (off < 0 || off + 8 > tiff.size())
+            return 0.0;
+        const quint32 num = readU32(off);
+        const quint32 den = readU32(off + 4);
+        if (numOut) *numOut = num;
+        if (denOut) *denOut = den;
+        return (den != 0) ? static_cast<double>(num) / static_cast<double>(den) : 0.0;
+    };
+
+    auto readShortOrLong = [&](int dataOff, quint16 type) -> quint32 {
+        return (type == 3) ? readU16(dataOff) : readU32(dataOff);
+    };
+
+    quint32 exifSubIfd = 0;
+    quint32 gpsIfd = 0;
+
+    auto scanIfd = [&](quint32 ifdOffset, auto &&onTag) {
+        if (ifdOffset < 8 || static_cast<int>(ifdOffset) + 2 > tiff.size())
+            return;
+        const quint16 entries = readU16(static_cast<int>(ifdOffset));
+        for (quint16 i = 0; i < entries; ++i) {
+            const int entryOff = static_cast<int>(ifdOffset) + 2 + i * 12;
+            if (entryOff + 12 > tiff.size())
+                break;
+            const quint16 tag = readU16(entryOff);
+            const quint16 type = readU16(entryOff + 2);
+            const quint32 count = readU32(entryOff + 4);
+            const int dataOff = readValueOffset(entryOff, type, count);
+            if (dataOff >= 0)
+                onTag(tag, type, count, dataOff);
+        }
+    };
+
+    scanIfd(ifd0Offset, [&](quint16 tag, quint16 type, quint32 count, int dataOff) {
+        if (tag == 0x010F && type == 2)
+            exif[QStringLiteral("cameraMake")] = readAscii(dataOff, count);
+        else if (tag == 0x0110 && type == 2)
+            exif[QStringLiteral("cameraModel")] = readAscii(dataOff, count);
+        else if (tag == 0x0112)
+            exif[QStringLiteral("orientation")] = static_cast<int>(readShortOrLong(dataOff, type));
+        else if (tag == 0x0132 && type == 2 && !exif.contains(QStringLiteral("dateTaken")))
+            exif[QStringLiteral("dateTaken")] = readAscii(dataOff, count);
+        else if (tag == 0x8769)
+            exifSubIfd = readShortOrLong(dataOff, type);
+        else if (tag == 0x8825)
+            gpsIfd = readShortOrLong(dataOff, type);
+    });
+
+    if (exifSubIfd > 0) {
+        scanIfd(exifSubIfd, [&](quint16 tag, quint16 type, quint32 count, int dataOff) {
+            if (tag == 0x9003 && type == 2) {
+                exif[QStringLiteral("dateTaken")] = readAscii(dataOff, count);
+            } else if (tag == 0x829A && count >= 1) {
+                quint32 num = 0, den = 0;
+                const double val = readRational(dataOff, 0, &num, &den);
+                if (val > 0.0) {
+                    exif[QStringLiteral("exposure")] = (val < 1.0 && num > 0)
+                        ? QStringLiteral("1/%1s").arg(qRound(static_cast<double>(den) / static_cast<double>(num)))
+                        : QStringLiteral("%1s").arg(QString::number(val, 'g', 3));
+                }
+            } else if (tag == 0x829D && count >= 1) {
+                const double fnum = readRational(dataOff, 0, nullptr, nullptr);
+                if (fnum > 0.0)
+                    exif[QStringLiteral("aperture")] = QStringLiteral("f/%1").arg(QString::number(fnum, 'f', 1));
+            } else if (tag == 0x8827 && count >= 1) {
+                exif[QStringLiteral("iso")] = static_cast<int>(readShortOrLong(dataOff, type));
+            } else if (tag == 0x920A && count >= 1) {
+                const double fl = readRational(dataOff, 0, nullptr, nullptr);
+                if (fl > 0.0)
+                    exif[QStringLiteral("focalLength")] = QStringLiteral("%1 mm").arg(QString::number(fl, 'g', 4));
+            } else if (tag == 0xA002) {
+                exif[QStringLiteral("pixelWidth")] = static_cast<int>(readShortOrLong(dataOff, type));
+            } else if (tag == 0xA003) {
+                exif[QStringLiteral("pixelHeight")] = static_cast<int>(readShortOrLong(dataOff, type));
+            }
+        });
+    }
+
+    if (gpsIfd > 0) {
+        QString latRef, lonRef;
+        double latDeg = 0.0, lonDeg = 0.0;
+        bool hasLat = false, hasLon = false;
+        scanIfd(gpsIfd, [&](quint16 tag, quint16 type, quint32 count, int dataOff) {
+            if (tag == 0x0001 && type == 2) {
+                latRef = readAscii(dataOff, count);
+            } else if (tag == 0x0002 && count >= 3) {
+                latDeg = readRational(dataOff, 0, nullptr, nullptr)
+                         + readRational(dataOff, 1, nullptr, nullptr) / 60.0
+                         + readRational(dataOff, 2, nullptr, nullptr) / 3600.0;
+                hasLat = true;
+            } else if (tag == 0x0003 && type == 2) {
+                lonRef = readAscii(dataOff, count);
+            } else if (tag == 0x0004 && count >= 3) {
+                lonDeg = readRational(dataOff, 0, nullptr, nullptr)
+                         + readRational(dataOff, 1, nullptr, nullptr) / 60.0
+                         + readRational(dataOff, 2, nullptr, nullptr) / 3600.0;
+                hasLon = true;
+            }
+        });
+        if (hasLat && hasLon) {
+            if (latRef.compare(QLatin1String("S"), Qt::CaseInsensitive) == 0) latDeg = -latDeg;
+            if (lonRef.compare(QLatin1String("W"), Qt::CaseInsensitive) == 0) lonDeg = -lonDeg;
+            exif[QStringLiteral("gpsLat")] = latDeg;
+            exif[QStringLiteral("gpsLon")] = lonDeg;
+            exif[QStringLiteral("gpsCoordinates")] = QStringLiteral("%1°, %2°")
+                .arg(QString::number(latDeg, 'f', 5), QString::number(lonDeg, 'f', 5));
+        }
+    }
+
+    return exif;
+}
+
+QStringList extractPdfTextBlocksNative(const QByteArray &pdfBytes)
+{
+    QStringList blocks;
+    int pos = 0;
+    while (pos < pdfBytes.size() && blocks.size() < 64) {
+        const int bt = pdfBytes.indexOf("BT", pos);
+        if (bt < 0)
+            break;
+        const int et = pdfBytes.indexOf("ET", bt + 2);
+        if (et < 0)
+            break;
+        const QByteArray segment = pdfBytes.mid(bt + 2, et - bt - 2);
+        QString blockText;
+        for (int i = 0; i < segment.size(); ++i) {
+            if (segment.at(i) == '(') {
+                ++i;
+                QByteArray lit;
+                while (i < segment.size() && segment.at(i) != ')') {
+                    if (segment.at(i) == '\\' && i + 1 < segment.size()) {
+                        lit.append(segment.at(i + 1));
+                        i += 2;
+                        continue;
+                    }
+                    lit.append(segment.at(i));
+                    ++i;
+                }
+                if (!lit.isEmpty()) {
+                    if (!blockText.isEmpty())
+                        blockText += ' ';
+                    blockText += QString::fromLatin1(lit);
+                }
+            }
+        }
+        if (!blockText.trimmed().isEmpty())
+            blocks.append(blockText.trimmed());
+        pos = et + 2;
+    }
+    return blocks;
+}
+
+void populatePdfPreview(const QFileInfo &fi, int requestedPage, QTemporaryDir *&tempDir, QVariantMap &map)
+{
+    map[QStringLiteral("isPdf")] = true;
+    const QString absPath = fi.absoluteFilePath();
+
+    int pageCount = 0;
+    QString pdfTitle;
+    QString pdfAuthor;
+    QStringList nativeBlocks;
+
+    QFile pdfFile(absPath);
+    if (pdfFile.open(QIODevice::ReadOnly)) {
+        const QByteArray bytes = pdfFile.read(4 * 1024 * 1024);
+        const QString latin = QString::fromLatin1(bytes);
+        static const QRegularExpression pageObjRe(QStringLiteral("/Type\\s*/Page(?![A-Za-z])"));
+        QRegularExpressionMatchIterator it = pageObjRe.globalMatch(latin);
+        while (it.hasNext()) {
+            it.next();
+            ++pageCount;
+        }
+        static const QRegularExpression titleRe(QStringLiteral("/Title\\s*\\(([^)]*)\\)"));
+        const QRegularExpressionMatch tm = titleRe.match(latin);
+        if (tm.hasMatch())
+            pdfTitle = tm.captured(1).trimmed();
+        static const QRegularExpression authorRe(QStringLiteral("/Author\\s*\\(([^)]*)\\)"));
+        const QRegularExpressionMatch am = authorRe.match(latin);
+        if (am.hasMatch())
+            pdfAuthor = am.captured(1).trimmed();
+        nativeBlocks = extractPdfTextBlocksNative(bytes);
+    }
+
+    const QString pdfInfoBin = QStandardPaths::findExecutable(QStringLiteral("pdfinfo"));
+    if (!pdfInfoBin.isEmpty()) {
+        QProcess proc;
+        proc.start(pdfInfoBin, {absPath});
+        if (proc.waitForFinished(1200) && proc.exitCode() == 0) {
+            const QString infoOut = QString::fromUtf8(proc.readAllStandardOutput());
+            static const QRegularExpression pagesRe(QStringLiteral("Pages:\\s+(\\d+)"));
+            const QRegularExpressionMatch pm = pagesRe.match(infoOut);
+            if (pm.hasMatch())
+                pageCount = std::max(1, pm.captured(1).toInt());
+        }
+    }
+
+    pageCount = std::max(1, pageCount);
+    const int page = std::clamp(requestedPage, 1, pageCount);
+    map[QStringLiteral("pdfPageCount")] = pageCount;
+    map[QStringLiteral("pdfPage")] = page;
+    if (!pdfTitle.isEmpty())
+        map[QStringLiteral("pdfTitle")] = pdfTitle;
+    if (!pdfAuthor.isEmpty())
+        map[QStringLiteral("pdfAuthor")] = pdfAuthor;
+
+    QString pageText;
+    const QString pdftotextBin = QStandardPaths::findExecutable(QStringLiteral("pdftotext"));
+    if (!pdftotextBin.isEmpty()) {
+        QProcess proc;
+        proc.start(pdftotextBin, {QStringLiteral("-f"), QString::number(page),
+                                  QStringLiteral("-l"), QString::number(page), absPath, QStringLiteral("-")});
+        if (proc.waitForFinished(1500) && proc.exitCode() == 0)
+            pageText = QString::fromUtf8(proc.readAllStandardOutput()).trimmed();
+    }
+    if (pageText.isEmpty() && !nativeBlocks.isEmpty()) {
+        const int idx = std::min(page - 1, static_cast<int>(nativeBlocks.size()) - 1);
+        pageText = nativeBlocks.at(idx);
+    }
+    if (pageText.isEmpty())
+        pageText = QObject::tr("PDF Document — Page %1 of %2").arg(page).arg(pageCount);
+
+    map[QStringLiteral("pdfPageText")] = pageText;
+    map[QStringLiteral("isText")] = true;
+    map[QStringLiteral("text")] = pageText;
+
+    const QString pdftoppmBin = QStandardPaths::findExecutable(QStringLiteral("pdftoppm"));
+    if (!pdftoppmBin.isEmpty()) {
+        if (!tempDir)
+            tempDir = new QTemporaryDir();
+        if (tempDir->isValid()) {
+            const QString prefix = tempDir->filePath(
+                QStringLiteral("pdf_%1_p%2").arg(qHash(absPath), 0, 16).arg(page));
+            QProcess proc;
+            proc.start(pdftoppmBin, {QStringLiteral("-png"), QStringLiteral("-r"), QStringLiteral("110"),
+                                     QStringLiteral("-f"), QString::number(page),
+                                     QStringLiteral("-l"), QString::number(page),
+                                     QStringLiteral("-singlefile"), absPath, prefix});
+            if (proc.waitForFinished(2500) && proc.exitCode() == 0) {
+                const QString renderedPng = prefix + QStringLiteral(".png");
+                if (QFileInfo::exists(renderedPng))
+                    map[QStringLiteral("pdfPageImagePath")] = QUrl::fromLocalFile(renderedPng).toString();
+            }
+        }
+    }
+}
+
+QVariantMap parseMediaMetadata(const QFileInfo &fi, bool isAudio, bool isVideo)
+{
+    QVariantMap info;
+    const QString absPath = fi.absoluteFilePath();
+    const QString ext = fi.suffix().toLower();
+    info[QStringLiteral("container")] = ext.toUpper();
+
+    // Native C++ container inspection (WAV, FLAC, MP3, MP4/MOV/M4A)
+    QFile f(absPath);
+    if (f.open(QIODevice::ReadOnly)) {
+        const QByteArray hdr = f.read(64 * 1024);
+        if (hdr.size() >= 44 && hdr.startsWith("RIFF") && hdr.mid(8, 4) == "WAVE") {
+            info[QStringLiteral("codec")] = QStringLiteral("PCM WAV");
+            int pos = 12;
+            quint32 sampleRate = 0;
+            quint16 channels = 0;
+            quint32 byteRate = 0;
+            quint32 dataBytes = 0;
+            while (pos + 8 <= hdr.size()) {
+                const QByteArray chunkId = hdr.mid(pos, 4);
+                const quint32 chunkSz = qFromLittleEndian<quint32>(reinterpret_cast<const uchar *>(hdr.constData() + pos + 4));
+                if (chunkId == "fmt " && pos + 8 + 16 <= hdr.size()) {
+                    const uchar *p = reinterpret_cast<const uchar *>(hdr.constData() + pos + 8);
+                    channels = qFromLittleEndian<quint16>(p + 2);
+                    sampleRate = qFromLittleEndian<quint32>(p + 4);
+                    byteRate = qFromLittleEndian<quint32>(p + 8);
+                } else if (chunkId == "data") {
+                    dataBytes = chunkSz;
+                    break;
+                }
+                pos += 8 + static_cast<int>(chunkSz) + (chunkSz & 1);
+            }
+            if (sampleRate > 0)
+                info[QStringLiteral("sampleRate")] = QStringLiteral("%1 Hz").arg(sampleRate);
+            if (channels > 0)
+                info[QStringLiteral("channels")] = static_cast<int>(channels);
+            if (byteRate > 0) {
+                info[QStringLiteral("bitrate")] = QStringLiteral("%1 kbps").arg((byteRate * 8) / 1000);
+                if (dataBytes > 0) {
+                    const qint64 durMs = (static_cast<qint64>(dataBytes) * 1000) / byteRate;
+                    info[QStringLiteral("durationMs")] = durMs;
+                    info[QStringLiteral("durationFormatted")] = formatDurationMs(durMs);
+                }
+            }
+        } else if (hdr.size() >= 42 && hdr.startsWith("fLaC")) {
+            info[QStringLiteral("codec")] = QStringLiteral("FLAC");
+            const uchar *si = reinterpret_cast<const uchar *>(hdr.constData() + 8 + 10);
+            const quint32 packed = (static_cast<quint32>(si[0]) << 24) | (static_cast<quint32>(si[1]) << 16)
+                                   | (static_cast<quint32>(si[2]) << 8) | static_cast<quint32>(si[3]);
+            const quint32 sr = (packed >> 12) & 0xFFFFF;
+            const quint32 ch = ((packed >> 9) & 0x7) + 1;
+            const quint64 samples = (static_cast<quint64>(packed & 0xF) << 32) | qFromBigEndian<quint32>(si + 4);
+            if (sr > 0) {
+                info[QStringLiteral("sampleRate")] = QStringLiteral("%1 Hz").arg(sr);
+                info[QStringLiteral("channels")] = static_cast<int>(ch);
+                if (samples > 0) {
+                    const qint64 durMs = static_cast<qint64>((samples * 1000ULL) / sr);
+                    info[QStringLiteral("durationMs")] = durMs;
+                    info[QStringLiteral("durationFormatted")] = formatDurationMs(durMs);
+                }
+            }
+        } else if (ext == QLatin1String("mp3")) {
+            info[QStringLiteral("codec")] = QStringLiteral("MP3");
+        } else if (ext == QLatin1String("mp4") || ext == QLatin1String("m4a") || ext == QLatin1String("mov")) {
+            info[QStringLiteral("codec")] = isVideo ? QStringLiteral("H.264 / AAC") : QStringLiteral("AAC");
+            const int mvhdPos = hdr.indexOf("mvhd");
+            if (mvhdPos >= 4 && mvhdPos + 24 <= hdr.size()) {
+                const int version = static_cast<quint8>(hdr.at(mvhdPos + 4));
+                const uchar *p = reinterpret_cast<const uchar *>(hdr.constData() + mvhdPos + 4);
+                quint32 timescale = 0;
+                quint64 units = 0;
+                if (version == 0 && mvhdPos + 24 <= hdr.size()) {
+                    timescale = qFromBigEndian<quint32>(p + 12);
+                    units = qFromBigEndian<quint32>(p + 16);
+                } else if (version == 1 && mvhdPos + 36 <= hdr.size()) {
+                    timescale = qFromBigEndian<quint32>(p + 20);
+                    units = qFromBigEndian<quint64>(p + 24);
+                }
+                if (timescale > 0 && units > 0) {
+                    const qint64 durMs = static_cast<qint64>((units * 1000ULL) / timescale);
+                    info[QStringLiteral("durationMs")] = durMs;
+                    info[QStringLiteral("durationFormatted")] = formatDurationMs(durMs);
+                }
+            }
+        }
+    }
+
+    // Enrich with ffprobe when available
+    const QString ffprobeBin = QStandardPaths::findExecutable(QStringLiteral("ffprobe"));
+    if (!ffprobeBin.isEmpty()) {
+        QProcess proc;
+        proc.start(ffprobeBin, {QStringLiteral("-v"), QStringLiteral("quiet"),
+                                QStringLiteral("-print_format"), QStringLiteral("json"),
+                                QStringLiteral("-show_format"), QStringLiteral("-show_streams"), absPath});
+        if (proc.waitForFinished(1500) && proc.exitCode() == 0) {
+            const QJsonObject root = QJsonDocument::fromJson(proc.readAllStandardOutput()).object();
+            const QJsonObject fmt = root.value(QStringLiteral("format")).toObject();
+            const double durSecs = fmt.value(QStringLiteral("duration")).toString().toDouble();
+            if (durSecs > 0.0) {
+                const qint64 durMs = static_cast<qint64>(durSecs * 1000.0);
+                info[QStringLiteral("durationMs")] = durMs;
+                info[QStringLiteral("durationFormatted")] = formatDurationMs(durMs);
+            }
+            const qint64 bitRate = fmt.value(QStringLiteral("bit_rate")).toString().toLongLong();
+            if (bitRate > 0)
+                info[QStringLiteral("bitrate")] = QStringLiteral("%1 kbps").arg(bitRate / 1000);
+            const QJsonObject tags = fmt.value(QStringLiteral("tags")).toObject();
+            const QString title = tags.value(QStringLiteral("title")).toString();
+            const QString artist = tags.value(QStringLiteral("artist")).toString();
+            if (!title.isEmpty()) info[QStringLiteral("title")] = title;
+            if (!artist.isEmpty()) info[QStringLiteral("artist")] = artist;
+
+            const QJsonArray streams = root.value(QStringLiteral("streams")).toArray();
+            QStringList codecs;
+            for (const QJsonValue &sv : streams) {
+                const QJsonObject st = sv.toObject();
+                const QString ctype = st.value(QStringLiteral("codec_type")).toString();
+                const QString cname = st.value(QStringLiteral("codec_name")).toString().toUpper();
+                if (!cname.isEmpty() && !codecs.contains(cname))
+                    codecs.append(cname);
+                if (ctype == QLatin1String("video")) {
+                    const int w = st.value(QStringLiteral("width")).toInt();
+                    const int h = st.value(QStringLiteral("height")).toInt();
+                    if (w > 0 && h > 0)
+                        info[QStringLiteral("resolution")] = QStringLiteral("%1 × %2").arg(w).arg(h);
+                } else if (ctype == QLatin1String("audio")) {
+                    const QString sr = st.value(QStringLiteral("sample_rate")).toString();
+                    if (!sr.isEmpty())
+                        info[QStringLiteral("sampleRate")] = QStringLiteral("%1 Hz").arg(sr);
+                    const int ch = st.value(QStringLiteral("channels")).toInt();
+                    if (ch > 0)
+                        info[QStringLiteral("channels")] = ch;
+                }
+            }
+            if (!codecs.isEmpty())
+                info[QStringLiteral("codec")] = codecs.join(QStringLiteral(" / "));
+        }
+    }
+
+    if (!info.contains(QStringLiteral("codec")) || info.value(QStringLiteral("codec")).toString().isEmpty())
+        info[QStringLiteral("codec")] = ext.toUpper();
+    info[QStringLiteral("mediaType")] = isAudio ? QStringLiteral("audio") : (isVideo ? QStringLiteral("video") : QStringLiteral("media"));
+    return info;
+}
+
+QString expandRenameTags(const QString &tpl, const QFileInfo &fi,
+                         const QString &baseName, const QString &ext,
+                         int counterVal, int counterDigits,
+                         bool *usedCounterOut, bool *usedExtOut)
+{
+    QString out = tpl;
+    const QDateTime dt = fi.exists() ? fi.lastModified() : QDateTime::currentDateTime();
+    const QString counterStr = QStringLiteral("%1").arg(counterVal, std::max(1, counterDigits), 10, QLatin1Char('0'));
+    const QString parentName = fi.dir().dirName();
+
+    if (out.contains(QStringLiteral("[C]"), Qt::CaseSensitive) || out.contains(QStringLiteral("[Counter]"), Qt::CaseSensitive)) {
+        if (usedCounterOut)
+            *usedCounterOut = true;
+        out.replace(QStringLiteral("[Counter]"), counterStr);
+        out.replace(QStringLiteral("[C]"), counterStr);
+    }
+    if (out.contains(QStringLiteral("[Ext]"), Qt::CaseSensitive) || out.contains(QStringLiteral("[E]"), Qt::CaseSensitive)) {
+        if (usedExtOut)
+            *usedExtOut = true;
+        out.replace(QStringLiteral("[Ext]"), ext);
+        out.replace(QStringLiteral("[E]"), ext);
+    }
+
+    static const QRegularExpression sliceRe(QStringLiteral("\\[N(\\d+)-(\\d+)\\]"));
+    QRegularExpressionMatchIterator sliceIt = sliceRe.globalMatch(out);
+    QList<QPair<QPair<qsizetype, qsizetype>, QString>> sliceRepls;
+    while (sliceIt.hasNext()) {
+        const QRegularExpressionMatch m = sliceIt.next();
+        const int start1 = std::max(1, m.captured(1).toInt());
+        const int end1 = std::max(start1, m.captured(2).toInt());
+        const int start0 = start1 - 1;
+        const QString sub = (start0 < baseName.size()) ? baseName.mid(start0, end1 - start0) : QString();
+        sliceRepls.append({{m.capturedStart(), m.capturedLength()}, sub});
+    }
+    for (int i = sliceRepls.size() - 1; i >= 0; --i)
+        out.replace(sliceRepls.at(i).first.first, sliceRepls.at(i).first.second, sliceRepls.at(i).second);
+
+    out.replace(QStringLiteral("[Name]"), baseName);
+    out.replace(QStringLiteral("[N]"), baseName);
+    out.replace(QStringLiteral("[ParentFolder]"), parentName);
+    out.replace(QStringLiteral("[Parent]"), parentName);
+    out.replace(QStringLiteral("[P]"), parentName);
+    out.replace(QStringLiteral("[Date]"), dt.toString(QStringLiteral("yyyy-MM-dd")));
+    out.replace(QStringLiteral("[YMD]"), dt.toString(QStringLiteral("yyyy-MM-dd")));
+    out.replace(QStringLiteral("[Time]"), dt.toString(QStringLiteral("HH-mm-ss")));
+    out.replace(QStringLiteral("[hms]"), dt.toString(QStringLiteral("HH-mm-ss")));
+    out.replace(QStringLiteral("[Year]"), dt.toString(QStringLiteral("yyyy")));
+    out.replace(QStringLiteral("[Y]"), dt.toString(QStringLiteral("yyyy")));
+    out.replace(QStringLiteral("[Month]"), dt.toString(QStringLiteral("MM")));
+    out.replace(QStringLiteral("[M]"), dt.toString(QStringLiteral("MM")));
+    out.replace(QStringLiteral("[Day]"), dt.toString(QStringLiteral("dd")));
+    out.replace(QStringLiteral("[D]"), dt.toString(QStringLiteral("dd")));
+    return out;
+}
+
+QString normalizeRegexReplacement(const QString &repl)
+{
+    QString out;
+    out.reserve(repl.size());
+    for (int i = 0; i < repl.size(); ++i) {
+        if (repl.at(i) == '$' && i + 1 < repl.size() && repl.at(i + 1).isDigit()) {
+            out += '\\';
+            out += repl.at(i + 1);
+            ++i;
+            continue;
+        }
+        out += repl.at(i);
+    }
+    return out;
+}
+
 QString normalizeArchiveEntryPath(struct archive_entry *entry, bool *outEndsWithSlash = nullptr)
 {
     const char *utf8Name = archive_entry_pathname_utf8(entry);
@@ -435,6 +1361,380 @@ bool isArchiveTargetPath(const QString &targetDir)
     return PanelModel::splitArchivePath(targetDir, &arc, &inner);
 }
 
+QString findTerminalExecutable(bool fallbackXterm = true)
+{
+    static const QStringList candidates = {
+        QStringLiteral("xdg-terminal-exec"),
+        QStringLiteral("foot"),
+        QStringLiteral("alacritty"),
+        QStringLiteral("kitty"),
+        QStringLiteral("ghostty"),
+        QStringLiteral("wezterm")
+    };
+    for (const QString &bin : candidates) {
+        const QString found = QStandardPaths::findExecutable(bin);
+        if (!found.isEmpty())
+            return found;
+    }
+    return fallbackXterm ? QStringLiteral("xterm") : QString();
+}
+
+QString gvfsRootDir()
+{
+    const QString overrideDir = qEnvironmentVariable("OMAPANEL_GVFS_DIR");
+    if (!overrideDir.isEmpty())
+        return overrideDir;
+    const QString runtimeDir = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
+    if (!runtimeDir.isEmpty())
+        return QDir(runtimeDir).filePath(QStringLiteral("gvfs"));
+    return QStringLiteral("/run/user/%1/gvfs").arg(static_cast<unsigned long>(::getuid()));
+}
+
+QString sshfsMountsRootDir()
+{
+    const QString overrideDir = qEnvironmentVariable("OMAPANEL_MOUNTS_DIR");
+    if (!overrideDir.isEmpty())
+        return overrideDir;
+    QString cacheDir = QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
+    if (cacheDir.isEmpty())
+        cacheDir = QDir::homePath() + QStringLiteral("/.cache/omapanel");
+    return QDir(cacheDir).filePath(QStringLiteral("mounts"));
+}
+
+QString normalizeRemoteProtocol(const QString &raw)
+{
+    const QString p = raw.trimmed().toLower();
+    if (p == QLatin1String("ssh"))
+        return QStringLiteral("sftp");
+    if (p == QLatin1String("smb") || p == QLatin1String("cifs"))
+        return QStringLiteral("smb");
+    if (p == QLatin1String("sshfs"))
+        return QStringLiteral("sshfs");
+    return p.isEmpty() ? QStringLiteral("sftp") : p;
+}
+
+QString shellQuoteArg(const QString &arg)
+{
+    QString out = arg;
+    out.replace(QLatin1Char('\''), QStringLiteral("'\\''"));
+    return QLatin1Char('\'') + out + QLatin1Char('\'');
+}
+
+QStringList splitExecTokens(const QString &execStr)
+{
+    QStringList tokens;
+    QString current;
+    QChar inQuote;
+    bool escape = false;
+    for (int i = 0; i < execStr.size(); ++i) {
+        const QChar c = execStr.at(i);
+        if (escape) {
+            current.append(c);
+            escape = false;
+            continue;
+        }
+        if (c == QLatin1Char('\\') && inQuote != QLatin1Char('\'')) {
+            escape = true;
+            continue;
+        }
+        if (!inQuote.isNull()) {
+            if (c == inQuote)
+                inQuote = QChar();
+            else
+                current.append(c);
+            continue;
+        }
+        if (c == QLatin1Char('"') || c == QLatin1Char('\'')) {
+            inQuote = c;
+            continue;
+        }
+        if (c.isSpace()) {
+            if (!current.isEmpty()) {
+                tokens.append(current);
+                current.clear();
+            }
+            continue;
+        }
+        current.append(c);
+    }
+    if (!current.isEmpty())
+        tokens.append(current);
+    return tokens;
+}
+
+QStringList xdgApplicationDirs()
+{
+    QStringList dirs;
+    const QString overrideEnv = qEnvironmentVariable("OMAPANEL_APPS_DIR");
+    if (!overrideEnv.isEmpty()) {
+        for (const QString &part : overrideEnv.split(QLatin1Char(':'), Qt::SkipEmptyParts)) {
+            if (!dirs.contains(part) && QDir(part).exists())
+                dirs.append(part);
+        }
+    }
+    if (qEnvironmentVariable("OMAPANEL_APPS_ONLY_OVERRIDE") == QLatin1String("1"))
+        return dirs;
+
+    const QStringList stdDirs = QStandardPaths::standardLocations(QStandardPaths::ApplicationsLocation);
+    for (const QString &d : stdDirs) {
+        if (!dirs.contains(d) && QDir(d).exists())
+            dirs.append(d);
+    }
+    static const QStringList extraDirs = {
+        QStringLiteral("/usr/share/applications"),
+        QStringLiteral("/usr/local/share/applications"),
+        QStringLiteral("/var/lib/flatpak/exports/share/applications"),
+        QDir::homePath() + QStringLiteral("/.local/share/applications"),
+        QDir::homePath() + QStringLiteral("/.local/share/flatpak/exports/share/applications")
+    };
+    for (const QString &d : extraDirs) {
+        if (!dirs.contains(d) && QDir(d).exists())
+            dirs.append(d);
+    }
+    return dirs;
+}
+
+QString mimeAppsFilePath()
+{
+    const QString overridePath = qEnvironmentVariable("OMAPANEL_MIMEAPPS_FILE");
+    if (!overridePath.isEmpty())
+        return overridePath;
+    return QDir::homePath() + QStringLiteral("/.config/mimeapps.list");
+}
+
+QString queryDefaultDesktopForMime(const QString &mimeType)
+{
+    if (mimeType.isEmpty())
+        return {};
+
+    QStringList candidateFiles;
+    const QString overridePath = qEnvironmentVariable("OMAPANEL_MIMEAPPS_FILE");
+    if (!overridePath.isEmpty()) {
+        candidateFiles.append(overridePath);
+    } else {
+        candidateFiles.append(QDir::homePath() + QStringLiteral("/.config/mimeapps.list"));
+        candidateFiles.append(QDir::homePath() + QStringLiteral("/.local/share/applications/mimeapps.list"));
+        candidateFiles.append(QStringLiteral("/etc/xdg/mimeapps.list"));
+    }
+
+    for (const QString &filePath : candidateFiles) {
+        QFile f(filePath);
+        if (!f.open(QIODevice::ReadOnly | QIODevice::Text))
+            continue;
+        bool inDefaultSection = false;
+        while (!f.atEnd()) {
+            const QString line = QString::fromUtf8(f.readLine()).trimmed();
+            if (line.isEmpty() || line.startsWith(QLatin1Char('#')))
+                continue;
+            if (line.startsWith(QLatin1Char('[')) && line.endsWith(QLatin1Char(']'))) {
+                inDefaultSection = (line == QLatin1String("[Default Applications]"));
+                continue;
+            }
+            if (!inDefaultSection)
+                continue;
+            const int eq = line.indexOf(QLatin1Char('='));
+            if (eq <= 0)
+                continue;
+            if (line.left(eq).trimmed() == mimeType) {
+                const QStringList vals = line.mid(eq + 1).split(QLatin1Char(';'), Qt::SkipEmptyParts);
+                if (!vals.isEmpty())
+                    return vals.first().trimmed();
+            }
+        }
+    }
+
+    if (overridePath.isEmpty()) {
+        const QString xdgMimeBin = QStandardPaths::findExecutable(QStringLiteral("xdg-mime"));
+        if (!xdgMimeBin.isEmpty()) {
+            QProcess proc;
+            proc.start(xdgMimeBin, {QStringLiteral("query"), QStringLiteral("default"), mimeType});
+            if (proc.waitForFinished(700) && proc.exitCode() == 0) {
+                const QString out = QString::fromUtf8(proc.readAllStandardOutput()).trimmed();
+                if (!out.isEmpty())
+                    return out;
+            }
+        }
+    }
+    return {};
+}
+
+QVariantMap parseDesktopFile(const QString &desktopFilePath, bool skipExecCheck)
+{
+    QFile f(desktopFilePath);
+    if (!f.open(QIODevice::ReadOnly | QIODevice::Text))
+        return {};
+
+    bool inDesktopEntry = false;
+    QString typeVal, name, genericName, comment, execStr, icon;
+    QString tryExec;
+    QStringList mimeTypes;
+    bool terminal = false;
+    bool noDisplay = false;
+    bool hidden = false;
+
+    while (!f.atEnd()) {
+        const QString line = QString::fromUtf8(f.readLine()).trimmed();
+        if (line.isEmpty() || line.startsWith(QLatin1Char('#')))
+            continue;
+        if (line.startsWith(QLatin1Char('[')) && line.endsWith(QLatin1Char(']'))) {
+            if (inDesktopEntry)
+                break; // Only parse main [Desktop Entry] group
+            inDesktopEntry = (line == QLatin1String("[Desktop Entry]"));
+            continue;
+        }
+        if (!inDesktopEntry)
+            continue;
+        const int eq = line.indexOf(QLatin1Char('='));
+        if (eq <= 0)
+            continue;
+        const QString key = line.left(eq).trimmed();
+        const QString val = line.mid(eq + 1).trimmed();
+
+        if (key == QLatin1String("Type")) typeVal = val;
+        else if (key == QLatin1String("Name")) name = val;
+        else if (key == QLatin1String("GenericName")) genericName = val;
+        else if (key == QLatin1String("Comment")) comment = val;
+        else if (key == QLatin1String("Exec")) execStr = val;
+        else if (key == QLatin1String("TryExec")) tryExec = val;
+        else if (key == QLatin1String("Icon")) icon = val;
+        else if (key == QLatin1String("Terminal")) terminal = (val.compare(QLatin1String("true"), Qt::CaseInsensitive) == 0);
+        else if (key == QLatin1String("NoDisplay")) noDisplay = (val.compare(QLatin1String("true"), Qt::CaseInsensitive) == 0);
+        else if (key == QLatin1String("Hidden")) hidden = (val.compare(QLatin1String("true"), Qt::CaseInsensitive) == 0);
+        else if (key == QLatin1String("MimeType")) mimeTypes = val.split(QLatin1Char(';'), Qt::SkipEmptyParts);
+    }
+
+    if (typeVal != QLatin1String("Application") || noDisplay || hidden || name.isEmpty() || execStr.isEmpty())
+        return {};
+
+    if (!skipExecCheck) {
+        if (!tryExec.isEmpty()) {
+            const bool exists = QFileInfo::exists(tryExec) || !QStandardPaths::findExecutable(tryExec).isEmpty();
+            if (!exists)
+                return {};
+        } else {
+            const QStringList tokens = splitExecTokens(execStr);
+            if (!tokens.isEmpty()) {
+                QString bin = tokens.first();
+                if (bin == QLatin1String("env") && tokens.size() > 1) {
+                    for (int k = 1; k < tokens.size(); ++k) {
+                        if (!tokens.at(k).contains(QLatin1Char('='))) {
+                            bin = tokens.at(k);
+                            break;
+                        }
+                    }
+                }
+                const bool exists = bin.startsWith(QLatin1Char('/'))
+                                    ? QFileInfo::exists(bin)
+                                    : !QStandardPaths::findExecutable(bin).isEmpty();
+                if (!exists)
+                    return {};
+            }
+        }
+    }
+
+    QVariantMap m;
+    m[QStringLiteral("desktopId")] = QFileInfo(desktopFilePath).fileName();
+    m[QStringLiteral("desktopPath")] = desktopFilePath;
+    m[QStringLiteral("name")] = name;
+    m[QStringLiteral("genericName")] = genericName;
+    m[QStringLiteral("comment")] = comment;
+    m[QStringLiteral("exec")] = execStr;
+    m[QStringLiteral("icon")] = icon;
+    m[QStringLiteral("terminal")] = terminal;
+    m[QStringLiteral("mimeTypes")] = mimeTypes;
+    m[QStringLiteral("isDefault")] = false;
+    return m;
+}
+
+QVariantList collectAllDesktopApps()
+{
+    const QString overrideEnv = qEnvironmentVariable("OMAPANEL_APPS_DIR");
+    const bool skipExecCheck = !overrideEnv.isEmpty();
+    const QStringList dirs = xdgApplicationDirs();
+
+    QSet<QString> seenIds;
+    QVariantList result;
+
+    for (const QString &dir : dirs) {
+        QDirIterator it(dir, {QStringLiteral("*.desktop")}, QDir::Files);
+        while (it.hasNext()) {
+            const QString filePath = it.next();
+            const QString desktopId = QFileInfo(filePath).fileName();
+            if (seenIds.contains(desktopId))
+                continue;
+            const QVariantMap parsed = parseDesktopFile(filePath, skipExecCheck);
+            if (parsed.isEmpty())
+                continue;
+            seenIds.insert(desktopId);
+            result.append(parsed);
+        }
+    }
+
+    std::sort(result.begin(), result.end(), [](const QVariant &a, const QVariant &b) {
+        return a.toMap().value(QStringLiteral("name")).toString().compare(
+                   b.toMap().value(QStringLiteral("name")).toString(), Qt::CaseInsensitive) < 0;
+    });
+    return result;
+}
+
+bool desktopAppSupportsMime(const QVariantMap &app, const QMimeType &mime)
+{
+    const QStringList supported = app.value(QStringLiteral("mimeTypes")).toStringList();
+    if (supported.isEmpty())
+        return false;
+
+    const QString primary = mime.name();
+    const QString superWildcard = primary.contains(QLatin1Char('/'))
+                                      ? primary.left(primary.indexOf(QLatin1Char('/'))) + QStringLiteral("/*")
+                                      : QString();
+
+    for (const QString &rawPat : supported) {
+        const QString pat = rawPat.trimmed();
+        if (pat.isEmpty())
+            continue;
+        if (pat == primary || mime.aliases().contains(pat) || mime.inherits(pat))
+            return true;
+        if (!superWildcard.isEmpty() && pat == superWildcard)
+            return true;
+    }
+    return false;
+}
+
+bool customActionPatternMatches(const QString &patternStr, const QFileInfo &fi, const QMimeType &mime)
+{
+    const QString trimmed = patternStr.trimmed();
+    if (trimmed.isEmpty() || trimmed == QLatin1String("*"))
+        return true;
+
+    const QString fileName = fi.fileName();
+    const bool isDir = fi.isDir();
+    const QStringList tokens = trimmed.split(QRegularExpression(QStringLiteral("[;,]")), Qt::SkipEmptyParts);
+    for (const QString &rawTok : tokens) {
+        const QString tok = rawTok.trimmed();
+        if (tok.isEmpty() || tok == QLatin1String("*"))
+            return true;
+        if (tok == QLatin1String("inode/directory")) {
+            if (isDir)
+                return true;
+            continue;
+        }
+        if (tok.contains(QLatin1Char('/'))) {
+            if (tok.endsWith(QLatin1String("/*"))) {
+                const QString prefix = tok.left(tok.size() - 1);
+                if (mime.name().startsWith(prefix, Qt::CaseInsensitive))
+                    return true;
+            } else if (mime.name().compare(tok, Qt::CaseInsensitive) == 0 || mime.inherits(tok)) {
+                return true;
+            }
+            continue;
+        }
+        const QRegularExpression re = QRegularExpression::fromWildcard(tok, Qt::CaseInsensitive);
+        if (re.match(fileName).hasMatch())
+            return true;
+    }
+    return false;
+}
+
 } // namespace
 
 Backend::Backend(const QString &bookmarksFile, QObject *parent)
@@ -449,6 +1749,7 @@ Backend::Backend(const QString &bookmarksFile, QObject *parent)
     }
     loadBookmarks();
     loadSession();
+    ensureDefaultCustomActions();
     refreshDrives();
 
     if (m_recentDirs.isEmpty()) {
@@ -481,6 +1782,7 @@ Backend::Backend(const QString &bookmarksFile, QObject *parent)
 
 Backend::~Backend()
 {
+    m_operationQueue.clear();
     cancelSearch();
     saveSession();
     delete m_archiveTempDir;
@@ -636,14 +1938,7 @@ void Backend::openWithEditor(const QString &path)
 
     QString editor = qEnvironmentVariable("EDITOR");
     if (!editor.isEmpty()) {
-        QString terminal = QStandardPaths::findExecutable("xdg-terminal-exec");
-        if (terminal.isEmpty())
-            terminal = QStandardPaths::findExecutable("foot");
-        if (terminal.isEmpty())
-            terminal = QStandardPaths::findExecutable("alacritty");
-        if (terminal.isEmpty())
-            terminal = QStandardPaths::findExecutable("kitty");
-
+        const QString terminal = findTerminalExecutable(false);
         if (!terminal.isEmpty()) {
             QProcess::startDetached(terminal, {"-e", editor, targetPath});
             return;
@@ -664,16 +1959,7 @@ void Backend::openInTerminal(const QString &path)
         dirPath = info.isDir() ? info.absoluteFilePath() : info.absolutePath();
     }
 
-    QString terminal = QStandardPaths::findExecutable("xdg-terminal-exec");
-    if (terminal.isEmpty())
-        terminal = QStandardPaths::findExecutable("foot");
-    if (terminal.isEmpty())
-        terminal = QStandardPaths::findExecutable("alacritty");
-    if (terminal.isEmpty())
-        terminal = QStandardPaths::findExecutable("kitty");
-    if (terminal.isEmpty())
-        terminal = "xterm";
-
+    const QString terminal = findTerminalExecutable(true);
     QProcess::startDetached(terminal, {}, dirPath);
 }
 
@@ -682,20 +1968,64 @@ bool Backend::startFileOperation(FileOperation::Mode mode, const QStringList &so
     if (sourcePaths.isEmpty() || targetDir.isEmpty())
         return false;
 
-    if (m_fileOp) {
-        showStatus(tr("Another file operation is still running."));
-        return false;
-    }
-
     if (!QFileInfo(targetDir).isDir()) {
         showStatus(tr("Target folder does not exist: %1").arg(targetDir));
         return false;
     }
 
+    if (m_fileOp) {
+        QueuedFileOperation q;
+        q.id = ++m_nextQueueId;
+        q.mode = mode;
+        q.sourcePaths = sourcePaths;
+        q.targetDir = targetDir;
+        const QString firstName = QFileInfo(sourcePaths.first()).fileName();
+        const QString targetName = QFileInfo(targetDir).fileName().isEmpty() ? targetDir : QFileInfo(targetDir).fileName();
+        q.title = (mode == FileOperation::Copy ? tr("Copy") : tr("Move"))
+                  + QStringLiteral(": ")
+                  + (sourcePaths.size() == 1 ? firstName : tr("%1 item(s)").arg(sourcePaths.size()))
+                  + QStringLiteral(" → ") + targetName;
+        m_operationQueue.append(q);
+        emit operationQueueChanged();
+        emit busyChanged();
+        showStatus(tr("Queued (%1 waiting): %2").arg(m_operationQueue.size()).arg(q.title));
+        return true;
+    }
+
+    return launchFileOperation(mode, sourcePaths, targetDir);
+}
+
+bool Backend::launchFileOperation(FileOperation::Mode mode, const QStringList &sourcePaths, const QString &targetDir)
+{
     m_fileOp = new FileOperation(mode, sourcePaths, targetDir);
+    connect(m_fileOp, &FileOperation::pausedChanged, this, [this](bool paused) {
+        if (m_isPaused != paused) {
+            m_isPaused = paused;
+            emit busyChanged();
+        }
+    });
     connect(m_fileOp, &FileOperation::progress, this, [this](qint64 done, qint64 total, const QString &name) {
+        m_busyDoneBytes = done;
+        m_busyTotalBytes = total;
         m_busyProgress = total > 0 ? static_cast<double>(done) / static_cast<double>(total) : 0.0;
         m_busyDetail = name;
+        const qint64 elapsedMs = m_fileOp ? m_fileOp->activeElapsedMs() : 0;
+        if (elapsedMs > 0 && done > 0) {
+            m_busySpeedBytes = (done * 1000) / elapsedMs;
+            m_busySpeed = PanelModel::formatSize(m_busySpeedBytes, false) + QStringLiteral("/s");
+            if (total > done && m_busySpeedBytes > 0) {
+                const qint64 remSecs = (total - done) / m_busySpeedBytes;
+                m_busyEta = formatEtaSeconds(remSecs);
+            } else if (total > 0 && done >= total) {
+                m_busyEta = QStringLiteral("0s");
+            } else {
+                m_busyEta.clear();
+            }
+        } else {
+            m_busySpeedBytes = 0;
+            m_busySpeed = QStringLiteral("0 B/s");
+            m_busyEta.clear();
+        }
         emit busyChanged();
     });
     connect(m_fileOp, &FileOperation::conflict, this, &Backend::conflictRequested);
@@ -706,9 +2036,15 @@ bool Backend::startFileOperation(FileOperation::Mode mode, const QStringList &so
 
     m_isBusy = true;
     m_canCancel = true;
+    m_isPaused = false;
     m_busyTitle = mode == FileOperation::Copy ? tr("Copying files...") : tr("Moving files...");
     m_busyProgress = 0.0;
     m_busyDetail.clear();
+    m_busyDoneBytes = 0;
+    m_busyTotalBytes = 0;
+    m_busySpeedBytes = 0;
+    m_busySpeed = QStringLiteral("0 B/s");
+    m_busyEta.clear();
     emit busyChanged();
 
     m_fileOpThread->start();
@@ -748,7 +2084,13 @@ void Backend::onFileOperationFinished()
 
     m_isBusy = false;
     m_canCancel = false;
+    m_isPaused = false;
     m_busyDetail.clear();
+    m_busySpeed.clear();
+    m_busySpeedBytes = 0;
+    m_busyEta.clear();
+    m_busyDoneBytes = 0;
+    m_busyTotalBytes = 0;
     emit busyChanged();
 
     m_leftPanel.refresh();
@@ -770,6 +2112,12 @@ void Backend::onFileOperationFinished()
     const bool success = !cancelled && failed == 0;
     showStatus(message);
     emit operationFinished(success, message);
+
+    if (!m_operationQueue.isEmpty()) {
+        const QueuedFileOperation nextOp = m_operationQueue.takeFirst();
+        emit operationQueueChanged();
+        launchFileOperation(nextOp.mode, nextOp.sourcePaths, nextOp.targetDir);
+    }
 }
 
 bool Backend::copyItems(const QStringList &sourcePaths, const QString &targetDir)
@@ -801,9 +2149,83 @@ void Backend::cancelOperation()
 {
     if (!m_fileOp)
         return;
+    m_isPaused = false;
     m_fileOp->cancel();
     m_canCancel = false;
     m_busyTitle = tr("Cancelling...");
+    emit busyChanged();
+}
+
+void Backend::cancelAllOperations()
+{
+    clearOperationQueue();
+    cancelOperation();
+}
+
+void Backend::pauseOperation()
+{
+    if (!m_fileOp || m_isPaused)
+        return;
+    m_fileOp->pause();
+    m_isPaused = m_fileOp->isPaused();
+    emit busyChanged();
+}
+
+void Backend::resumeOperation()
+{
+    if (!m_fileOp || !m_isPaused)
+        return;
+    m_fileOp->resume();
+    m_isPaused = m_fileOp->isPaused();
+    emit busyChanged();
+}
+
+void Backend::togglePauseOperation()
+{
+    if (!m_fileOp)
+        return;
+    if (m_isPaused)
+        resumeOperation();
+    else
+        pauseOperation();
+}
+
+QVariantList Backend::operationQueue() const
+{
+    QVariantList list;
+    list.reserve(m_operationQueue.size());
+    for (const QueuedFileOperation &q : m_operationQueue) {
+        QVariantMap row;
+        row[QStringLiteral("id")] = q.id;
+        row[QStringLiteral("mode")] = (q.mode == FileOperation::Copy) ? QStringLiteral("copy") : QStringLiteral("move");
+        row[QStringLiteral("title")] = q.title;
+        row[QStringLiteral("targetDir")] = q.targetDir;
+        row[QStringLiteral("itemCount")] = q.sourcePaths.size();
+        row[QStringLiteral("firstPath")] = q.sourcePaths.isEmpty() ? QString() : q.sourcePaths.first();
+        list.append(row);
+    }
+    return list;
+}
+
+bool Backend::removeQueuedOperation(int queueId)
+{
+    for (int i = 0; i < m_operationQueue.size(); ++i) {
+        if (m_operationQueue.at(i).id == queueId) {
+            m_operationQueue.removeAt(i);
+            emit operationQueueChanged();
+            emit busyChanged();
+            return true;
+        }
+    }
+    return false;
+}
+
+void Backend::clearOperationQueue()
+{
+    if (m_operationQueue.isEmpty())
+        return;
+    m_operationQueue.clear();
+    emit operationQueueChanged();
     emit busyChanged();
 }
 
@@ -2086,8 +3508,41 @@ void Backend::loadSession()
             break;
     }
 
+    m_multiRenamePresets.clear();
+    const QByteArray presetsRaw = settings.value("multiRename/presetsJson").toByteArray();
+    if (!presetsRaw.isEmpty()) {
+        const QJsonArray arr = QJsonDocument::fromJson(presetsRaw).array();
+        for (const QJsonValue &val : arr) {
+            if (val.isObject())
+                m_multiRenamePresets.append(val.toObject().toVariantMap());
+        }
+    }
+
+    m_remoteConnections.clear();
+    const QByteArray remoteRaw = settings.value("network/connectionsJson").toByteArray();
+    if (!remoteRaw.isEmpty()) {
+        const QJsonArray arr = QJsonDocument::fromJson(remoteRaw).array();
+        for (const QJsonValue &val : arr) {
+            if (val.isObject())
+                m_remoteConnections.append(val.toObject().toVariantMap());
+        }
+    }
+
+    m_customActions.clear();
+    const QByteArray actionsRaw = settings.value("actions/customActionsJson").toByteArray();
+    if (!actionsRaw.isEmpty()) {
+        const QJsonArray arr = QJsonDocument::fromJson(actionsRaw).array();
+        for (const QJsonValue &val : arr) {
+            if (val.isObject())
+                m_customActions.append(val.toObject().toVariantMap());
+        }
+    }
+
     m_loadingSession = false;
     emit recentDirectoriesChanged();
+    emit multiRenamePresetsChanged();
+    emit remoteConnectionsChanged();
+    emit customActionsChanged();
 }
 
 void Backend::saveSession() const
@@ -2103,6 +3558,21 @@ void Backend::saveSession() const
     settings.setValue("window/activePanel", m_activePanel);
     settings.setValue("window/themeMode", m_themeMode);
     settings.setValue("history/recentDirs", m_recentDirs);
+
+    QJsonArray presetArr;
+    for (const QVariant &v : std::as_const(m_multiRenamePresets))
+        presetArr.append(QJsonObject::fromVariantMap(v.toMap()));
+    settings.setValue("multiRename/presetsJson", QJsonDocument(presetArr).toJson(QJsonDocument::Compact));
+
+    QJsonArray remoteArr;
+    for (const QVariant &v : std::as_const(m_remoteConnections))
+        remoteArr.append(QJsonObject::fromVariantMap(v.toMap()));
+    settings.setValue("network/connectionsJson", QJsonDocument(remoteArr).toJson(QJsonDocument::Compact));
+
+    QJsonArray actionsArr;
+    for (const QVariant &v : std::as_const(m_customActions))
+        actionsArr.append(QJsonObject::fromVariantMap(v.toMap()));
+    settings.setValue("actions/customActionsJson", QJsonDocument(actionsArr).toJson(QJsonDocument::Compact));
 
     auto savePanel = [&settings](const QString &group, const PanelModel &panel) {
         settings.beginGroup(group);
@@ -2120,11 +3590,12 @@ void Backend::saveSession() const
     settings.sync();
 }
 
-QString Backend::computeNewName(const QString &originalName, int index, const QString &findText,
+QString Backend::computeNewName(const QFileInfo &fi, int index, const QString &findText,
                                 const QString &replaceText, const QString &prefix,
-                                const QString &suffix, int caseMode, bool addCounter)
+                                const QString &suffix, int caseMode, bool addCounter,
+                                bool useRegex, const QString &nameMask,
+                                int counterStart, int counterStep, int counterDigits)
 {
-    QFileInfo fi(originalName);
     QString base = fi.completeBaseName();
     QString ext = fi.suffix();
     if (base.isEmpty() && !ext.isEmpty()) {
@@ -2133,22 +3604,42 @@ QString Backend::computeNewName(const QString &originalName, int index, const QS
         ext.clear();
     }
 
+    const int counterVal = counterStart + index * counterStep;
+    const int digits = std::clamp(counterDigits, 1, 10);
+    bool usedCounter = false;
+    bool usedExt = false;
+
+    const QString expandedReplace = expandRenameTags(replaceText, fi, base, ext, counterVal, digits, &usedCounter, nullptr);
+
     if (!findText.isEmpty()) {
-        base.replace(findText, replaceText, Qt::CaseInsensitive);
+        if (useRegex) {
+            const QRegularExpression rx(findText, QRegularExpression::CaseInsensitiveOption);
+            if (rx.isValid())
+                base.replace(rx, normalizeRegexReplacement(expandedReplace));
+        } else {
+            base.replace(findText, expandedReplace, Qt::CaseInsensitive);
+        }
     }
+
+    const QString effMask = nameMask.trimmed().isEmpty() ? QStringLiteral("[N]") : nameMask;
+    const QString maskedStem = expandRenameTags(effMask, fi, base, ext, counterVal, digits, &usedCounter, &usedExt);
+    const QString expPrefix = expandRenameTags(prefix, fi, base, ext, counterVal, digits, &usedCounter, nullptr);
+    const QString expSuffix = expandRenameTags(suffix, fi, base, ext, counterVal, digits, &usedCounter, nullptr);
+
+    QString result = expPrefix + maskedStem + expSuffix;
 
     switch (caseMode) {
     case 1: // lowercase
-        base = base.toLower();
+        result = result.toLower();
         ext = ext.toLower();
         break;
     case 2: // UPPERCASE
-        base = base.toUpper();
+        result = result.toUpper();
         ext = ext.toUpper();
         break;
     case 3: // Title Case
-        if (!base.isEmpty()) {
-            base = base.left(1).toUpper() + base.mid(1).toLower();
+        if (!result.isEmpty()) {
+            result = result.left(1).toUpper() + result.mid(1).toLower();
         }
         ext = ext.toLower();
         break;
@@ -2156,19 +3647,21 @@ QString Backend::computeNewName(const QString &originalName, int index, const QS
         break;
     }
 
-    QString result = prefix + base + suffix;
-    if (addCounter) {
-        result += QString("_%1").arg(index + 1, 3, 10, QLatin1Char('0'));
+    if (addCounter && !usedCounter) {
+        result += QStringLiteral("_%1").arg(counterVal, digits, 10, QLatin1Char('0'));
     }
-    if (!ext.isEmpty()) {
+    if (!ext.isEmpty() && !usedExt) {
         result += "." + ext;
     }
+    result.replace('/', '_');
     return result;
 }
 
 QVariantList Backend::previewMultiRename(const QStringList &paths, const QString &findText,
                                          const QString &replaceText, const QString &prefix,
-                                         const QString &suffix, int caseMode, bool addCounter) const
+                                         const QString &suffix, int caseMode, bool addCounter,
+                                         bool useRegex, const QString &nameMask,
+                                         int counterStart, int counterStep, int counterDigits) const
 {
     QVariantList list;
     for (int i = 0; i < paths.size(); ++i) {
@@ -2176,7 +3669,8 @@ QVariantList Backend::previewMultiRename(const QStringList &paths, const QString
         QVariantMap entry;
         entry["oldPath"] = fi.absoluteFilePath();
         entry["oldName"] = fi.fileName();
-        entry["newName"] = computeNewName(fi.fileName(), i, findText, replaceText, prefix, suffix, caseMode, addCounter);
+        entry["newName"] = computeNewName(fi, i, findText, replaceText, prefix, suffix, caseMode, addCounter,
+                                          useRegex, nameMask, counterStart, counterStep, counterDigits);
         list.append(entry);
     }
     return list;
@@ -2184,7 +3678,9 @@ QVariantList Backend::previewMultiRename(const QStringList &paths, const QString
 
 bool Backend::executeMultiRename(const QStringList &paths, const QString &findText,
                                  const QString &replaceText, const QString &prefix,
-                                 const QString &suffix, int caseMode, bool addCounter)
+                                 const QString &suffix, int caseMode, bool addCounter,
+                                 bool useRegex, const QString &nameMask,
+                                 int counterStart, int counterStep, int counterDigits)
 {
     if (paths.isEmpty())
         return false;
@@ -2202,7 +3698,8 @@ bool Backend::executeMultiRename(const QStringList &paths, const QString &findTe
         if (!itemExistsOrLink(fi))
             continue;
         const QString oldAbs = fi.absoluteFilePath();
-        const QString newName = computeNewName(fi.fileName(), i, findText, replaceText, prefix, suffix, caseMode, addCounter);
+        const QString newName = computeNewName(fi, i, findText, replaceText, prefix, suffix, caseMode, addCounter,
+                                               useRegex, nameMask, counterStart, counterStep, counterDigits);
         const QString newPath = fi.dir().filePath(newName);
         if (oldAbs == newPath) {
             ++renamedCount;
@@ -2228,6 +3725,59 @@ bool Backend::executeMultiRename(const QStringList &paths, const QString &findTe
     m_rightPanel.refresh();
     showStatus(tr("Multi-Rename: %1/%2 items renamed.").arg(renamedCount).arg(paths.size()));
     return renamedCount == paths.size();
+}
+
+bool Backend::saveMultiRenamePreset(const QString &name, const QVariantMap &preset)
+{
+    const QString cleanName = name.trimmed();
+    if (cleanName.isEmpty())
+        return false;
+
+    QVariantMap entry = preset;
+    entry[QStringLiteral("name")] = cleanName;
+
+    int existingIdx = -1;
+    for (int i = 0; i < m_multiRenamePresets.size(); ++i) {
+        if (m_multiRenamePresets.at(i).toMap().value(QStringLiteral("name")).toString().compare(cleanName, Qt::CaseInsensitive) == 0) {
+            existingIdx = i;
+            break;
+        }
+    }
+    if (existingIdx >= 0)
+        m_multiRenamePresets[existingIdx] = entry;
+    else
+        m_multiRenamePresets.append(entry);
+
+    emit multiRenamePresetsChanged();
+    saveSession();
+    showStatus(tr("Saved Multi-Rename preset: %1").arg(cleanName));
+    return true;
+}
+
+QVariantMap Backend::getMultiRenamePreset(const QString &name) const
+{
+    const QString cleanName = name.trimmed();
+    for (const QVariant &v : m_multiRenamePresets) {
+        const QVariantMap map = v.toMap();
+        if (map.value(QStringLiteral("name")).toString().compare(cleanName, Qt::CaseInsensitive) == 0)
+            return map;
+    }
+    return {};
+}
+
+bool Backend::deleteMultiRenamePreset(const QString &name)
+{
+    const QString cleanName = name.trimmed();
+    for (int i = 0; i < m_multiRenamePresets.size(); ++i) {
+        if (m_multiRenamePresets.at(i).toMap().value(QStringLiteral("name")).toString().compare(cleanName, Qt::CaseInsensitive) == 0) {
+            m_multiRenamePresets.removeAt(i);
+            emit multiRenamePresetsChanged();
+            saveSession();
+            showStatus(tr("Deleted preset: %1").arg(cleanName));
+            return true;
+        }
+    }
+    return false;
 }
 
 bool Backend::isArchive(const QString &path) const
@@ -2798,6 +4348,7 @@ void Backend::refreshDrives()
     const QStorageInfo rootStorage("/");
     addDrive("/ Root", "/", PanelModel::formatSize(rootStorage.bytesAvailable(), false));
 
+    const QString sshfsRoot = sshfsMountsRootDir();
     for (const QStorageInfo &storage : QStorageInfo::mountedVolumes()) {
         if (!storage.isValid() || !storage.isReady())
             continue;
@@ -2809,6 +4360,7 @@ void Backend::refreshDrives()
         if (rootPath == QLatin1String("/") || rootPath == QLatin1String("/home") ||
             rootPath == QLatin1String("/root") || rootPath == QLatin1String("/srv") ||
             rootPath.startsWith("/boot") || rootPath.startsWith("/run/user") ||
+            (!sshfsRoot.isEmpty() && rootPath.startsWith(sshfsRoot)) ||
             rootPath.startsWith("/var") || rootPath.startsWith("/sys") || rootPath.startsWith("/dev"))
             continue;
 
@@ -2865,6 +4417,70 @@ void Backend::refreshDrives()
             }
         };
         parseDevices(blockDevices);
+    }
+
+    // Saved remote connections (SFTP / SMB / SSHFS) + live GVFS mounts
+    const QString gvfsRoot = gvfsRootDir();
+    QSet<QString> coveredGvfsDirs;
+    const QVariantList remotes = remoteConnections();
+    for (const QVariant &v : remotes) {
+        const QVariantMap conn = v.toMap();
+        const QString mountPath = conn.value(QStringLiteral("mountPath")).toString();
+        const bool isMounted = conn.value(QStringLiteral("isMounted")).toBool();
+        const QString uri = conn.value(QStringLiteral("uri")).toString();
+        const QString proto = conn.value(QStringLiteral("protocol")).toString().toUpper();
+        QVariantMap d;
+        d[QStringLiteral("label")] = conn.value(QStringLiteral("name")).toString();
+        d[QStringLiteral("path")] = (isMounted && !mountPath.isEmpty()) ? mountPath : uri;
+        d[QStringLiteral("free")] = proto;
+        d[QStringLiteral("isMounted")] = isMounted;
+        d[QStringLiteral("canUnmount")] = isMounted;
+        d[QStringLiteral("isRemovable")] = false;
+        d[QStringLiteral("isRemote")] = true;
+        d[QStringLiteral("remoteId")] = conn.value(QStringLiteral("id")).toString();
+        d[QStringLiteral("remoteUri")] = uri;
+        d[QStringLiteral("protocol")] = conn.value(QStringLiteral("protocol")).toString();
+        d[QStringLiteral("devPath")] = QString();
+        result.append(d);
+
+        if (isMounted && !mountPath.isEmpty()) {
+            seenPaths.insert(mountPath);
+            if (!gvfsRoot.isEmpty() && mountPath.startsWith(gvfsRoot + QLatin1Char('/'))) {
+                const QString rel = mountPath.mid(gvfsRoot.size() + 1);
+                const QString topDir = rel.section(QLatin1Char('/'), 0, 0);
+                if (!topDir.isEmpty())
+                    coveredGvfsDirs.insert(QDir(gvfsRoot).filePath(topDir));
+            }
+        }
+    }
+
+    if (QDir(gvfsRoot).exists()) {
+        const QFileInfoList gvfsEntries = QDir(gvfsRoot).entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
+        for (const QFileInfo &fi : gvfsEntries) {
+            const QString gvfsPath = fi.absoluteFilePath();
+            if (seenPaths.contains(gvfsPath) || coveredGvfsDirs.contains(gvfsPath))
+                continue;
+            const QString dirName = fi.fileName();
+            const QString proto = dirName.startsWith(QLatin1String("smb")) ? QStringLiteral("smb") : QStringLiteral("sftp");
+            QString displayLabel = dirName;
+            static const QRegularExpression hostRe(QStringLiteral("(?:host|server)=([^,]+)"));
+            const QRegularExpressionMatch hm = hostRe.match(dirName);
+            if (hm.hasMatch())
+                displayLabel = hm.captured(1);
+            QVariantMap d;
+            d[QStringLiteral("label")] = displayLabel;
+            d[QStringLiteral("path")] = gvfsPath;
+            d[QStringLiteral("free")] = proto.toUpper();
+            d[QStringLiteral("isMounted")] = true;
+            d[QStringLiteral("canUnmount")] = true;
+            d[QStringLiteral("isRemovable")] = false;
+            d[QStringLiteral("isRemote")] = true;
+            d[QStringLiteral("remoteId")] = QString();
+            d[QStringLiteral("remoteUri")] = QString();
+            d[QStringLiteral("protocol")] = proto;
+            d[QStringLiteral("devPath")] = QString();
+            result.append(d);
+        }
     }
 
     m_drives = result;
@@ -3023,9 +4639,10 @@ QVariantMap Backend::runCommand(const QString &command)
     return res;
 }
 
-QVariantMap Backend::getPreview(const QString &path)
+QVariantMap Backend::getPreview(const QString &path, int pdfPage)
 {
     QVariantMap map;
+    const bool dark = isDarkTheme();
 
     QString archiveFile;
     QString internalPath;
@@ -3119,8 +4736,21 @@ QVariantMap Backend::getPreview(const QString &path)
                 map["isBinary"] = isBinary;
                 map["isText"] = true;
                 if (!isBinary) {
-                    map["text"] = QString::fromUtf8(chunk);
+                    const QString text = QString::fromUtf8(chunk);
+                    map["text"] = text;
                     map["truncated"] = truncated;
+                    const QString lang = syntaxLanguageForFile(entryFi.fileName(), ext);
+                    if (ext == QLatin1String("md") || ext == QLatin1String("markdown") || ext == QLatin1String("mdx")) {
+                        map["isMarkdown"] = true;
+                        map["isCode"] = true;
+                        map["syntaxLanguage"] = QStringLiteral("Markdown");
+                        map["renderedHtml"] = renderMarkdownToHtml(text, dark);
+                        map["highlightedHtml"] = highlightCodeToHtml(text, ext, dark);
+                    } else if (!lang.isEmpty()) {
+                        map["isCode"] = true;
+                        map["syntaxLanguage"] = lang;
+                        map["highlightedHtml"] = highlightCodeToHtml(text, ext, dark);
+                    }
                 } else {
                     map["text"] = formatHexDumpText(chunk, map["formattedSize"].toString(), entrySize);
                 }
@@ -3231,6 +4861,92 @@ QVariantMap Backend::getPreview(const QString &path)
         }
         const QString fmt = QString::fromLatin1(reader.format()).toUpper();
         map["imageFormat"] = fmt.isEmpty() ? ext.toUpper() : fmt;
+        const QVariantMap exif = parseExifMetadata(fi.absoluteFilePath());
+        if (!exif.isEmpty()) {
+            map["hasExif"] = true;
+            map["exif"] = exif;
+            QStringList summaryParts;
+            const QString cam = (exif.value("cameraMake").toString() + " " + exif.value("cameraModel").toString()).trimmed();
+            if (!cam.isEmpty()) summaryParts.append(cam);
+            if (!exif.value("aperture").toString().isEmpty()) summaryParts.append(exif.value("aperture").toString());
+            if (!exif.value("exposure").toString().isEmpty()) summaryParts.append(exif.value("exposure").toString());
+            if (exif.value("iso").toInt() > 0) summaryParts.append(QStringLiteral("ISO %1").arg(exif.value("iso").toInt()));
+            if (!exif.value("focalLength").toString().isEmpty()) summaryParts.append(exif.value("focalLength").toString());
+            if (!exif.value("gpsCoordinates").toString().isEmpty()) summaryParts.append(QStringLiteral("GPS ") + exif.value("gpsCoordinates").toString());
+            map["exifSummary"] = summaryParts.join(QStringLiteral(" • "));
+        } else {
+            map["hasExif"] = false;
+        }
+        return map;
+    }
+
+    if (ext == QLatin1String("pdf")) {
+        populatePdfPreview(fi, pdfPage, m_archiveTempDir, map);
+        return map;
+    }
+
+    if (isFontExtension(ext)) {
+        static QHash<QString, int> s_loadedFonts;
+        const QString absPath = fi.absoluteFilePath();
+        int fontId = s_loadedFonts.value(absPath, -2);
+        if (fontId == -2) {
+            fontId = QFontDatabase::addApplicationFont(absPath);
+            s_loadedFonts.insert(absPath, fontId);
+        }
+        QString family = fi.completeBaseName();
+        QStringList styles;
+        if (fontId >= 0) {
+            const QStringList families = QFontDatabase::applicationFontFamilies(fontId);
+            if (!families.isEmpty()) {
+                family = families.first();
+                styles = QFontDatabase::styles(family);
+            }
+        }
+        map["isFont"] = true;
+        map["fontUrl"] = QUrl::fromLocalFile(absPath).toString();
+        map["fontFamily"] = family;
+        map["fontStyles"] = styles.join(QStringLiteral(", "));
+        map["fontFormat"] = ext.toUpper();
+        map["fontPangram"] = QStringLiteral("The quick brown fox jumps over the lazy dog — 0123456789");
+        map["isText"] = true;
+        map["text"] = tr("Font: %1 (%2)\nFamily: %3\nStyles: %4\n\n%5")
+                          .arg(fi.fileName(), ext.toUpper(), family,
+                               styles.isEmpty() ? tr("Regular") : styles.join(QStringLiteral(", ")),
+                               map["fontPangram"].toString());
+        return map;
+    }
+
+    const bool audioFile = isAudioExtension(ext);
+    const bool videoFile = isVideoExtension(ext);
+    if (audioFile || videoFile) {
+        const QVariantMap info = parseMediaMetadata(fi, audioFile, videoFile);
+        map["isMedia"] = true;
+        map["isAudio"] = audioFile;
+        map["isVideo"] = videoFile;
+        map["mediaUrl"] = QUrl::fromLocalFile(fi.absoluteFilePath()).toString();
+        map["mediaInfo"] = info;
+        map["mediaDuration"] = info.value("durationFormatted").toString();
+        map["mediaDurationMs"] = info.value("durationMs").toLongLong();
+        map["mediaCodec"] = info.value("codec").toString();
+        map["mediaBitrate"] = info.value("bitrate").toString();
+        map["mediaSampleRate"] = info.value("sampleRate").toString();
+        map["mediaChannels"] = info.value("channels").toInt();
+        map["mediaResolution"] = info.value("resolution").toString();
+        QStringList lines;
+        lines << tr("Media: %1 (%2)").arg(fi.fileName(), audioFile ? tr("Audio") : tr("Video"));
+        lines << tr("Codec: %1").arg(info.value("codec").toString());
+        if (!info.value("durationFormatted").toString().isEmpty())
+            lines << tr("Duration: %1").arg(info.value("durationFormatted").toString());
+        if (!info.value("resolution").toString().isEmpty())
+            lines << tr("Resolution: %1").arg(info.value("resolution").toString());
+        if (!info.value("bitrate").toString().isEmpty())
+            lines << tr("Bitrate: %1").arg(info.value("bitrate").toString());
+        if (!info.value("sampleRate").toString().isEmpty())
+            lines << tr("Sample Rate: %1").arg(info.value("sampleRate").toString());
+        if (info.value("channels").toInt() > 0)
+            lines << tr("Channels: %1").arg(info.value("channels").toInt());
+        map["isText"] = true;
+        map["text"] = lines.join('\n');
         return map;
     }
 
@@ -3258,9 +4974,22 @@ QVariantMap Backend::getPreview(const QString &path)
         const bool isBinary = chunk.contains('\0');
         map["isBinary"] = isBinary;
         if (!isBinary) {
+            const QString text = QString::fromUtf8(chunk);
             map["isText"] = true;
-            map["text"] = QString::fromUtf8(chunk);
+            map["text"] = text;
             map["truncated"] = (file.size() > chunk.size());
+            const QString lang = syntaxLanguageForFile(fi.fileName(), ext);
+            if (ext == QLatin1String("md") || ext == QLatin1String("markdown") || ext == QLatin1String("mdx")) {
+                map["isMarkdown"] = true;
+                map["isCode"] = true;
+                map["syntaxLanguage"] = QStringLiteral("Markdown");
+                map["renderedHtml"] = renderMarkdownToHtml(text, dark);
+                map["highlightedHtml"] = highlightCodeToHtml(text, ext, dark);
+            } else if (!lang.isEmpty()) {
+                map["isCode"] = true;
+                map["syntaxLanguage"] = lang;
+                map["highlightedHtml"] = highlightCodeToHtml(text, ext, dark);
+            }
         } else {
             map["isText"] = true;
             map["text"] = formatHexDumpText(chunk, map["formattedSize"].toString(), fi.size());
@@ -3716,6 +5445,967 @@ QVariantList Backend::findDuplicateFiles(const QString &rootPath, const QString 
     }
 
     return result;
+}
+
+QString Backend::buildRemoteUri(const QVariantMap &connection) const
+{
+    const QString proto = normalizeRemoteProtocol(connection.value(QStringLiteral("protocol")).toString());
+    const QString host = connection.value(QStringLiteral("host")).toString().trimmed();
+    if (host.isEmpty())
+        return connection.value(QStringLiteral("uri")).toString().trimmed();
+
+    const QString user = connection.value(QStringLiteral("user")).toString().trimmed();
+    const QString domain = connection.value(QStringLiteral("domain")).toString().trimmed();
+    const int port = connection.value(QStringLiteral("port")).toInt();
+    QString remotePath = connection.value(QStringLiteral("remotePath")).toString().trimmed();
+    if (!remotePath.isEmpty() && !remotePath.startsWith(QLatin1Char('/')))
+        remotePath.prepend(QLatin1Char('/'));
+
+    QString authority;
+    if (proto == QLatin1String("smb") && !domain.isEmpty() && !user.isEmpty())
+        authority += domain + QLatin1Char(';') + user + QLatin1Char('@');
+    else if (!user.isEmpty())
+        authority += user + QLatin1Char('@');
+
+    authority += host;
+    if (port > 0 && ((proto == QLatin1String("smb") && port != 445)
+                     || (proto != QLatin1String("smb") && port != 22))) {
+        authority += QLatin1Char(':') + QString::number(port);
+    }
+
+    return proto + QStringLiteral("://") + authority + remotePath;
+}
+
+QVariantMap Backend::parseRemoteUri(const QString &uri) const
+{
+    QVariantMap out;
+    QString raw = uri.trimmed();
+    const int schemeIdx = raw.indexOf(QStringLiteral("://"));
+    if (schemeIdx <= 0)
+        return out;
+
+    const QString proto = normalizeRemoteProtocol(raw.left(schemeIdx));
+    const QString rest = raw.mid(schemeIdx + 3);
+
+    int pathIdx = rest.indexOf(QLatin1Char('/'));
+    if (proto == QLatin1String("sshfs")) {
+        const int colonSlash = rest.indexOf(QStringLiteral(":/"));
+        if (colonSlash >= 0 && (pathIdx < 0 || colonSlash < pathIdx)) {
+            const QString authHost = rest.left(colonSlash);
+            const QString rPath = rest.mid(colonSlash + 1);
+            raw = proto + QStringLiteral("://") + authHost + rPath;
+            pathIdx = rest.indexOf(QLatin1Char('/'));
+        }
+    }
+
+    QString authHost;
+    QString remotePath;
+    if (proto == QLatin1String("sshfs")) {
+        const int colonSlash = rest.indexOf(QStringLiteral(":/"));
+        if (colonSlash >= 0) {
+            authHost = rest.left(colonSlash);
+            remotePath = rest.mid(colonSlash + 1);
+        }
+    }
+    if (authHost.isEmpty()) {
+        if (pathIdx >= 0) {
+            authHost = rest.left(pathIdx);
+            remotePath = rest.mid(pathIdx);
+        } else {
+            authHost = rest;
+        }
+    }
+
+    QString userPart;
+    QString hostPort = authHost;
+    const int atIdx = authHost.lastIndexOf(QLatin1Char('@'));
+    if (atIdx >= 0) {
+        userPart = authHost.left(atIdx);
+        hostPort = authHost.mid(atIdx + 1);
+    }
+
+    QString domain;
+    QString user = userPart;
+    if (proto == QLatin1String("smb")) {
+        const int semi = userPart.indexOf(QLatin1Char(';'));
+        if (semi >= 0) {
+            domain = userPart.left(semi);
+            user = userPart.mid(semi + 1);
+        }
+    }
+
+    QString host = hostPort;
+    int port = (proto == QLatin1String("smb")) ? 445 : 22;
+    if (hostPort.startsWith(QLatin1Char('['))) {
+        const int closeBracket = hostPort.indexOf(QLatin1Char(']'));
+        if (closeBracket > 0) {
+            host = hostPort.left(closeBracket + 1);
+            if (closeBracket + 1 < hostPort.size() && hostPort.at(closeBracket + 1) == QLatin1Char(':')) {
+                const int p = hostPort.mid(closeBracket + 2).toInt();
+                if (p > 0) port = p;
+            }
+        }
+    } else {
+        const int colon = hostPort.lastIndexOf(QLatin1Char(':'));
+        if (colon > 0) {
+            bool ok = false;
+            const int p = hostPort.mid(colon + 1).toInt(&ok);
+            if (ok && p > 0) {
+                host = hostPort.left(colon);
+                port = p;
+            }
+        }
+    }
+
+    out[QStringLiteral("protocol")] = proto;
+    out[QStringLiteral("host")] = host;
+    out[QStringLiteral("port")] = port;
+    out[QStringLiteral("user")] = user;
+    out[QStringLiteral("domain")] = domain;
+    out[QStringLiteral("remotePath")] = remotePath;
+    out[QStringLiteral("uri")] = buildRemoteUri(out);
+    if (!host.isEmpty()) {
+        QString defaultName = user.isEmpty() ? host : (user + QLatin1Char('@') + host);
+        if (proto == QLatin1String("smb") && !remotePath.isEmpty())
+            defaultName += remotePath;
+        out[QStringLiteral("name")] = defaultName;
+    }
+    return out;
+}
+
+QString Backend::resolveRemoteMountPath(const QVariantMap &connection) const
+{
+    const QString explicitMount = connection.value(QStringLiteral("localMountPath")).toString().trimmed();
+    if (!explicitMount.isEmpty() && QDir(explicitMount).exists())
+        return explicitMount;
+
+    QVariantMap conn = connection;
+    if (conn.value(QStringLiteral("host")).toString().isEmpty()
+        && !conn.value(QStringLiteral("uri")).toString().isEmpty()) {
+        const QVariantMap parsed = parseRemoteUri(conn.value(QStringLiteral("uri")).toString());
+        for (auto it = parsed.constBegin(); it != parsed.constEnd(); ++it) {
+            if (!conn.contains(it.key()) || conn.value(it.key()).toString().isEmpty())
+                conn[it.key()] = it.value();
+        }
+    }
+
+    const QString proto = normalizeRemoteProtocol(conn.value(QStringLiteral("protocol")).toString());
+    const QString host = conn.value(QStringLiteral("host")).toString().trimmed();
+    const QString user = conn.value(QStringLiteral("user")).toString().trimmed();
+    const QString id = conn.value(QStringLiteral("id")).toString().trimmed();
+    QString remotePath = conn.value(QStringLiteral("remotePath")).toString().trimmed();
+    if (!remotePath.isEmpty() && !remotePath.startsWith(QLatin1Char('/')))
+        remotePath.prepend(QLatin1Char('/'));
+
+    if (proto == QLatin1String("sshfs")) {
+        const QString root = sshfsMountsRootDir();
+        QStringList candidates;
+        if (!id.isEmpty())
+            candidates.append(QDir(root).filePath(id));
+        if (!host.isEmpty())
+            candidates.append(QDir(root).filePath(host));
+        for (const QString &cand : candidates) {
+            const QDir d(cand);
+            if (d.exists() && !d.entryList(QDir::AllEntries | QDir::NoDotAndDotDot).isEmpty())
+                return cand;
+        }
+    }
+
+    if (host.isEmpty())
+        return {};
+
+    const QString gvfsRoot = gvfsRootDir();
+    const QDir gdir(gvfsRoot);
+    if (!gdir.exists())
+        return {};
+
+    auto parseGvfsAttrs = [](const QString &dirName) -> QMap<QString, QString> {
+        QMap<QString, QString> attrs;
+        const int colon = dirName.indexOf(QLatin1Char(':'));
+        if (colon < 0)
+            return attrs;
+        attrs[QStringLiteral("_scheme")] = dirName.left(colon);
+        for (const QString &part : dirName.mid(colon + 1).split(QLatin1Char(','), Qt::SkipEmptyParts)) {
+            const int eq = part.indexOf(QLatin1Char('='));
+            if (eq > 0)
+                attrs[part.left(eq).toLower()] = part.mid(eq + 1);
+        }
+        return attrs;
+    };
+
+    const QFileInfoList entries = gdir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
+    for (const QFileInfo &fi : entries) {
+        const QMap<QString, QString> attrs = parseGvfsAttrs(fi.fileName());
+        const QString scheme = attrs.value(QStringLiteral("_scheme"));
+        if (proto == QLatin1String("smb")) {
+            if (!scheme.startsWith(QLatin1String("smb")))
+                continue;
+            const QString srv = attrs.value(QStringLiteral("server"));
+            if (srv.compare(host, Qt::CaseInsensitive) != 0)
+                continue;
+            QString cleanRel = remotePath;
+            while (cleanRel.startsWith(QLatin1Char('/')))
+                cleanRel.remove(0, 1);
+            const QString share = cleanRel.section(QLatin1Char('/'), 0, 0);
+            const QString sub = cleanRel.section(QLatin1Char('/'), 1);
+            const QString gShare = attrs.value(QStringLiteral("share"));
+            if (!share.isEmpty() && !gShare.isEmpty() && gShare.compare(share, Qt::CaseInsensitive) != 0)
+                continue;
+            if (!sub.isEmpty()) {
+                const QString fullSub = QDir(fi.absoluteFilePath()).filePath(sub);
+                if (QDir(fullSub).exists())
+                    return QDir::cleanPath(fullSub);
+            }
+            return fi.absoluteFilePath();
+        } else {
+            if (scheme != QLatin1String("sftp") && scheme != QLatin1String("ssh"))
+                continue;
+            const QString gHost = attrs.value(QStringLiteral("host"));
+            if (gHost.compare(host, Qt::CaseInsensitive) != 0)
+                continue;
+            const QString gUser = attrs.value(QStringLiteral("user"));
+            if (!user.isEmpty() && !gUser.isEmpty() && gUser != user)
+                continue;
+            if (!remotePath.isEmpty() && remotePath != QLatin1String("/")) {
+                QString rel = remotePath;
+                while (rel.startsWith(QLatin1Char('/')))
+                    rel.remove(0, 1);
+                const QString fullSub = QDir(fi.absoluteFilePath()).filePath(rel);
+                if (QDir(fullSub).exists())
+                    return QDir::cleanPath(fullSub);
+            }
+            return fi.absoluteFilePath();
+        }
+    }
+
+    return {};
+}
+
+QVariantList Backend::remoteConnections() const
+{
+    QVariantList enriched;
+    for (const QVariant &v : m_remoteConnections) {
+        QVariantMap m = v.toMap();
+        m[QStringLiteral("protocol")] = normalizeRemoteProtocol(m.value(QStringLiteral("protocol")).toString());
+        m[QStringLiteral("uri")] = buildRemoteUri(m);
+        const QString mountPath = resolveRemoteMountPath(m);
+        m[QStringLiteral("mountPath")] = mountPath;
+        m[QStringLiteral("isMounted")] = !mountPath.isEmpty();
+        enriched.append(m);
+    }
+    return enriched;
+}
+
+bool Backend::saveRemoteConnection(const QVariantMap &connection)
+{
+    QVariantMap conn = connection;
+    const QString rawUri = conn.value(QStringLiteral("uri")).toString().trimmed();
+    if (!rawUri.isEmpty()) {
+        const QVariantMap parsed = parseRemoteUri(rawUri);
+        for (auto it = parsed.constBegin(); it != parsed.constEnd(); ++it) {
+            if (conn.value(it.key()).toString().trimmed().isEmpty())
+                conn[it.key()] = it.value();
+        }
+    }
+
+    const QString proto = normalizeRemoteProtocol(conn.value(QStringLiteral("protocol")).toString());
+    const QString host = conn.value(QStringLiteral("host")).toString().trimmed();
+    if (host.isEmpty()) {
+        showStatus(tr("Remote host cannot be empty."));
+        return false;
+    }
+
+    conn[QStringLiteral("protocol")] = proto;
+    conn[QStringLiteral("host")] = host;
+    const int port = conn.value(QStringLiteral("port")).toInt();
+    conn[QStringLiteral("port")] = (port > 0) ? port : ((proto == QLatin1String("smb")) ? 445 : 22);
+    const QString uri = buildRemoteUri(conn);
+    conn[QStringLiteral("uri")] = uri;
+
+    QString name = conn.value(QStringLiteral("name")).toString().trimmed();
+    if (name.isEmpty()) {
+        const QString user = conn.value(QStringLiteral("user")).toString().trimmed();
+        name = user.isEmpty() ? host : (user + QLatin1Char('@') + host);
+        const QString rp = conn.value(QStringLiteral("remotePath")).toString().trimmed();
+        if (proto == QLatin1String("smb") && !rp.isEmpty())
+            name += (rp.startsWith(QLatin1Char('/')) ? rp : QLatin1Char('/') + rp);
+        conn[QStringLiteral("name")] = name;
+    }
+
+    QString id = conn.value(QStringLiteral("id")).toString().trimmed();
+    if (id.isEmpty()) {
+        id = QStringLiteral("remote_%1_%2").arg(proto, QString::number(qHash(name + uri), 16));
+        conn[QStringLiteral("id")] = id;
+    }
+
+    bool replaced = false;
+    for (int i = 0; i < m_remoteConnections.size(); ++i) {
+        const QVariantMap existing = m_remoteConnections.at(i).toMap();
+        if ((!id.isEmpty() && existing.value(QStringLiteral("id")).toString() == id)
+            || existing.value(QStringLiteral("name")).toString().compare(name, Qt::CaseInsensitive) == 0) {
+            m_remoteConnections[i] = conn;
+            replaced = true;
+            break;
+        }
+    }
+    if (!replaced)
+        m_remoteConnections.append(conn);
+
+    saveSession();
+    refreshDrives();
+    emit remoteConnectionsChanged();
+    showStatus(tr("Saved remote connection: %1").arg(name));
+    return true;
+}
+
+bool Backend::deleteRemoteConnection(const QString &idOrName)
+{
+    const QString target = idOrName.trimmed();
+    if (target.isEmpty())
+        return false;
+
+    for (int i = 0; i < m_remoteConnections.size(); ++i) {
+        const QVariantMap existing = m_remoteConnections.at(i).toMap();
+        if (existing.value(QStringLiteral("id")).toString() == target
+            || existing.value(QStringLiteral("name")).toString() == target) {
+            const QString removedName = existing.value(QStringLiteral("name")).toString();
+            m_remoteConnections.removeAt(i);
+            saveSession();
+            refreshDrives();
+            emit remoteConnectionsChanged();
+            showStatus(tr("Deleted remote connection: %1").arg(removedName));
+            return true;
+        }
+    }
+    return false;
+}
+
+QString Backend::connectRemote(const QString &idOrUri)
+{
+    const QString key = idOrUri.trimmed();
+    if (key.isEmpty())
+        return {};
+
+    QVariantMap conn;
+    for (const QVariant &v : std::as_const(m_remoteConnections)) {
+        const QVariantMap m = v.toMap();
+        if (m.value(QStringLiteral("id")).toString() == key
+            || m.value(QStringLiteral("name")).toString() == key
+            || buildRemoteUri(m) == key) {
+            conn = m;
+            break;
+        }
+    }
+    if (conn.isEmpty())
+        conn = parseRemoteUri(key);
+
+    if (conn.isEmpty()) {
+        showStatus(tr("Invalid remote connection URI: %1").arg(key));
+        return {};
+    }
+
+    QString mountPath = resolveRemoteMountPath(conn);
+    if (!mountPath.isEmpty()) {
+        activeModel()->setPath(mountPath);
+        refreshDrives();
+        emit remoteConnectionsChanged();
+        showStatus(tr("Connected to remote: %1").arg(mountPath));
+        return mountPath;
+    }
+
+    const QString proto = normalizeRemoteProtocol(conn.value(QStringLiteral("protocol")).toString());
+    if (proto == QLatin1String("sshfs")) {
+        const QString sshfsBin = QStandardPaths::findExecutable(QStringLiteral("sshfs"));
+        if (sshfsBin.isEmpty()) {
+            showStatus(tr("sshfs executable not found. Install sshfs or use sftp:// with GVFS."));
+            return {};
+        }
+        const QString id = conn.value(QStringLiteral("id")).toString().trimmed();
+        const QString host = conn.value(QStringLiteral("host")).toString().trimmed();
+        const QString user = conn.value(QStringLiteral("user")).toString().trimmed();
+        const int port = conn.value(QStringLiteral("port")).toInt();
+        const QString rPath = conn.value(QStringLiteral("remotePath")).toString().trimmed();
+        const QString keyFile = conn.value(QStringLiteral("domain")).toString().trimmed();
+
+        const QString targetDir = QDir(sshfsMountsRootDir()).filePath(id.isEmpty() ? host : id);
+        QDir().mkpath(targetDir);
+
+        QString spec = user.isEmpty() ? host : (user + QLatin1Char('@') + host);
+        spec += QLatin1Char(':') + (rPath.isEmpty() ? QStringLiteral("/") : rPath);
+
+        QStringList args = {spec, targetDir, QStringLiteral("-o"), QStringLiteral("reconnect,ServerAliveInterval=15")};
+        if (port > 0 && port != 22)
+            args << QStringLiteral("-p") << QString::number(port);
+        if (!keyFile.isEmpty() && QFileInfo::exists(keyFile))
+            args << QStringLiteral("-o") << (QStringLiteral("IdentityFile=") + keyFile);
+
+        QProcess proc;
+        proc.start(sshfsBin, args);
+        if (!proc.waitForFinished(12000) || proc.exitCode() != 0) {
+            const QString err = QString::fromUtf8(proc.readAllStandardError()).trimmed();
+            showStatus(err.isEmpty() ? tr("sshfs mount failed.") : err);
+            return {};
+        }
+        mountPath = targetDir;
+    } else {
+        const QString gioBin = QStandardPaths::findExecutable(QStringLiteral("gio"));
+        if (gioBin.isEmpty()) {
+            showStatus(tr("gio (GVFS) executable not found."));
+            return {};
+        }
+        const QString uri = buildRemoteUri(conn);
+        QProcess proc;
+        proc.start(gioBin, {QStringLiteral("mount"), uri});
+        if (!proc.waitForFinished(12000)) {
+            showStatus(tr("Remote mount timed out (authentication may be required in desktop keyring)."));
+            return {};
+        }
+        const QString err = QString::fromUtf8(proc.readAllStandardError()).trimmed();
+        mountPath = resolveRemoteMountPath(conn);
+        if (mountPath.isEmpty()) {
+            showStatus(err.isEmpty() ? tr("Failed to mount %1").arg(uri) : err);
+            return {};
+        }
+    }
+
+    activeModel()->setPath(mountPath);
+    refreshDrives();
+    emit remoteConnectionsChanged();
+    showStatus(tr("Connected to remote: %1").arg(mountPath));
+    return mountPath;
+}
+
+bool Backend::disconnectRemote(const QString &idOrMountPath)
+{
+    const QString target = idOrMountPath.trimmed();
+    if (target.isEmpty())
+        return false;
+
+    QString mountPath;
+    for (const QVariant &v : std::as_const(m_remoteConnections)) {
+        const QVariantMap m = v.toMap();
+        if (m.value(QStringLiteral("id")).toString() == target
+            || m.value(QStringLiteral("name")).toString() == target) {
+            mountPath = resolveRemoteMountPath(m);
+            break;
+        }
+    }
+    if (mountPath.isEmpty() && target.startsWith(QLatin1Char('/')))
+        mountPath = target;
+
+    if (mountPath.isEmpty())
+        return false;
+
+    const QString gvfsRoot = gvfsRootDir();
+    QString topMount = mountPath;
+    if (!gvfsRoot.isEmpty() && mountPath.startsWith(gvfsRoot + QLatin1Char('/'))) {
+        const QString rel = mountPath.mid(gvfsRoot.size() + 1);
+        const QString topDir = rel.section(QLatin1Char('/'), 0, 0);
+        if (!topDir.isEmpty())
+            topMount = QDir(gvfsRoot).filePath(topDir);
+    }
+
+    if (m_leftPanel.path().startsWith(topMount))
+        m_leftPanel.setPath(QDir::homePath());
+    if (m_rightPanel.path().startsWith(topMount))
+        m_rightPanel.setPath(QDir::homePath());
+
+    bool ok = false;
+    if (!gvfsRoot.isEmpty() && topMount.startsWith(gvfsRoot + QLatin1Char('/'))) {
+        const QString gioBin = QStandardPaths::findExecutable(QStringLiteral("gio"));
+        if (!gioBin.isEmpty()) {
+            QProcess proc;
+            proc.start(gioBin, {QStringLiteral("mount"), QStringLiteral("-u"), topMount});
+            if (proc.waitForFinished(8000) && proc.exitCode() == 0)
+                ok = true;
+        }
+        if (!ok && qEnvironmentVariableIsSet("OMAPANEL_GVFS_DIR"))
+            ok = QDir(topMount).removeRecursively();
+    } else {
+        const QString fm3 = QStandardPaths::findExecutable(QStringLiteral("fusermount3"));
+        const QString fm = fm3.isEmpty() ? QStandardPaths::findExecutable(QStringLiteral("fusermount")) : fm3;
+        if (!fm.isEmpty()) {
+            QProcess proc;
+            proc.start(fm, {QStringLiteral("-u"), topMount});
+            if (proc.waitForFinished(8000) && proc.exitCode() == 0)
+                ok = true;
+        }
+        if (!ok) {
+            QProcess proc;
+            proc.start(QStringLiteral("umount"), {topMount});
+            if (proc.waitForFinished(8000) && proc.exitCode() == 0)
+                ok = true;
+        }
+    }
+
+    refreshDrives();
+    emit remoteConnectionsChanged();
+    showStatus(ok ? tr("Disconnected remote mount.") : tr("Failed to disconnect remote mount."));
+    return ok;
+}
+
+QVariantMap Backend::getFileMimeInfo(const QString &path) const
+{
+    QVariantMap out;
+    if (path.isEmpty())
+        return out;
+
+    QMimeDatabase db;
+    QString arc, inner;
+    QMimeType mime;
+    if (PanelModel::splitArchivePath(path, &arc, &inner) && !inner.isEmpty())
+        mime = db.mimeTypeForFile(QFileInfo(inner).fileName(), QMimeDatabase::MatchExtension);
+    else
+        mime = db.mimeTypeForFile(path);
+
+    const QString mimeName = mime.isValid() ? mime.name() : QStringLiteral("application/octet-stream");
+    out[QStringLiteral("mimeType")] = mimeName;
+    out[QStringLiteral("comment")] = mime.comment();
+    out[QStringLiteral("defaultApp")] = queryDefaultDesktopForMime(mimeName);
+    out[QStringLiteral("isDir")] = QFileInfo(path).isDir();
+    return out;
+}
+
+QVariantList Backend::getApplicationsForFile(const QString &path) const
+{
+    if (path.isEmpty())
+        return {};
+
+    QMimeDatabase db;
+    QString arc, inner;
+    QMimeType mime;
+    if (PanelModel::splitArchivePath(path, &arc, &inner) && !inner.isEmpty())
+        mime = db.mimeTypeForFile(QFileInfo(inner).fileName(), QMimeDatabase::MatchExtension);
+    else
+        mime = db.mimeTypeForFile(path);
+
+    if (!mime.isValid())
+        return {};
+
+    const QString defaultId = queryDefaultDesktopForMime(mime.name());
+    const QVariantList allApps = collectAllDesktopApps();
+
+    QVariantList matched;
+    for (const QVariant &v : allApps) {
+        QVariantMap app = v.toMap();
+        if (!desktopAppSupportsMime(app, mime))
+            continue;
+        app[QStringLiteral("isDefault")] = (!defaultId.isEmpty() && app.value(QStringLiteral("desktopId")).toString() == defaultId);
+        matched.append(app);
+    }
+
+    std::sort(matched.begin(), matched.end(), [](const QVariant &a, const QVariant &b) {
+        const QVariantMap ma = a.toMap();
+        const QVariantMap mb = b.toMap();
+        const bool defA = ma.value(QStringLiteral("isDefault")).toBool();
+        const bool defB = mb.value(QStringLiteral("isDefault")).toBool();
+        if (defA != defB)
+            return defA > defB;
+        return ma.value(QStringLiteral("name")).toString().compare(
+                   mb.value(QStringLiteral("name")).toString(), Qt::CaseInsensitive) < 0;
+    });
+
+    return matched;
+}
+
+QVariantList Backend::getAllInstalledApplications() const
+{
+    return collectAllDesktopApps();
+}
+
+bool Backend::setDefaultApplicationForMime(const QString &mimeType, const QString &desktopId)
+{
+    const QString mt = mimeType.trimmed();
+    const QString id = desktopId.trimmed();
+    if (mt.isEmpty() || id.isEmpty())
+        return false;
+
+    const QString filePath = mimeAppsFilePath();
+    QDir().mkpath(QFileInfo(filePath).absolutePath());
+
+    QStringList lines;
+    QFile inFile(filePath);
+    if (inFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        while (!inFile.atEnd())
+            lines.append(QString::fromUtf8(inFile.readLine()).trimmed());
+        inFile.close();
+    }
+
+    int sectionIdx = -1;
+    int nextSectionIdx = lines.size();
+    int existingKeyIdx = -1;
+
+    for (int i = 0; i < lines.size(); ++i) {
+        const QString &l = lines.at(i);
+        if (l.startsWith(QLatin1Char('[')) && l.endsWith(QLatin1Char(']'))) {
+            if (l == QLatin1String("[Default Applications]")) {
+                sectionIdx = i;
+            } else if (sectionIdx >= 0 && nextSectionIdx == lines.size()) {
+                nextSectionIdx = i;
+            }
+            continue;
+        }
+        if (sectionIdx >= 0 && i < nextSectionIdx) {
+            const int eq = l.indexOf(QLatin1Char('='));
+            if (eq > 0 && l.left(eq).trimmed() == mt)
+                existingKeyIdx = i;
+        }
+    }
+
+    const QString entryLine = mt + QLatin1Char('=') + id;
+    if (existingKeyIdx >= 0) {
+        lines[existingKeyIdx] = entryLine;
+    } else if (sectionIdx >= 0) {
+        lines.insert(sectionIdx + 1, entryLine);
+    } else {
+        if (!lines.isEmpty() && !lines.last().isEmpty())
+            lines.append(QString());
+        lines.append(QStringLiteral("[Default Applications]"));
+        lines.append(entryLine);
+    }
+
+    QFile outFile(filePath);
+    if (!outFile.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate))
+        return false;
+    for (const QString &l : std::as_const(lines)) {
+        outFile.write(l.toUtf8());
+        outFile.write("\n");
+    }
+    outFile.close();
+
+    if (!qEnvironmentVariableIsSet("OMAPANEL_MIMEAPPS_FILE")) {
+        const QString xdgMimeBin = QStandardPaths::findExecutable(QStringLiteral("xdg-mime"));
+        if (!xdgMimeBin.isEmpty())
+            QProcess::startDetached(xdgMimeBin, {QStringLiteral("default"), id, mt});
+    }
+
+    showStatus(tr("Set %1 as default for %2").arg(id, mt));
+    return true;
+}
+
+bool Backend::openWithApplication(const QStringList &paths, const QString &desktopIdOrExec, bool setAsDefault)
+{
+    if (paths.isEmpty() || desktopIdOrExec.trimmed().isEmpty())
+        return false;
+
+    QStringList resolvedPaths;
+    for (const QString &p : paths) {
+        QString arc, inner;
+        if (PanelModel::splitArchivePath(p, &arc, &inner) && !inner.isEmpty()) {
+            const QString extracted = extractArchiveEntryToTemp(arc, inner);
+            if (!extracted.isEmpty())
+                resolvedPaths.append(extracted);
+        } else {
+            resolvedPaths.append(p);
+        }
+    }
+    if (resolvedPaths.isEmpty())
+        return false;
+
+    QVariantMap matchedApp;
+    const QVariantList allApps = collectAllDesktopApps();
+    for (const QVariant &v : allApps) {
+        const QVariantMap m = v.toMap();
+        if (m.value(QStringLiteral("desktopId")).toString() == desktopIdOrExec
+            || m.value(QStringLiteral("desktopPath")).toString() == desktopIdOrExec) {
+            matchedApp = m;
+            break;
+        }
+    }
+
+    if (setAsDefault && !matchedApp.isEmpty()) {
+        const QString mimeType = getFileMimeInfo(resolvedPaths.first()).value(QStringLiteral("mimeType")).toString();
+        setDefaultApplicationForMime(mimeType, matchedApp.value(QStringLiteral("desktopId")).toString());
+    }
+
+    const QString execTemplate = matchedApp.isEmpty()
+                                     ? desktopIdOrExec.trimmed()
+                                     : matchedApp.value(QStringLiteral("exec")).toString();
+    const bool inTerminal = matchedApp.value(QStringLiteral("terminal")).toBool();
+    const QString appName = matchedApp.isEmpty() ? execTemplate : matchedApp.value(QStringLiteral("name")).toString();
+
+    const QStringList rawTokens = splitExecTokens(execTemplate);
+    if (rawTokens.isEmpty())
+        return false;
+
+    QStringList finalArgs;
+    bool insertedPath = false;
+    for (const QString &tok : rawTokens) {
+        if (tok == QLatin1String("%f")) {
+            finalArgs.append(resolvedPaths.first());
+            insertedPath = true;
+        } else if (tok == QLatin1String("%F")) {
+            finalArgs.append(resolvedPaths);
+            insertedPath = true;
+        } else if (tok == QLatin1String("%u")) {
+            finalArgs.append(QUrl::fromLocalFile(resolvedPaths.first()).toString());
+            insertedPath = true;
+        } else if (tok == QLatin1String("%U")) {
+            for (const QString &rp : std::as_const(resolvedPaths))
+                finalArgs.append(QUrl::fromLocalFile(rp).toString());
+            insertedPath = true;
+        } else if (tok == QLatin1String("%i") || tok == QLatin1String("%c") || tok == QLatin1String("%k")
+                   || tok == QLatin1String("%d") || tok == QLatin1String("%D") || tok == QLatin1String("%n")
+                   || tok == QLatin1String("%N") || tok == QLatin1String("%v") || tok == QLatin1String("%m")) {
+            continue;
+        } else {
+            finalArgs.append(tok);
+        }
+    }
+    if (!insertedPath)
+        finalArgs.append(resolvedPaths);
+
+    if (finalArgs.isEmpty())
+        return false;
+
+    const QString program = finalArgs.takeFirst();
+    bool started = false;
+    if (inTerminal) {
+        const QString terminal = findTerminalExecutable(true);
+        QStringList termArgs = {QStringLiteral("-e"), program};
+        termArgs.append(finalArgs);
+        started = QProcess::startDetached(terminal, termArgs, activeModel()->path());
+    } else {
+        started = QProcess::startDetached(program, finalArgs, activeModel()->path());
+    }
+
+    if (started)
+        showStatus(tr("Opened with %1").arg(appName));
+    else
+        showStatus(tr("Failed to launch %1").arg(appName));
+    return started;
+}
+
+void Backend::ensureDefaultCustomActions()
+{
+    if (!m_customActions.isEmpty())
+        return;
+    if (!m_sessionFile.isEmpty() && QFileInfo::exists(m_sessionFile)) {
+        QSettings settings(m_sessionFile, QSettings::IniFormat);
+        if (settings.contains("actions/customActionsJson"))
+            return;
+    }
+
+    auto makeAct = [](const QString &id, const QString &name, const QString &cmd,
+                      const QString &pattern, bool inTerm, bool showOut) {
+        QVariantMap m;
+        m[QStringLiteral("id")] = id;
+        m[QStringLiteral("name")] = name;
+        m[QStringLiteral("command")] = cmd;
+        m[QStringLiteral("pattern")] = pattern;
+        m[QStringLiteral("runInTerminal")] = inTerm;
+        m[QStringLiteral("showOutput")] = showOut;
+        return m;
+    };
+
+    m_customActions = {
+        makeAct(QStringLiteral("default_file_info"), tr("File Type & Encoding (file -b)"),
+                QStringLiteral("file -b %f"), QStringLiteral("*"), false, true),
+        makeAct(QStringLiteral("default_du_sh"), tr("Disk Usage Summary (du -sh)"),
+                QStringLiteral("du -sh %F"), QStringLiteral("*"), false, true),
+        makeAct(QStringLiteral("default_chmod_x"), tr("Make Executable (chmod +x)"),
+                QStringLiteral("chmod +x %F"), QStringLiteral("*.sh;*.py;*.pl;*.AppImage"), false, false)
+    };
+    emit customActionsChanged();
+}
+
+QVariantList Backend::getCustomActionsForFile(const QString &path) const
+{
+    if (path.isEmpty())
+        return m_customActions;
+
+    const QFileInfo fi(path);
+    QMimeDatabase db;
+    const QMimeType mime = db.mimeTypeForFile(path);
+
+    QVariantList result;
+    for (const QVariant &v : m_customActions) {
+        const QVariantMap act = v.toMap();
+        if (customActionPatternMatches(act.value(QStringLiteral("pattern")).toString(), fi, mime))
+            result.append(act);
+    }
+    return result;
+}
+
+bool Backend::saveCustomAction(const QVariantMap &action)
+{
+    const QString name = action.value(QStringLiteral("name")).toString().trimmed();
+    const QString cmd = action.value(QStringLiteral("command")).toString().trimmed();
+    if (name.isEmpty() || cmd.isEmpty()) {
+        showStatus(tr("Custom action name and command are required."));
+        return false;
+    }
+
+    QVariantMap act = action;
+    act[QStringLiteral("name")] = name;
+    act[QStringLiteral("command")] = cmd;
+    QString pattern = act.value(QStringLiteral("pattern")).toString().trimmed();
+    act[QStringLiteral("pattern")] = pattern.isEmpty() ? QStringLiteral("*") : pattern;
+    act[QStringLiteral("runInTerminal")] = act.value(QStringLiteral("runInTerminal")).toBool();
+    act[QStringLiteral("showOutput")] = act.value(QStringLiteral("showOutput")).toBool();
+
+    QString id = act.value(QStringLiteral("id")).toString().trimmed();
+    if (id.isEmpty()) {
+        id = QStringLiteral("act_%1").arg(QString::number(qHash(name + cmd + QDateTime::currentDateTimeUtc().toString()), 16));
+        act[QStringLiteral("id")] = id;
+    }
+
+    bool replaced = false;
+    for (int i = 0; i < m_customActions.size(); ++i) {
+        const QVariantMap existing = m_customActions.at(i).toMap();
+        if (existing.value(QStringLiteral("id")).toString() == id
+            || existing.value(QStringLiteral("name")).toString().compare(name, Qt::CaseInsensitive) == 0) {
+            m_customActions[i] = act;
+            replaced = true;
+            break;
+        }
+    }
+    if (!replaced)
+        m_customActions.append(act);
+
+    saveSession();
+    emit customActionsChanged();
+    showStatus(tr("Saved custom action: %1").arg(name));
+    return true;
+}
+
+bool Backend::deleteCustomAction(const QString &idOrName)
+{
+    const QString key = idOrName.trimmed();
+    if (key.isEmpty())
+        return false;
+
+    for (int i = 0; i < m_customActions.size(); ++i) {
+        const QVariantMap existing = m_customActions.at(i).toMap();
+        if (existing.value(QStringLiteral("id")).toString() == key
+            || existing.value(QStringLiteral("name")).toString() == key) {
+            const QString removedName = existing.value(QStringLiteral("name")).toString();
+            m_customActions.removeAt(i);
+            saveSession();
+            emit customActionsChanged();
+            showStatus(tr("Deleted custom action: %1").arg(removedName));
+            return true;
+        }
+    }
+    return false;
+}
+
+QString Backend::expandCustomActionCommand(const QString &commandTemplate, const QStringList &paths) const
+{
+    if (commandTemplate.trimmed().isEmpty())
+        return {};
+
+    QStringList quotedList;
+    for (const QString &p : paths)
+        quotedList.append(shellQuoteArg(p));
+
+    const QString firstPath = paths.isEmpty() ? QString() : paths.first();
+    const QFileInfo firstFi(firstPath);
+    const QString qFirst = paths.isEmpty() ? QString() : shellQuoteArg(firstPath);
+    const QString qAll = quotedList.join(QLatin1Char(' '));
+    const QString qDir = paths.isEmpty() ? shellQuoteArg(m_activePanel == 0 ? m_leftPanel.path() : m_rightPanel.path())
+                                         : shellQuoteArg(firstFi.isDir() ? firstFi.absoluteFilePath() : firstFi.absolutePath());
+    const QString qName = paths.isEmpty() ? QString() : shellQuoteArg(firstFi.fileName());
+    const QString qBase = paths.isEmpty() ? QString() : shellQuoteArg(firstFi.completeBaseName());
+    const QString qExt = paths.isEmpty() ? QString() : shellQuoteArg(firstFi.suffix());
+
+    QString out;
+    out.reserve(commandTemplate.size() + qAll.size());
+    bool usedFileToken = false;
+
+    for (int i = 0; i < commandTemplate.size(); ++i) {
+        if (commandTemplate.at(i) == QLatin1Char('%') && i + 1 < commandTemplate.size()) {
+            const QChar code = commandTemplate.at(i + 1);
+            if (code == QLatin1Char('F')) { out += qAll; usedFileToken = true; ++i; continue; }
+            if (code == QLatin1Char('f')) { out += qFirst; usedFileToken = true; ++i; continue; }
+            if (code == QLatin1Char('d')) { out += qDir; ++i; continue; }
+            if (code == QLatin1Char('n')) { out += qName; usedFileToken = true; ++i; continue; }
+            if (code == QLatin1Char('b')) { out += qBase; usedFileToken = true; ++i; continue; }
+            if (code == QLatin1Char('e')) { out += qExt; ++i; continue; }
+        }
+        out.append(commandTemplate.at(i));
+    }
+
+    if (!usedFileToken && !qAll.isEmpty())
+        out += QLatin1Char(' ') + qAll;
+
+    return out;
+}
+
+QVariantMap Backend::executeCustomAction(const QString &idOrName, const QStringList &paths)
+{
+    QVariantMap res;
+    res[QStringLiteral("ok")] = false;
+    res[QStringLiteral("exitCode")] = -1;
+    res[QStringLiteral("output")] = QString();
+    res[QStringLiteral("showOutput")] = false;
+
+    QVariantMap act;
+    for (const QVariant &v : std::as_const(m_customActions)) {
+        const QVariantMap m = v.toMap();
+        if (m.value(QStringLiteral("id")).toString() == idOrName
+            || m.value(QStringLiteral("name")).toString() == idOrName) {
+            act = m;
+            break;
+        }
+    }
+
+    const QString cmdTemplate = act.isEmpty() ? idOrName : act.value(QStringLiteral("command")).toString();
+    const QString actionName = act.isEmpty() ? cmdTemplate : act.value(QStringLiteral("name")).toString();
+    const bool inTerm = act.value(QStringLiteral("runInTerminal")).toBool();
+    const bool showOut = act.value(QStringLiteral("showOutput")).toBool();
+
+    QStringList resolvedPaths;
+    for (const QString &p : paths) {
+        QString arc, inner;
+        if (PanelModel::splitArchivePath(p, &arc, &inner) && !inner.isEmpty()) {
+            const QString extracted = extractArchiveEntryToTemp(arc, inner);
+            if (!extracted.isEmpty())
+                resolvedPaths.append(extracted);
+        } else {
+            resolvedPaths.append(p);
+        }
+    }
+
+    const QString expanded = expandCustomActionCommand(cmdTemplate, resolvedPaths);
+    res[QStringLiteral("command")] = expanded;
+    res[QStringLiteral("showOutput")] = showOut;
+
+    if (expanded.isEmpty())
+        return res;
+
+    QString workDir = activeModel()->path();
+    if (!QDir(workDir).exists())
+        workDir = QDir::homePath();
+
+    if (inTerm) {
+        const QString terminal = findTerminalExecutable(true);
+        const bool started = QProcess::startDetached(terminal, {QStringLiteral("-e"), QStringLiteral("/bin/sh"), QStringLiteral("-c"), expanded}, workDir);
+        res[QStringLiteral("ok")] = started;
+        res[QStringLiteral("exitCode")] = started ? 0 : -1;
+        res[QStringLiteral("showOutput")] = false;
+        showStatus(started ? tr("Executed in terminal: %1").arg(actionName) : tr("Failed to launch terminal action: %1").arg(actionName));
+        return res;
+    }
+
+    QProcess proc;
+    proc.setWorkingDirectory(workDir);
+    proc.setProcessChannelMode(QProcess::MergedChannels);
+    proc.start(QStringLiteral("/bin/sh"), {QStringLiteral("-c"), expanded});
+    proc.waitForFinished(15000);
+
+    const QString out = QString::fromUtf8(proc.readAllStandardOutput()).trimmed();
+    const bool ok = (proc.exitStatus() == QProcess::NormalExit && proc.exitCode() == 0);
+    res[QStringLiteral("ok")] = ok;
+    res[QStringLiteral("exitCode")] = proc.exitCode();
+    res[QStringLiteral("output")] = out;
+
+    m_leftPanel.refresh();
+    m_rightPanel.refresh();
+
+    showStatus(ok ? tr("Action completed: %1").arg(actionName)
+                  : tr("Action failed (%1): %2").arg(proc.exitCode()).arg(actionName));
+    return res;
 }
 
 void Backend::showStatus(const QString &message)

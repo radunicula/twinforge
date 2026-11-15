@@ -34,6 +34,9 @@ public:
 
     // Thread-safe controls.
     void cancel();
+    void setPaused(bool paused);
+    void pause() { setPaused(true); }
+    void resume() { setPaused(false); }
     void resolveConflict(int action, bool applyToAll);
 
     // Pre-set how conflicts are handled (Ask = prompt via conflict()).
@@ -41,6 +44,10 @@ public:
 
     Mode mode() const { return m_mode; }
     bool wasCancelled() const { return m_cancelled.load(); }
+    bool isPaused() const { return m_paused.load(); }
+    qint64 doneBytes() const { return m_doneBytes; }
+    qint64 totalBytes() const { return m_totalBytes; }
+    qint64 activeElapsedMs() const;
     int completedCount() const { return m_completed; }
     int skippedCount() const { return m_skipped; }
     int failedCount() const { return m_failed; }
@@ -57,6 +64,7 @@ public:
 
 signals:
     void progress(qint64 doneBytes, qint64 totalBytes, const QString &currentName);
+    void pausedChanged(bool paused);
     void conflict(const QVariantMap &info);
     void finished();
 
@@ -77,16 +85,19 @@ private:
 
     void fail(const QString &path, const QString &reason);
     void addDone(qint64 bytes, const QString &name, bool force = false);
+    void waitIfPaused();
 
     Mode m_mode;
     QStringList m_sources;
     QString m_targetDir;
 
     std::atomic<bool> m_cancelled{false};
+    std::atomic<bool> m_paused{false};
     ConflictAction m_policy = Ask;
 
-    QMutex m_mutex;
+    mutable QMutex m_mutex;
     QWaitCondition m_answered;
+    QWaitCondition m_pauseCond;
     bool m_hasAnswer = false;
     ConflictAction m_answer = Skip;
     bool m_answerApplyAll = false;
@@ -95,6 +106,9 @@ private:
     qint64 m_doneBytes = 0;
     QString m_currentName;
     QElapsedTimer m_progressTimer;
+    QElapsedTimer m_runTimer;
+    QElapsedTimer m_pauseTimer;
+    qint64 m_pausedMs = 0;
     QHash<QString, qint64> m_topLevelSizes;
 
     int m_completed = 0;

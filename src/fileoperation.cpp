@@ -120,8 +120,58 @@ bool FileOperation::moveSinglePath(const QString &src, const QString &dest)
 void FileOperation::cancel()
 {
     m_cancelled = true;
+    {
+        QMutexLocker lock(&m_mutex);
+        m_paused = false;
+        m_answered.wakeAll();
+        m_pauseCond.wakeAll();
+    }
+}
+
+void FileOperation::setPaused(bool paused)
+{
+    bool changed = false;
+    {
+        QMutexLocker lock(&m_mutex);
+        const bool cur = m_paused.load();
+        if (cur != paused) {
+            changed = true;
+            if (paused) {
+                m_paused = true;
+                m_pauseTimer.start();
+            } else {
+                if (m_pauseTimer.isValid()) {
+                    m_pausedMs += m_pauseTimer.elapsed();
+                    m_pauseTimer.invalidate();
+                }
+                m_paused = false;
+                m_pauseCond.wakeAll();
+            }
+        }
+    }
+    if (changed)
+        emit pausedChanged(paused);
+}
+
+qint64 FileOperation::activeElapsedMs() const
+{
     QMutexLocker lock(&m_mutex);
-    m_answered.wakeAll();
+    if (!m_runTimer.isValid())
+        return 0;
+    const qint64 total = m_runTimer.elapsed();
+    qint64 paused = m_pausedMs;
+    if (m_paused.load() && m_pauseTimer.isValid())
+        paused += m_pauseTimer.elapsed();
+    return std::max<qint64>(1, total - paused);
+}
+
+void FileOperation::waitIfPaused()
+{
+    if (!m_paused.load() || m_cancelled.load())
+        return;
+    QMutexLocker lock(&m_mutex);
+    while (m_paused.load() && !m_cancelled.load())
+        m_pauseCond.wait(&m_mutex, 100);
 }
 
 void FileOperation::resolveConflict(int action, bool applyToAll)
@@ -135,6 +185,13 @@ void FileOperation::resolveConflict(int action, bool applyToAll)
 
 void FileOperation::run()
 {
+    {
+        QMutexLocker lock(&m_mutex);
+        m_runTimer.start();
+        m_pausedMs = 0;
+        if (m_paused.load())
+            m_pauseTimer.start();
+    }
     m_progressTimer.start();
 
     if (!QFileInfo(m_targetDir).isDir()) {
@@ -145,6 +202,7 @@ void FileOperation::run()
     }
 
     for (const QString &src : std::as_const(m_sources)) {
+        waitIfPaused();
         if (m_cancelled)
             break;
         const qint64 size = scanSize(src);
@@ -155,6 +213,7 @@ void FileOperation::run()
 
     const QString targetCanonical = canonicalish(m_targetDir);
     for (const QString &src : std::as_const(m_sources)) {
+        waitIfPaused();
         if (m_cancelled)
             break;
 
@@ -283,6 +342,7 @@ FileOperation::Result FileOperation::handleConflict(const QFileInfo &src, QStrin
 
 FileOperation::Result FileOperation::copyEntry(const QString &src, QString dest, bool overwriteConfirmed)
 {
+    waitIfPaused();
     if (m_cancelled)
         return Result::Skipped;
 
@@ -396,8 +456,9 @@ FileOperation::Result FileOperation::copyFile(const QFileInfo &src, const QStrin
         return Result::Failed;
     }
 
-    QByteArray buffer(1 << 20, Qt::Uninitialized);
+    QByteArray buffer(256 * 1024, Qt::Uninitialized);
     while (true) {
+        waitIfPaused();
         if (m_cancelled) {
             out.cancelWriting();
             return Result::Skipped;
@@ -431,6 +492,7 @@ FileOperation::Result FileOperation::copyFile(const QFileInfo &src, const QStrin
 
 FileOperation::Result FileOperation::moveEntry(const QString &src, QString dest)
 {
+    waitIfPaused();
     if (m_cancelled)
         return Result::Skipped;
 

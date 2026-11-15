@@ -30,6 +30,14 @@ struct UndoEntry {
     QList<UndoPair> pairs;
 };
 
+struct QueuedFileOperation {
+    int id = 0;
+    FileOperation::Mode mode = FileOperation::Copy;
+    QStringList sourcePaths;
+    QString targetDir;
+    QString title;
+};
+
 class Backend : public QObject {
     Q_OBJECT
     Q_PROPERTY(PanelModel* leftPanel READ leftPanel CONSTANT)
@@ -42,6 +50,15 @@ class Backend : public QObject {
     Q_PROPERTY(double busyProgress READ busyProgress NOTIFY busyChanged)
     Q_PROPERTY(QString busyDetail READ busyDetail NOTIFY busyChanged)
     Q_PROPERTY(bool canCancel READ canCancel NOTIFY busyChanged)
+    Q_PROPERTY(bool isPaused READ isPaused NOTIFY busyChanged)
+    Q_PROPERTY(QString busySpeed READ busySpeed NOTIFY busyChanged)
+    Q_PROPERTY(qint64 busySpeedBytes READ busySpeedBytes NOTIFY busyChanged)
+    Q_PROPERTY(QString busyEta READ busyEta NOTIFY busyChanged)
+    Q_PROPERTY(qint64 busyDoneBytes READ busyDoneBytes NOTIFY busyChanged)
+    Q_PROPERTY(qint64 busyTotalBytes READ busyTotalBytes NOTIFY busyChanged)
+    Q_PROPERTY(int queueCount READ queueCount NOTIFY operationQueueChanged)
+    Q_PROPERTY(QVariantList operationQueue READ operationQueue NOTIFY operationQueueChanged)
+    Q_PROPERTY(QVariantList multiRenamePresets READ multiRenamePresets NOTIFY multiRenamePresetsChanged)
     Q_PROPERTY(QString statusMessage READ statusMessage NOTIFY statusMessageChanged)
     Q_PROPERTY(QVariantList drives READ drives NOTIFY drivesChanged)
     Q_PROPERTY(QStringList bookmarks READ bookmarks NOTIFY bookmarksChanged)
@@ -56,6 +73,8 @@ class Backend : public QObject {
     Q_PROPERTY(bool searchRunning READ searchRunning NOTIFY searchStateChanged)
     Q_PROPERTY(int searchScannedCount READ searchScannedCount NOTIFY searchProgressChanged)
     Q_PROPERTY(QVariantList searchResultItems READ searchResultItems NOTIFY searchResultsChanged)
+    Q_PROPERTY(QVariantList remoteConnections READ remoteConnections NOTIFY remoteConnectionsChanged)
+    Q_PROPERTY(QVariantList customActions READ customActions NOTIFY customActionsChanged)
 
 public:
     explicit Backend(const QString &bookmarksFile = {}, QObject *parent = nullptr);
@@ -77,6 +96,14 @@ public:
     double busyProgress() const { return m_busyProgress; }
     QString busyDetail() const { return m_busyDetail; }
     bool canCancel() const { return m_canCancel; }
+    bool isPaused() const { return m_isPaused; }
+    QString busySpeed() const { return m_busySpeed; }
+    qint64 busySpeedBytes() const { return m_busySpeedBytes; }
+    QString busyEta() const { return m_busyEta; }
+    qint64 busyDoneBytes() const { return m_busyDoneBytes; }
+    qint64 busyTotalBytes() const { return m_busyTotalBytes; }
+    int queueCount() const { return m_operationQueue.size(); }
+    QVariantList operationQueue() const;
     QString statusMessage() const { return m_statusMessage; }
     QVariantList drives() const { return m_drives; }
     QStringList bookmarks() const { return m_bookmarks; }
@@ -110,6 +137,12 @@ public:
     Q_INVOKABLE bool copyItems(const QStringList &sourcePaths, const QString &targetDir);
     Q_INVOKABLE bool moveItems(const QStringList &sourcePaths, const QString &targetDir);
     Q_INVOKABLE void cancelOperation();
+    Q_INVOKABLE void cancelAllOperations();
+    Q_INVOKABLE void pauseOperation();
+    Q_INVOKABLE void resumeOperation();
+    Q_INVOKABLE void togglePauseOperation();
+    Q_INVOKABLE bool removeQueuedOperation(int queueId);
+    Q_INVOKABLE void clearOperationQueue();
     // action: FileOperation::ConflictAction (1 = overwrite, 2 = skip, 3 = rename, 4 = cancel)
     Q_INVOKABLE void resolveConflict(int action, bool applyToAll);
     Q_INVOKABLE QString formatConflictDetails(qint64 size, const QDateTime &modified, bool isDir) const;
@@ -151,6 +184,30 @@ public:
     Q_INVOKABLE bool mountDevice(const QString &devPath);
     Q_INVOKABLE bool unmountDevice(const QString &mountOrDevPath);
 
+    // Remote Connections (SFTP / SMB / SSHFS via GVFS gio mount / sshfs)
+    QVariantList remoteConnections() const;
+    Q_INVOKABLE QString buildRemoteUri(const QVariantMap &connection) const;
+    Q_INVOKABLE QVariantMap parseRemoteUri(const QString &uri) const;
+    Q_INVOKABLE QString resolveRemoteMountPath(const QVariantMap &connection) const;
+    Q_INVOKABLE bool saveRemoteConnection(const QVariantMap &connection);
+    Q_INVOKABLE bool deleteRemoteConnection(const QString &idOrName);
+    Q_INVOKABLE QString connectRemote(const QString &idOrUri);
+    Q_INVOKABLE bool disconnectRemote(const QString &idOrMountPath);
+
+    // XDG MIME & Open With (.desktop applications) + Custom Actions
+    Q_INVOKABLE QVariantMap getFileMimeInfo(const QString &path) const;
+    Q_INVOKABLE QVariantList getApplicationsForFile(const QString &path) const;
+    Q_INVOKABLE QVariantList getAllInstalledApplications() const;
+    Q_INVOKABLE bool openWithApplication(const QStringList &paths, const QString &desktopIdOrExec, bool setAsDefault = false);
+    Q_INVOKABLE bool setDefaultApplicationForMime(const QString &mimeType, const QString &desktopId);
+
+    QVariantList customActions() const { return m_customActions; }
+    Q_INVOKABLE QVariantList getCustomActionsForFile(const QString &path) const;
+    Q_INVOKABLE bool saveCustomAction(const QVariantMap &action);
+    Q_INVOKABLE bool deleteCustomAction(const QString &idOrName);
+    Q_INVOKABLE QString expandCustomActionCommand(const QString &commandTemplate, const QStringList &paths) const;
+    Q_INVOKABLE QVariantMap executeCustomAction(const QString &idOrName, const QStringList &paths = {});
+
     // Undo stack (Rename, Multi-Rename, Move, Trash)
     Q_INVOKABLE bool undoLastOperation();
 
@@ -165,10 +222,18 @@ public:
 
     Q_INVOKABLE QVariantList previewMultiRename(const QStringList &paths, const QString &findText,
                                                 const QString &replaceText, const QString &prefix,
-                                                const QString &suffix, int caseMode, bool addCounter) const;
+                                                const QString &suffix, int caseMode, bool addCounter,
+                                                bool useRegex = false, const QString &nameMask = QString(),
+                                                int counterStart = 1, int counterStep = 1, int counterDigits = 3) const;
     Q_INVOKABLE bool executeMultiRename(const QStringList &paths, const QString &findText,
                                         const QString &replaceText, const QString &prefix,
-                                        const QString &suffix, int caseMode, bool addCounter);
+                                        const QString &suffix, int caseMode, bool addCounter,
+                                        bool useRegex = false, const QString &nameMask = QString(),
+                                        int counterStart = 1, int counterStep = 1, int counterDigits = 3);
+    QVariantList multiRenamePresets() const { return m_multiRenamePresets; }
+    Q_INVOKABLE bool saveMultiRenamePreset(const QString &name, const QVariantMap &preset);
+    Q_INVOKABLE QVariantMap getMultiRenamePreset(const QString &name) const;
+    Q_INVOKABLE bool deleteMultiRenamePreset(const QString &name);
 
     Q_INVOKABLE bool isArchive(const QString &path) const;
     Q_INVOKABLE bool packArchive(const QStringList &sourcePaths, const QString &archivePath);
@@ -185,7 +250,7 @@ public:
     Q_INVOKABLE bool isBookmarked(const QString &path) const;
 
     Q_INVOKABLE QVariantMap runCommand(const QString &command);
-    Q_INVOKABLE QVariantMap getPreview(const QString &path);
+    Q_INVOKABLE QVariantMap getPreview(const QString &path, int pdfPage = 1);
     Q_INVOKABLE QStringList searchFiles(const QString &rootPath, const QString &query, int maxResults = 200);
 
     bool searchRunning() const { return m_searchRunning; }
@@ -212,6 +277,8 @@ signals:
     void activePanelChanged();
     void windowSizeChanged();
     void busyChanged();
+    void operationQueueChanged();
+    void multiRenamePresetsChanged();
     void statusMessageChanged();
     void drivesChanged();
     void bookmarksChanged();
@@ -222,11 +289,14 @@ signals:
     void searchStateChanged();
     void searchProgressChanged();
     void searchResultsChanged();
+    void remoteConnectionsChanged();
+    void customActionsChanged();
     void operationFinished(bool success, const QString &message);
     void conflictRequested(const QVariantMap &info);
 
 private:
     bool startFileOperation(FileOperation::Mode mode, const QStringList &sourcePaths, const QString &targetDir);
+    bool launchFileOperation(FileOperation::Mode mode, const QStringList &sourcePaths, const QString &targetDir);
     void onFileOperationFinished();
     bool setClipboardFiles(const QStringList &paths, bool cut);
     void refreshClipboardState();
@@ -235,10 +305,13 @@ private:
     void loadSession();
     void loadBookmarks();
     void saveBookmarks() const;
+    void ensureDefaultCustomActions();
     QString extractArchiveEntryToTemp(const QString &archivePath, const QString &internalPath);
-    static QString computeNewName(const QString &originalName, int index, const QString &findText,
+    static QString computeNewName(const QFileInfo &fi, int index, const QString &findText,
                                   const QString &replaceText, const QString &prefix,
-                                  const QString &suffix, int caseMode, bool addCounter);
+                                  const QString &suffix, int caseMode, bool addCounter,
+                                  bool useRegex = false, const QString &nameMask = QString(),
+                                  int counterStart = 1, int counterStep = 1, int counterDigits = 3);
 
     PanelModel m_leftPanel;
     PanelModel m_rightPanel;
@@ -252,6 +325,17 @@ private:
     double m_busyProgress = 0.0;
     QString m_busyDetail;
     bool m_canCancel = false;
+    bool m_isPaused = false;
+    QString m_busySpeed;
+    qint64 m_busySpeedBytes = 0;
+    QString m_busyEta;
+    qint64 m_busyDoneBytes = 0;
+    qint64 m_busyTotalBytes = 0;
+    QList<QueuedFileOperation> m_operationQueue;
+    int m_nextQueueId = 0;
+    QVariantList m_multiRenamePresets;
+    QVariantList m_remoteConnections;
+    QVariantList m_customActions;
     QString m_statusMessage;
 
     FileOperation *m_fileOp = nullptr;

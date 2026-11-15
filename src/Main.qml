@@ -1,4 +1,5 @@
 import QtQuick
+import QtQml
 import QtQuick.Controls
 import QtQuick.Controls.Material
 import QtQuick.Layouts
@@ -175,7 +176,25 @@ ApplicationWindow {
     property string commandPaletteMode: "commands"
     property bool syncDirsOpen: false
     property bool duplicateFinderOpen: false
+    property bool queueDialogOpen: false
+    property bool remoteConnectionsOpen: false
+    property bool openWithOpen: false
+    property string openWithTargetPath: ""
+    property var openWithAppsList: []
+    property var openWithAllApps: []
+    property var openWithMimeInfo: ({})
+    property int openWithTab: 0
     property bool menuBarActive: false
+
+    Connections {
+        target: backend
+        function onThemeModeChanged() {
+            if (win.quickViewActive)
+                win.updateQuickView();
+            if (win.previewOpen && win.previewData && win.previewData.path)
+                win.previewData = backend.getPreview(win.previewData.path, win.previewData.pdfPage || 1);
+        }
+    }
 
     function isAnyMenuOpen() {
         return (typeof filesMenu !== "undefined" && filesMenu.visible) ||
@@ -334,6 +353,14 @@ ApplicationWindow {
                 ctx.arc(4.5, 11.5, 1, 0, Math.PI * 2);
                 ctx.arc(11.5, 11.5, 1, 0, Math.PI * 2);
                 ctx.fill();
+            } else if (kind === "network") {
+                ctx.beginPath();
+                ctx.arc(8, 8, 5.5, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(2.7, 8); ctx.lineTo(13.3, 8);
+                ctx.moveTo(8, 2.5); ctx.lineTo(8, 13.5);
+                ctx.stroke();
             } else if (kind === "grid") {
                 ctx.strokeRect(3, 3, 4, 4);
                 ctx.strokeRect(9, 3, 4, 4);
@@ -939,6 +966,567 @@ ApplicationWindow {
         }
     }
 
+    // Next-Gen Preview Surface shared by Quick View (Ctrl+Q) and F3 Viewer.
+    component RichPreviewSurface : Item {
+        id: surface
+        property var previewItem: ({})
+        property bool markdownRendered: true
+        property bool pdfShowImage: true
+        property bool mediaPlaying: false
+        property int mediaElapsedSecs: 0
+        property var playbackPlayer: null
+        property var playbackOutput: null
+
+        signal requestPage(int page)
+
+        function stopMediaPlayback() {
+            mediaSimTimer.stop();
+            mediaPlaying = false;
+            mediaElapsedSecs = 0;
+            if (playbackPlayer) {
+                try { playbackPlayer.stop(); playbackPlayer.destroy(); } catch (e) {}
+                playbackPlayer = null;
+            }
+            if (playbackOutput) {
+                try { playbackOutput.destroy(); } catch (e) {}
+                playbackOutput = null;
+            }
+        }
+
+        function toggleMediaPlayback() {
+            if (mediaPlaying) {
+                mediaSimTimer.stop();
+                mediaPlaying = false;
+                if (playbackPlayer) {
+                    try { playbackPlayer.pause(); } catch (e) {}
+                }
+                return;
+            }
+            mediaPlaying = true;
+            mediaSimTimer.start();
+            if (!playbackPlayer && previewItem && (previewItem.mediaUrl || "").length > 0 && previewItem.isAudio === true) {
+                try {
+                    playbackOutput = Qt.createQmlObject('import QtMultimedia; AudioOutput {}', surface);
+                    playbackPlayer = Qt.createQmlObject('import QtMultimedia; MediaPlayer {}', surface);
+                    if (playbackPlayer && playbackOutput) {
+                        playbackPlayer.audioOutput = playbackOutput;
+                        playbackPlayer.source = previewItem.mediaUrl;
+                        playbackPlayer.play();
+                    }
+                } catch (e) {
+                    playbackPlayer = null;
+                    playbackOutput = null;
+                }
+            } else if (playbackPlayer) {
+                try { playbackPlayer.play(); } catch (e) {}
+            }
+        }
+
+        function formatSecs(secs) {
+            var m = Math.floor(secs / 60);
+            var s = Math.floor(secs % 60);
+            return (m < 10 ? "0" + m : "" + m) + ":" + (s < 10 ? "0" + s : "" + s);
+        }
+
+        onPreviewItemChanged: stopMediaPlayback()
+        onVisibleChanged: if (!visible) stopMediaPlayback()
+        Component.onDestruction: stopMediaPlayback()
+
+        Timer {
+            id: mediaSimTimer
+            interval: 1000
+            repeat: true
+            onTriggered: {
+                var totalSecs = Math.floor((surface.previewItem && surface.previewItem.mediaDurationMs ? surface.previewItem.mediaDurationMs : 0) / 1000);
+                if (totalSecs > 0 && surface.mediaElapsedSecs >= totalSecs)
+                    surface.stopMediaPlayback();
+                else
+                    surface.mediaElapsedSecs += 1;
+            }
+        }
+
+        FontLoader {
+            id: surfaceFontLoader
+            source: (surface.previewItem && surface.previewItem.isFont === true && surface.previewItem.fontUrl) ? surface.previewItem.fontUrl : ""
+        }
+
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: 6
+
+            // Format / Metadata / Mode Controls Strip
+            Rectangle {
+                Layout.fillWidth: true
+                height: visible ? 32 : 0
+                visible: !!(surface.previewItem && (
+                    surface.previewItem.isCode === true || surface.previewItem.isMarkdown === true ||
+                    surface.previewItem.isPdf === true || surface.previewItem.isFont === true ||
+                    surface.previewItem.isMedia === true || surface.previewItem.hasExif === true
+                ))
+                color: p.subBarBg
+                radius: win.smallRadius
+                border.width: 1
+                border.color: p.borderSubtle
+
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: 10
+                    anchors.rightMargin: 10
+                    spacing: 8
+
+                    Rectangle {
+                        height: 20
+                        width: badgeLbl.implicitWidth + 12
+                        radius: 4
+                        color: p.badgeBg
+                        Text {
+                            id: badgeLbl
+                            anchors.centerIn: parent
+                            font.pixelSize: 10
+                            font.bold: true
+                            font.family: "monospace"
+                            color: p.accent
+                            text: {
+                                if (!surface.previewItem) return "";
+                                if (surface.previewItem.isPdf) return "PDF";
+                                if (surface.previewItem.isFont) return surface.previewItem.fontFormat || "FONT";
+                                if (surface.previewItem.isMedia) return surface.previewItem.mediaCodec || "MEDIA";
+                                if (surface.previewItem.syntaxLanguage) return surface.previewItem.syntaxLanguage;
+                                return surface.previewItem.imageFormat || "EXIF";
+                            }
+                        }
+                    }
+
+                    // Markdown Rendered vs Raw Source toggle
+                    RowLayout {
+                        visible: !!(surface.previewItem && surface.previewItem.isMarkdown === true)
+                        spacing: 4
+                        FilterPill {
+                            label: qsTr("Rendered")
+                            active: surface.markdownRendered
+                            onClicked: surface.markdownRendered = true
+                        }
+                        FilterPill {
+                            label: qsTr("Raw Source")
+                            active: !surface.markdownRendered
+                            onClicked: surface.markdownRendered = false
+                        }
+                    }
+
+                    // PDF Page Navigation & Mode
+                    RowLayout {
+                        visible: !!(surface.previewItem && surface.previewItem.isPdf === true)
+                        spacing: 6
+                        ToolbarBtn {
+                            implicitHeight: 22
+                            label: "◀ " + qsTr("Prev")
+                            btnEnabled: !!(surface.previewItem && (surface.previewItem.pdfPage || 1) > 1)
+                            onClicked: surface.requestPage((surface.previewItem.pdfPage || 1) - 1)
+                        }
+                        Text {
+                            font.pixelSize: 11
+                            font.family: "monospace"
+                            color: p.textSecondary
+                            text: surface.previewItem ? qsTr("Page %1 / %2").arg(surface.previewItem.pdfPage || 1).arg(surface.previewItem.pdfPageCount || 1) : ""
+                        }
+                        ToolbarBtn {
+                            implicitHeight: 22
+                            label: qsTr("Next") + " ▶"
+                            btnEnabled: !!(surface.previewItem && (surface.previewItem.pdfPage || 1) < (surface.previewItem.pdfPageCount || 1))
+                            onClicked: surface.requestPage((surface.previewItem.pdfPage || 1) + 1)
+                        }
+                        FilterPill {
+                            visible: !!(surface.previewItem && (surface.previewItem.pdfPageImagePath || "").length > 0)
+                            label: surface.pdfShowImage ? qsTr("Page Image") : qsTr("Page Text")
+                            active: surface.pdfShowImage
+                            onClicked: surface.pdfShowImage = !surface.pdfShowImage
+                        }
+                    }
+
+                    // EXIF / Font / Media quick summary
+                    Text {
+                        visible: !!(surface.previewItem && !surface.previewItem.isPdf && !surface.previewItem.isMarkdown)
+                        Layout.fillWidth: true
+                        elide: Text.ElideRight
+                        font.pixelSize: 11
+                        font.family: "monospace"
+                        color: p.textSecondary
+                        text: {
+                            if (!surface.previewItem) return "";
+                            if (surface.previewItem.hasExif) return surface.previewItem.exifSummary || "";
+                            if (surface.previewItem.isFont) return (surface.previewItem.fontFamily || "") + ((surface.previewItem.fontStyles || "") ? " · " + surface.previewItem.fontStyles : "");
+                            if (surface.previewItem.isMedia) {
+                                var parts = [];
+                                if (surface.previewItem.mediaDuration) parts.push(surface.previewItem.mediaDuration);
+                                if (surface.previewItem.mediaResolution) parts.push(surface.previewItem.mediaResolution);
+                                if (surface.previewItem.mediaSampleRate) parts.push(surface.previewItem.mediaSampleRate);
+                                if (surface.previewItem.mediaBitrate) parts.push(surface.previewItem.mediaBitrate);
+                                return parts.join(" · ");
+                            }
+                            return surface.previewItem.truncated ? qsTr("(showing first 128 KB)") : "";
+                        }
+                    }
+
+                    Item { Layout.fillWidth: true; visible: !!(surface.previewItem && (surface.previewItem.isPdf || surface.previewItem.isMarkdown)) }
+                }
+            }
+
+            // 1. Image + EXIF View
+            ColumnLayout {
+                visible: !!(surface.previewItem && surface.previewItem.isImage === true)
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                spacing: 8
+
+                Image {
+                    source: (surface.previewItem && surface.previewItem.imagePath) ? surface.previewItem.imagePath : ""
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    Layout.margins: 4
+                    fillMode: Image.PreserveAspectFit
+                    asynchronous: true
+                }
+
+                Rectangle {
+                    visible: !!(surface.previewItem && surface.previewItem.hasExif === true)
+                    Layout.fillWidth: true
+                    implicitHeight: exifGrid.implicitHeight + 14
+                    color: p.cardBg
+                    radius: win.smallRadius
+                    border.width: 1
+                    border.color: p.borderSubtle
+
+                    GridLayout {
+                        id: exifGrid
+                        anchors.fill: parent
+                        anchors.margins: 7
+                        columns: 4
+                        columnSpacing: 14
+                        rowSpacing: 4
+
+                        Text { text: qsTr("Camera:"); font.pixelSize: 11; color: p.textMuted; visible: !!((surface.previewItem && surface.previewItem.exif && (surface.previewItem.exif.cameraMake || surface.previewItem.exif.cameraModel))) }
+                        Text {
+                            text: (surface.previewItem && surface.previewItem.exif) ? ((surface.previewItem.exif.cameraMake || "") + " " + (surface.previewItem.exif.cameraModel || "")).trim() : ""
+                            font.pixelSize: 11; font.bold: true; color: p.textPrimary
+                            visible: text.length > 0
+                        }
+                        Text { text: qsTr("Date Taken:"); font.pixelSize: 11; color: p.textMuted; visible: !!(surface.previewItem && surface.previewItem.exif && surface.previewItem.exif.dateTaken) }
+                        Text { text: (surface.previewItem && surface.previewItem.exif && surface.previewItem.exif.dateTaken) ? surface.previewItem.exif.dateTaken : ""; font.pixelSize: 11; font.family: "monospace"; color: p.textSecondary; visible: text.length > 0 }
+                        Text { text: qsTr("Exposure:"); font.pixelSize: 11; color: p.textMuted; visible: !!(surface.previewItem && surface.previewItem.exif && (surface.previewItem.exif.aperture || surface.previewItem.exif.exposure || surface.previewItem.exif.iso)) }
+                        Text {
+                            text: {
+                                if (!surface.previewItem || !surface.previewItem.exif) return "";
+                                var pList = [];
+                                if (surface.previewItem.exif.aperture) pList.push(surface.previewItem.exif.aperture);
+                                if (surface.previewItem.exif.exposure) pList.push(surface.previewItem.exif.exposure);
+                                if (surface.previewItem.exif.iso) pList.push("ISO " + surface.previewItem.exif.iso);
+                                if (surface.previewItem.exif.focalLength) pList.push(surface.previewItem.exif.focalLength);
+                                return pList.join(" · ");
+                            }
+                            font.pixelSize: 11; font.family: "monospace"; color: p.accent
+                            visible: text.length > 0
+                        }
+                        Text { text: qsTr("GPS:"); font.pixelSize: 11; color: p.textMuted; visible: !!(surface.previewItem && surface.previewItem.exif && surface.previewItem.exif.gpsCoordinates) }
+                        Text { text: (surface.previewItem && surface.previewItem.exif && surface.previewItem.exif.gpsCoordinates) ? surface.previewItem.exif.gpsCoordinates : ""; font.pixelSize: 11; font.family: "monospace"; color: p.successText; visible: text.length > 0 }
+                    }
+                }
+            }
+
+            // 2. PDF Preview View
+            Item {
+                visible: !!(surface.previewItem && surface.previewItem.isPdf === true)
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+
+                Image {
+                    anchors.fill: parent
+                    anchors.margins: 4
+                    visible: surface.pdfShowImage && !!(surface.previewItem && (surface.previewItem.pdfPageImagePath || "").length > 0)
+                    source: (surface.previewItem && surface.previewItem.pdfPageImagePath) ? surface.previewItem.pdfPageImagePath : ""
+                    fillMode: Image.PreserveAspectFit
+                    asynchronous: true
+                }
+
+                ScrollView {
+                    anchors.fill: parent
+                    visible: !surface.pdfShowImage || !(surface.previewItem && (surface.previewItem.pdfPageImagePath || "").length > 0)
+                    clip: true
+
+                    TextArea {
+                        text: (surface.previewItem && (surface.previewItem.pdfPageText || surface.previewItem.text)) ? (surface.previewItem.pdfPageText || surface.previewItem.text) : ""
+                        readOnly: true
+                        wrapMode: TextEdit.WordWrap
+                        font.family: "monospace"
+                        font.pixelSize: 12
+                        color: p.textSecondary
+                        background: Rectangle { color: p.inputBg; radius: win.smallRadius; border.width: 1; border.color: p.borderSubtle }
+                    }
+                }
+            }
+
+            // 3. Font Specimen View (.ttf / .otf / .woff)
+            ScrollView {
+                visible: !!(surface.previewItem && surface.previewItem.isFont === true)
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+
+                ColumnLayout {
+                    width: surface.width - 16
+                    spacing: 12
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        implicitHeight: fontHeaderCol.implicitHeight + 20
+                        color: p.cardBg
+                        radius: win.smallRadius
+                        border.width: 1
+                        border.color: p.borderDefault
+
+                        ColumnLayout {
+                            id: fontHeaderCol
+                            anchors.fill: parent
+                            anchors.margins: 10
+                            spacing: 4
+                            Text {
+                                text: (surface.previewItem && surface.previewItem.fontFamily) ? surface.previewItem.fontFamily : ""
+                                font.family: surfaceFontLoader.status === FontLoader.Ready ? surfaceFontLoader.name : "sans-serif"
+                                font.pixelSize: 22
+                                font.bold: true
+                                color: p.textPrimary
+                            }
+                            Text {
+                                text: qsTr("Format: %1  |  Styles: %2")
+                                    .arg(surface.previewItem && surface.previewItem.fontFormat ? surface.previewItem.fontFormat : "")
+                                    .arg(surface.previewItem && surface.previewItem.fontStyles ? surface.previewItem.fontStyles : qsTr("Regular"))
+                                font.pixelSize: 11
+                                color: p.textMuted
+                            }
+                        }
+                    }
+
+                    Repeater {
+                        model: [34, 24, 18, 13]
+                        delegate: Rectangle {
+                            Layout.fillWidth: true
+                            implicitHeight: sampleTxt.implicitHeight + 14
+                            color: index % 2 === 0 ? p.rowAltBg : p.inputBg
+                            radius: win.smallRadius
+                            border.width: 1
+                            border.color: p.borderSubtle
+
+                            RowLayout {
+                                anchors.fill: parent
+                                anchors.margins: 7
+                                spacing: 10
+                                Text {
+                                    text: modelData + "px"
+                                    font.pixelSize: 10
+                                    font.family: "monospace"
+                                    color: p.textMuted
+                                    Layout.preferredWidth: 34
+                                }
+                                Text {
+                                    id: sampleTxt
+                                    Layout.fillWidth: true
+                                    wrapMode: Text.WordWrap
+                                    font.family: surfaceFontLoader.status === FontLoader.Ready ? surfaceFontLoader.name : "sans-serif"
+                                    font.pixelSize: modelData
+                                    color: p.textPrimary
+                                    text: (surface.previewItem && surface.previewItem.fontPangram) ? surface.previewItem.fontPangram : "The quick brown fox jumps over the lazy dog — 0123456789"
+                                }
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        implicitHeight: glyphBox.implicitHeight + 16
+                        color: p.cardBg
+                        radius: win.smallRadius
+                        border.width: 1
+                        border.color: p.borderSubtle
+
+                        Text {
+                            id: glyphBox
+                            anchors.fill: parent
+                            anchors.margins: 8
+                            wrapMode: Text.WordWrap
+                            font.family: surfaceFontLoader.status === FontLoader.Ready ? surfaceFontLoader.name : "sans-serif"
+                            font.pixelSize: 15
+                            color: p.textSecondary
+                            text: "ABCDEFGHIJKLMNOPQRSTUVWXYZ\nabcdefghijklmnopqrstuvwxyz\n0123456789  !@#$%^&*()-_=+[]{};:'\",.<>/?"
+                        }
+                    }
+                }
+            }
+
+            // 4. Media Info & Audio/Video Mini-Player View
+            Item {
+                visible: !!(surface.previewItem && surface.previewItem.isMedia === true)
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+
+                Rectangle {
+                    anchors.centerIn: parent
+                    width: Math.min(parent.width - 16, 540)
+                    implicitHeight: mediaCardCol.implicitHeight + 32
+                    color: p.cardBg
+                    radius: win.panelRadius
+                    border.width: 1
+                    border.color: p.borderDefault
+
+                    ColumnLayout {
+                        id: mediaCardCol
+                        anchors.fill: parent
+                        anchors.margins: 16
+                        spacing: 12
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 10
+                            Rectangle {
+                                width: 40; height: 40; radius: 8
+                                color: Qt.alpha(p.accent, win.isDark ? 0.22 : 0.14)
+                                border.width: 1; border.color: Qt.alpha(p.accent, 0.45)
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: (surface.previewItem && surface.previewItem.isVideo) ? "🎬" : "🎵"
+                                    font.pixelSize: 18
+                                }
+                            }
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 2
+                                Text {
+                                    text: (surface.previewItem && surface.previewItem.name) ? surface.previewItem.name : ""
+                                    font.bold: true; font.pixelSize: 14; color: p.textPrimary
+                                    elide: Text.ElideMiddle; Layout.fillWidth: true
+                                }
+                                Text {
+                                    text: {
+                                        if (!surface.previewItem || !surface.previewItem.mediaInfo) return "";
+                                        var mi = surface.previewItem.mediaInfo;
+                                        return (mi.artist && mi.title) ? (mi.artist + " — " + mi.title)
+                                             : (mi.title ? mi.title : (surface.previewItem.isVideo ? qsTr("Video File") : qsTr("Audio File")));
+                                    }
+                                    font.pixelSize: 11; color: p.textMuted; Layout.fillWidth: true; elide: Text.ElideRight
+                                }
+                            }
+                        }
+
+                        Rectangle {
+                            Layout.fillWidth: true
+                            implicitHeight: mediaSpecGrid.implicitHeight + 16
+                            color: p.subBarBg
+                            radius: win.smallRadius
+                            border.width: 1; border.color: p.borderSubtle
+
+                            GridLayout {
+                                id: mediaSpecGrid
+                                anchors.fill: parent
+                                anchors.margins: 8
+                                columns: 4
+                                columnSpacing: 12
+                                rowSpacing: 6
+
+                                Text { text: qsTr("Codec:"); font.pixelSize: 11; color: p.textMuted }
+                                Text { text: (surface.previewItem && surface.previewItem.mediaCodec) ? surface.previewItem.mediaCodec : "-"; font.pixelSize: 11; font.bold: true; font.family: "monospace"; color: p.accent }
+                                Text { text: qsTr("Duration:"); font.pixelSize: 11; color: p.textMuted }
+                                Text { text: (surface.previewItem && surface.previewItem.mediaDuration) ? surface.previewItem.mediaDuration : "-"; font.pixelSize: 11; font.family: "monospace"; color: p.textPrimary }
+
+                                Text { text: qsTr("Bitrate:"); font.pixelSize: 11; color: p.textMuted; visible: !!(surface.previewItem && surface.previewItem.mediaBitrate) }
+                                Text { text: (surface.previewItem && surface.previewItem.mediaBitrate) ? surface.previewItem.mediaBitrate : ""; font.pixelSize: 11; font.family: "monospace"; color: p.textSecondary; visible: !!(surface.previewItem && surface.previewItem.mediaBitrate) }
+                                Text { text: qsTr("Resolution:"); font.pixelSize: 11; color: p.textMuted; visible: !!(surface.previewItem && surface.previewItem.mediaResolution) }
+                                Text { text: (surface.previewItem && surface.previewItem.mediaResolution) ? surface.previewItem.mediaResolution : ""; font.pixelSize: 11; font.family: "monospace"; color: p.textSecondary; visible: !!(surface.previewItem && surface.previewItem.mediaResolution) }
+
+                                Text { text: qsTr("Sample Rate:"); font.pixelSize: 11; color: p.textMuted; visible: !!(surface.previewItem && surface.previewItem.mediaSampleRate) }
+                                Text { text: (surface.previewItem && surface.previewItem.mediaSampleRate) ? surface.previewItem.mediaSampleRate : ""; font.pixelSize: 11; font.family: "monospace"; color: p.textSecondary; visible: !!(surface.previewItem && surface.previewItem.mediaSampleRate) }
+                                Text { text: qsTr("Channels:"); font.pixelSize: 11; color: p.textMuted; visible: !!(surface.previewItem && (surface.previewItem.mediaChannels || 0) > 0) }
+                                Text { text: (surface.previewItem && surface.previewItem.mediaChannels) ? String(surface.previewItem.mediaChannels) : ""; font.pixelSize: 11; font.family: "monospace"; color: p.textSecondary; visible: !!(surface.previewItem && (surface.previewItem.mediaChannels || 0) > 0) }
+                            }
+                        }
+
+                        // Mini-Player Controls
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+
+                            ToolbarBtn {
+                                label: surface.mediaPlaying ? qsTr("Pause") : qsTr("Play")
+                                accentHighlight: true
+                                onClicked: surface.toggleMediaPlayback()
+                            }
+                            ToolbarBtn {
+                                label: qsTr("Stop")
+                                btnEnabled: surface.mediaPlaying || surface.mediaElapsedSecs > 0
+                                onClicked: surface.stopMediaPlayback()
+                            }
+                            Rectangle {
+                                Layout.fillWidth: true
+                                height: 6
+                                radius: 3
+                                color: p.borderDefault
+                                Rectangle {
+                                    property real ratio: {
+                                        var totalSecs = Math.max(1, Math.floor((surface.previewItem && surface.previewItem.mediaDurationMs ? surface.previewItem.mediaDurationMs : 0) / 1000));
+                                        return Math.min(1.0, surface.mediaElapsedSecs / totalSecs);
+                                    }
+                                    width: parent.width * ratio
+                                    height: parent.height
+                                    radius: 3
+                                    color: p.accent
+                                }
+                            }
+                            Text {
+                                font.pixelSize: 11; font.family: "monospace"; color: p.textSecondary
+                                text: surface.formatSecs(surface.mediaElapsedSecs) + ((surface.previewItem && surface.previewItem.mediaDuration) ? (" / " + surface.previewItem.mediaDuration) : "")
+                            }
+                            ToolbarBtn {
+                                label: qsTr("Open Externally")
+                                onClicked: if (surface.previewItem && surface.previewItem.path) backend.openItem(surface.previewItem.path)
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 5. Markdown / Syntax-Highlighted Code / Plain Text View
+            ScrollView {
+                visible: !!(surface.previewItem && surface.previewItem.isImage !== true && surface.previewItem.isPdf !== true && surface.previewItem.isFont !== true && surface.previewItem.isMedia !== true)
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+
+                TextArea {
+                    readOnly: true
+                    wrapMode: (surface.previewItem && surface.previewItem.isMarkdown === true && surface.markdownRendered)
+                              ? TextEdit.WordWrap : TextEdit.NoWrap
+                    textFormat: (surface.previewItem && ((surface.previewItem.isMarkdown === true && surface.markdownRendered)
+                                                  || surface.previewItem.isCode === true))
+                                ? TextEdit.RichText : TextEdit.PlainText
+                    text: {
+                        if (!surface.previewItem) return "";
+                        if (surface.previewItem.isMarkdown === true && surface.markdownRendered)
+                            return surface.previewItem.renderedHtml || "";
+                        if (surface.previewItem.isCode === true && (surface.previewItem.highlightedHtml || "").length > 0)
+                            return surface.previewItem.highlightedHtml;
+                        return surface.previewItem.text || "";
+                    }
+                    font.family: (surface.previewItem && surface.previewItem.isMarkdown === true && surface.markdownRendered) ? "sans-serif" : "monospace"
+                    font.pixelSize: 12
+                    color: p.textSecondary
+                    leftPadding: 12
+                    rightPadding: 12
+                    topPadding: 10
+                    bottomPadding: 10
+                    background: Rectangle { color: p.inputBg; radius: win.smallRadius; border.width: 1; border.color: p.borderSubtle }
+                    onLinkActivated: function(link) { Qt.openUrlExternally(link); }
+                }
+            }
+        }
+    }
+
     // Bottom Total-Commander function key button (F3..F10).
     component FKeyButton : Rectangle {
         id: fkeyBtn
@@ -1087,6 +1675,13 @@ ApplicationWindow {
             property int targetIndex: -1
             property string targetPath: ""
             property bool isTargetDir: false
+            property var contextApps: []
+            property var contextCustomActions: []
+
+            onAboutToShow: {
+                contextApps = targetPath ? backend.getApplicationsForFile(targetPath) : [];
+                contextCustomActions = targetPath ? backend.getCustomActionsForFile(targetPath) : [];
+            }
 
             // 1. Open / View
             AppMenuItem {
@@ -1098,6 +1693,87 @@ ApplicationWindow {
                     } else {
                         win.triggerF3View();
                     }
+                }
+            }
+
+            AppMenuItem {
+                visible: !fileContextMenu.isTargetDir
+                text: qsTr("Open (Default App)")
+                shortcutHint: "Enter"
+                onTriggered: {
+                    if (fileContextMenu.targetPath)
+                        backend.openItem(fileContextMenu.targetPath);
+                }
+            }
+
+            AppMenuItem {
+                visible: !fileContextMenu.isTargetDir
+                text: qsTr("Edit with $EDITOR")
+                shortcutHint: "F4"
+                onTriggered: {
+                    if (fileContextMenu.targetPath)
+                        backend.openWithEditor(fileContextMenu.targetPath);
+                }
+            }
+
+            // 1b. Open With Submenu (XDG MIME compatible applications)
+            AppMenu {
+                id: openWithSubMenu
+                title: qsTr("Open With")
+                cascade: true
+
+                Instantiator {
+                    model: fileContextMenu.contextApps.slice(0, 10)
+                    delegate: AppMenuItem {
+                        required property var modelData
+                        text: modelData.name + (modelData.isDefault ? " ★" : "")
+                        onTriggered: {
+                            var paths = win.getSelectedOrCurrentPaths();
+                            if (paths.length === 0 && fileContextMenu.targetPath)
+                                paths = [fileContextMenu.targetPath];
+                            backend.openWithApplication(paths, modelData.desktopId, false);
+                        }
+                    }
+                    onObjectAdded: function(index, object) { openWithSubMenu.insertItem(index, object); }
+                    onObjectRemoved: function(index, object) { openWithSubMenu.removeItem(object); }
+                }
+
+                AppMenuSeparator {
+                    visible: fileContextMenu.contextApps.length > 0
+                }
+
+                AppMenuItem {
+                    text: qsTr("Choose Application...")
+                    shortcutHint: "Ctrl+Shift+O"
+                    onTriggered: win.openOpenWithDialog(fileContextMenu.targetPath, 0)
+                }
+            }
+
+            // 1c. Custom Actions Submenu
+            AppMenu {
+                id: customActionsSubMenu
+                title: qsTr("Custom Actions")
+                cascade: true
+
+                Instantiator {
+                    model: fileContextMenu.contextCustomActions
+                    delegate: AppMenuItem {
+                        required property var modelData
+                        text: modelData.name
+                        onTriggered: win.runCustomActionAndShow(modelData.id, fileContextMenu.targetPath)
+                    }
+                    onObjectAdded: function(index, object) { customActionsSubMenu.insertItem(index, object); }
+                    onObjectRemoved: function(index, object) { customActionsSubMenu.removeItem(object); }
+                }
+
+                AppMenuSeparator {
+                    visible: fileContextMenu.contextCustomActions.length > 0
+                }
+
+                AppMenuItem {
+                    text: qsTr("Manage Custom Actions...")
+                    shortcutHint: "Ctrl+Shift+O"
+                    onTriggered: win.openOpenWithDialog(fileContextMenu.targetPath, 1)
                 }
             }
 
@@ -1442,32 +2118,14 @@ ApplicationWindow {
                     }
                 }
 
-                Image {
-                    visible: win.quickViewData.isImage === true
-                    source: win.quickViewData.imagePath || ""
+                RichPreviewSurface {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    Layout.margins: 12
-                    fillMode: Image.PreserveAspectFit
-                }
-
-                ScrollView {
-                    visible: win.quickViewData.isImage !== true
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    clip: true
-
-                    TextArea {
-                        text: win.quickViewData.text || ""
-                        readOnly: true
-                        font.family: "monospace"
-                        font.pixelSize: 12
-                        color: p.textSecondary
-                        leftPadding: 12
-                        rightPadding: 12
-                        topPadding: 10
-                        bottomPadding: 10
-                        background: Rectangle { color: "transparent" }
+                    Layout.margins: 8
+                    previewItem: win.quickViewData
+                    onRequestPage: function(page) {
+                        if (win.quickViewData && win.quickViewData.path)
+                            win.quickViewData = backend.getPreview(win.quickViewData.path, page);
                     }
                 }
             }
@@ -3398,7 +4056,14 @@ ApplicationWindow {
     }
 
     function refreshMultiRenamePreview() {
+        if (!mrMaskField || !mrFindField || !mrReplaceField || !mrPrefixField || !mrSuffixField ||
+            !mrCaseCombo || !mrCounterCheck || !mrRegexToggle ||
+            !mrCounterStartField || !mrCounterStepField || !mrCounterDigitsField)
+            return;
         var paths = getSelectedOrCurrentPaths();
+        var cStart = parseInt(mrCounterStartField.text, 10);
+        var cStep = parseInt(mrCounterStepField.text, 10);
+        var cDigits = parseInt(mrCounterDigitsField.text, 10);
         multiRenamePreviewList = backend.previewMultiRename(
             paths,
             mrFindField.text,
@@ -3406,8 +4071,19 @@ ApplicationWindow {
             mrPrefixField.text,
             mrSuffixField.text,
             mrCaseCombo.currentIndex,
-            mrCounterCheck.checked
+            mrCounterCheck.checked,
+            mrRegexToggle.active,
+            mrMaskField.text,
+            isNaN(cStart) ? 1 : cStart,
+            isNaN(cStep) ? 1 : cStep,
+            isNaN(cDigits) ? 3 : cDigits
         );
+    }
+
+    function insertRenameTag(tag) {
+        var cur = mrMaskField.text;
+        mrMaskField.text = cur.length > 0 ? (cur + tag) : tag;
+        mrMaskField.forceFieldFocus();
     }
 
     function triggerF3View() {
@@ -3473,15 +4149,21 @@ ApplicationWindow {
             backend.showStatus(qsTr("Select files first for Multi-Rename (Ctrl+M)."));
             return;
         }
+        mrMaskField.text = "[N]";
         mrFindField.text = "";
         mrReplaceField.text = "";
         mrPrefixField.text = "";
         mrSuffixField.text = "";
+        mrRegexToggle.active = false;
         mrCaseCombo.currentIndex = 0;
         mrCounterCheck.checked = false;
+        mrCounterStartField.text = "1";
+        mrCounterStepField.text = "1";
+        mrCounterDigitsField.text = "3";
+        mrPresetNameField.text = "";
         refreshMultiRenamePreview();
         multiRenameOpen = true;
-        mrFindField.forceFieldFocus();
+        mrMaskField.forceFieldFocus();
     }
 
     function triggerPackArchive() {
@@ -3713,6 +4395,9 @@ ApplicationWindow {
             { id: "diskUsage", title: flatActive ? qsTr("Disk Usage Analyzer (with Sizes)") : qsTr("Disk Usage Analyzer (Ctrl+Shift+D)"), category: qsTr("View"), shortcut: "Ctrl+Shift+D", run: function() { currentModel().toggleDiskUsageMode(); } },
             { id: "syncDirs", title: qsTr("Synchronize Directories (Recursive)..."), category: qsTr("Commands"), shortcut: "Ctrl+Shift+S", run: function() { win.openSyncDirsDialog(); } },
             { id: "duplicateFinder", title: qsTr("Find Duplicate Files..."), category: qsTr("Commands"), shortcut: "Ctrl+Shift+F7", run: function() { win.openDuplicateFinderDialog(); } },
+            { id: "operationQueue", title: qsTr("Operation Queue & Transfer Monitor..."), category: qsTr("Commands"), shortcut: "Ctrl+Shift+Q", run: function() { win.openOperationQueueDialog(); } },
+            { id: "remoteConnections", title: qsTr("Remote Connections (SFTP / SMB / SSHFS)..."), category: qsTr("Network"), shortcut: "Ctrl+Shift+M", run: function() { win.openRemoteConnectionsDialog(""); } },
+            { id: "openWith", title: qsTr("Open With / Custom Actions..."), category: qsTr("Files"), shortcut: "Ctrl+Shift+O", run: function() { win.openOpenWithDialog("", 0); } },
             { id: "diffFiles", title: qsTr("Compare Files (Visual Diff)..."), category: qsTr("Commands"), shortcut: "Ctrl+Alt+D", run: function() { triggerFileDiff(); } },
             { id: "checksum", title: qsTr("Compute File Checksums..."), category: qsTr("Commands"), shortcut: "", run: function() { triggerChecksum(); } },
             { id: "terminal", title: qsTr("Open Terminal in Current Folder"), category: qsTr("Commands"), shortcut: "F9", run: function() { backend.openInTerminal(currentModel().path); } },
@@ -3762,6 +4447,47 @@ ApplicationWindow {
         win.closeAllMenus();
         win.duplicateFinderOpen = true;
         duplicateFinderDialog.runScan();
+    }
+
+    function openOperationQueueDialog() {
+        win.closeAllMenus();
+        win.queueDialogOpen = true;
+    }
+
+    function openRemoteConnectionsDialog(selectId) {
+        win.closeAllMenus();
+        win.remoteConnectionsOpen = true;
+        if (selectId)
+            remoteConnectionsDialog.loadConnectionById(selectId);
+        else
+            remoteConnectionsDialog.resetForm();
+    }
+
+    function openOpenWithDialog(targetPath, initialTab) {
+        win.closeAllMenus();
+        var tp = targetPath || currentHighlightedPath();
+        if (!tp) {
+            backend.showStatus(qsTr("Select a file or folder first."));
+            return;
+        }
+        win.openWithTargetPath = tp;
+        win.openWithTab = (initialTab === 1) ? 1 : 0;
+        win.openWithMimeInfo = backend.getFileMimeInfo(tp);
+        win.openWithAppsList = backend.getApplicationsForFile(tp);
+        win.openWithAllApps = [];
+        win.openWithOpen = true;
+        openWithDialog.resetFilters();
+    }
+
+    function runCustomActionAndShow(actionId, fallbackPath) {
+        var paths = getSelectedOrCurrentPaths();
+        if (paths.length === 0 && fallbackPath)
+            paths = [fallbackPath];
+        var res = backend.executeCustomAction(actionId, paths);
+        if (res && res.showOutput) {
+            win.commandOutputText = (res.output && res.output.length > 0) ? res.output : (res.command || "");
+            win.commandOutputOpen = true;
+        }
     }
 
     // ================= GLOBAL SHORTCUTS =================
@@ -3857,6 +4583,9 @@ ApplicationWindow {
     Shortcut { sequence: "Ctrl+Shift+D"; context: Qt.ApplicationShortcut; onActivated: currentModel().toggleDiskUsageMode() }
     Shortcut { sequence: "Ctrl+Shift+S"; context: Qt.ApplicationShortcut; onActivated: win.openSyncDirsDialog() }
     Shortcut { sequence: "Ctrl+Shift+F7"; context: Qt.ApplicationShortcut; onActivated: win.openDuplicateFinderDialog() }
+    Shortcut { sequence: "Ctrl+Shift+Q"; context: Qt.ApplicationShortcut; onActivated: win.openOperationQueueDialog() }
+    Shortcut { sequence: "Ctrl+Shift+M"; context: Qt.ApplicationShortcut; onActivated: win.openRemoteConnectionsDialog("") }
+    Shortcut { sequence: "Ctrl+Shift+O"; context: Qt.ApplicationShortcut; onActivated: win.openOpenWithDialog("", 0) }
     Shortcut { sequence: "Ctrl+H"; context: Qt.ApplicationShortcut; onActivated: {
         var m = currentModel();
         m.setShowHidden(!m.showHidden);
@@ -3903,6 +4632,9 @@ ApplicationWindow {
         if (commandPaletteOpen) { commandPaletteOpen = false; currentListView().forceActiveFocus(); return; }
         if (syncDirsOpen) { syncDirsOpen = false; currentListView().forceActiveFocus(); return; }
         if (duplicateFinderOpen) { duplicateFinderOpen = false; currentListView().forceActiveFocus(); return; }
+        if (queueDialogOpen) { queueDialogOpen = false; currentListView().forceActiveFocus(); return; }
+        if (remoteConnectionsOpen) { remoteConnectionsOpen = false; currentListView().forceActiveFocus(); return; }
+        if (openWithOpen) { openWithOpen = false; currentListView().forceActiveFocus(); return; }
         if (aboutOpen) { aboutOpen = false; return; }
         if (conflictDialog.visible) { conflictDialog.answer(4); return; }
         if (propertiesOpen) { propertiesOpen = false; return; }
@@ -4047,6 +4779,11 @@ ApplicationWindow {
                                     text: qsTr("Edit File")
                                     shortcutHint: "F4"
                                     onTriggered: triggerF4Edit()
+                                }
+                                AppMenuItem {
+                                    text: qsTr("Open With / Custom Actions...")
+                                    shortcutHint: "Ctrl+Shift+O"
+                                    onTriggered: win.openOpenWithDialog("", 0)
                                 }
 
                                 AppMenuSeparator {}
@@ -4437,6 +5174,16 @@ ApplicationWindow {
                                     onTriggered: win.openSyncDirsDialog()
                                 }
                                 AppMenuItem {
+                                    text: qsTr("Operation Queue...")
+                                    shortcutHint: "Ctrl+Shift+Q"
+                                    onTriggered: win.openOperationQueueDialog()
+                                }
+                                AppMenuItem {
+                                    text: qsTr("Remote Connections (SFTP / SMB)...")
+                                    shortcutHint: "Ctrl+Shift+M"
+                                    onTriggered: win.openRemoteConnectionsDialog("")
+                                }
+                                AppMenuItem {
                                     text: qsTr("Compare Directories")
                                     shortcutHint: "Shift+F2"
                                     onTriggered: backend.compareDirectories()
@@ -4757,6 +5504,7 @@ ApplicationWindow {
                                 model: backend.drives
                                 delegate: Rectangle {
                                     readonly property bool isDevMounted: modelData.isMounted !== false
+                                    readonly property bool isRemoteDev: modelData.isRemote === true
                                     implicitHeight: 22
                                     implicitWidth: driveRow.implicitWidth + (modelData.canUnmount ? 24 : 12)
                                     radius: win.smallRadius
@@ -4772,7 +5520,7 @@ ApplicationWindow {
                                         VectorIcon {
                                             width: 13
                                             height: 13
-                                            kind: modelData.isRemovable ? "usb" : "drive"
+                                            kind: isRemoteDev ? "network" : (modelData.isRemovable ? "usb" : "drive")
                                             iconColor: !isDevMounted ? p.textDim : (currentModel().path === modelData.path ? p.accent : p.textMuted)
                                         }
 
@@ -4788,10 +5536,10 @@ ApplicationWindow {
                                             text: modelData.free
                                             font.pixelSize: 10
                                             font.family: "monospace"
-                                            color: p.textDim
+                                            color: isRemoteDev ? p.accent : p.textDim
                                         }
 
-                                        // Mount button for unmounted disks
+                                        // Mount / Connect button for unmounted disks & saved remotes
                                         Rectangle {
                                             visible: !isDevMounted
                                             implicitHeight: 16
@@ -4802,7 +5550,7 @@ ApplicationWindow {
                                             Text {
                                                 id: mntText
                                                 anchors.centerIn: parent
-                                                text: qsTr("Mount")
+                                                text: isRemoteDev ? qsTr("Connect") : qsTr("Mount")
                                                 font.pixelSize: 9
                                                 font.bold: true
                                                 color: mntMouse.containsMouse ? p.accentFg : p.textSecondary
@@ -4813,11 +5561,16 @@ ApplicationWindow {
                                                 anchors.fill: parent
                                                 hoverEnabled: true
                                                 cursorShape: Qt.PointingHandCursor
-                                                onClicked: backend.mountDevice(modelData.devPath)
+                                                onClicked: {
+                                                    if (isRemoteDev)
+                                                        backend.connectRemote(modelData.remoteId || modelData.remoteUri);
+                                                    else
+                                                        backend.mountDevice(modelData.devPath);
+                                                }
                                             }
                                         }
 
-                                        // Eject/unmount button for removable mounted volumes
+                                        // Eject/unmount/disconnect button for removable & remote mounts
                                         Rectangle {
                                             visible: isDevMounted && modelData.canUnmount
                                             implicitHeight: 16
@@ -4837,7 +5590,12 @@ ApplicationWindow {
                                                 anchors.fill: parent
                                                 hoverEnabled: true
                                                 cursorShape: Qt.PointingHandCursor
-                                                onClicked: backend.unmountDevice(modelData.path)
+                                                onClicked: {
+                                                    if (isRemoteDev)
+                                                        backend.disconnectRemote(modelData.remoteId || modelData.path);
+                                                    else
+                                                        backend.unmountDevice(modelData.path);
+                                                }
                                             }
                                         }
                                     }
@@ -4847,16 +5605,68 @@ ApplicationWindow {
                                         anchors.fill: parent
                                         hoverEnabled: true
                                         cursorShape: Qt.PointingHandCursor
-                                        onClicked: {
+                                        acceptedButtons: Qt.LeftButton | Qt.RightButton
+                                        onClicked: function(mouse) {
+                                            if (mouse.button === Qt.RightButton && isRemoteDev) {
+                                                win.openRemoteConnectionsDialog(modelData.remoteId || "");
+                                                return;
+                                            }
                                             if (isDevMounted) {
                                                 currentModel().setPath(modelData.path);
                                                 currentListView().forceActiveFocus();
+                                            } else if (isRemoteDev) {
+                                                backend.connectRemote(modelData.remoteId || modelData.remoteUri);
                                             } else {
                                                 backend.mountDevice(modelData.devPath);
                                             }
                                         }
                                     }
+
+                                    ToolTip.visible: driveMouse.containsMouse && isRemoteDev
+                                    ToolTip.delay: 450
+                                    ToolTip.text: (modelData.remoteUri || modelData.path || "") + "  (" + qsTr("Right-click to edit") + ")"
                                 }
+                            }
+
+                            Rectangle {
+                                implicitHeight: 22
+                                implicitWidth: addRemoteRow.implicitWidth + 12
+                                radius: win.smallRadius
+                                color: addRemoteMouse.containsMouse ? p.chipHoverBg : "transparent"
+                                border.width: 1
+                                border.color: p.borderDefault
+
+                                RowLayout {
+                                    id: addRemoteRow
+                                    anchors.centerIn: parent
+                                    spacing: 4
+
+                                    VectorIcon {
+                                        width: 12
+                                        height: 12
+                                        kind: "network"
+                                        iconColor: p.accent
+                                    }
+
+                                    Text {
+                                        text: "+ " + qsTr("Remote")
+                                        font.pixelSize: 11
+                                        font.bold: true
+                                        color: p.accent
+                                    }
+                                }
+
+                                MouseArea {
+                                    id: addRemoteMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: win.openRemoteConnectionsDialog("")
+                                }
+
+                                ToolTip.visible: addRemoteMouse.containsMouse
+                                ToolTip.delay: 450
+                                ToolTip.text: qsTr("Remote Connections — SFTP / SMB / SSHFS (Ctrl+Shift+M)")
                             }
 
                             Rectangle { width: 1; height: 14; color: p.borderDefault }
@@ -5006,7 +5816,7 @@ ApplicationWindow {
             // Status Notification / Background Progress Bar
             Rectangle {
                 Layout.fillWidth: true
-                height: backend.isBusy ? 30 : (backend.statusMessage.length > 0 ? 26 : 0)
+                height: backend.isBusy ? 34 : (backend.statusMessage.length > 0 ? 26 : 0)
                 visible: height > 0
                 color: p.panelFooterBg
 
@@ -5028,14 +5838,16 @@ ApplicationWindow {
                         width: 6
                         height: 6
                         radius: 3
-                        color: p.accent
+                        color: backend.isPaused ? p.warningText : p.accent
                     }
 
                     Text {
-                        text: backend.isBusy ? backend.busyTitle : backend.statusMessage
+                        text: backend.isBusy
+                              ? (backend.isPaused ? (qsTr("Paused") + " · " + backend.busyTitle) : backend.busyTitle)
+                              : backend.statusMessage
                         font.pixelSize: 11
                         font.weight: backend.isBusy ? Font.DemiBold : Font.Normal
-                        color: backend.isBusy ? p.accent : p.textSecondary
+                        color: backend.isPaused ? p.warningText : (backend.isBusy ? p.accent : p.textSecondary)
                         Layout.fillWidth: !backend.isBusy
                         elide: Text.ElideRight
                     }
@@ -5051,6 +5863,22 @@ ApplicationWindow {
                     }
 
                     Text {
+                        visible: backend.isBusy && (backend.busySpeed || "").length > 0
+                        text: backend.busySpeed
+                        font.pixelSize: 11
+                        font.family: "monospace"
+                        color: p.accent
+                    }
+
+                    Text {
+                        visible: backend.isBusy && (backend.busyEta || "").length > 0
+                        text: qsTr("ETA %1").arg(backend.busyEta)
+                        font.pixelSize: 11
+                        font.family: "monospace"
+                        color: p.textSecondary
+                    }
+
+                    Text {
                         visible: backend.isBusy
                         text: Math.round(backend.busyProgress * 100) + "%"
                         font.pixelSize: 11
@@ -5061,7 +5889,7 @@ ApplicationWindow {
                     // Slim custom progress track
                     Rectangle {
                         visible: backend.isBusy
-                        Layout.preferredWidth: 180
+                        Layout.preferredWidth: 160
                         Layout.preferredHeight: 6
                         radius: 3
                         color: p.borderDefault
@@ -5070,15 +5898,30 @@ ApplicationWindow {
                             width: parent.width * Math.max(0, Math.min(1, backend.busyProgress))
                             height: parent.height
                             radius: 3
-                            color: p.accent
+                            color: backend.isPaused ? p.warningText : p.accent
                         }
+                    }
+
+                    ToolbarBtn {
+                        visible: backend.isBusy
+                        implicitHeight: 22
+                        label: qsTr("Queue (%1)").arg(backend.queueCount)
+                        onClicked: win.openOperationQueueDialog()
+                    }
+
+                    ToolbarBtn {
+                        visible: backend.isBusy
+                        implicitHeight: 22
+                        label: backend.isPaused ? qsTr("Resume") : qsTr("Pause")
+                        accentHighlight: backend.isPaused
+                        onClicked: backend.togglePauseOperation()
                     }
 
                     ToolbarBtn {
                         visible: backend.isBusy && backend.canCancel
                         implicitHeight: 22
                         label: qsTr("Cancel")
-                        accentHighlight: true
+                        accentHighlight: !backend.isPaused
                         onClicked: backend.cancelOperation()
                     }
                 }
@@ -5664,23 +6507,135 @@ ApplicationWindow {
         onRejected: win.bookmarksOpen = false
     }
 
-    // Multi-Rename Tool Dialog (Ctrl+M)
+    // Multi-Rename Tool Dialog (Ctrl+M) — RegEx, Dynamic Tags & Presets
     AppDialog {
         id: multiRenameDialog
         visible: win.multiRenameOpen
         title: qsTr("Multi-Rename Tool (Ctrl+M)")
-        width: 680
-        height: 520
+        width: Math.min(820, win.width - 40)
+        height: Math.min(620, win.height - 40)
         standardButtons: Dialog.Ok | Dialog.Cancel
+
+        function applyPresetMap(preset) {
+            if (!preset) return;
+            mrMaskField.text = preset.nameMask !== undefined ? preset.nameMask : "[N]";
+            mrFindField.text = preset.findText || "";
+            mrReplaceField.text = preset.replaceText || "";
+            mrPrefixField.text = preset.prefix || "";
+            mrSuffixField.text = preset.suffix || "";
+            mrCaseCombo.currentIndex = preset.caseMode !== undefined ? preset.caseMode : 0;
+            mrCounterCheck.checked = !!preset.addCounter;
+            mrRegexToggle.active = !!preset.useRegex;
+            mrCounterStartField.text = preset.counterStart !== undefined ? String(preset.counterStart) : "1";
+            mrCounterStepField.text = preset.counterStep !== undefined ? String(preset.counterStep) : "1";
+            mrCounterDigitsField.text = preset.counterDigits !== undefined ? String(preset.counterDigits) : "3";
+            refreshMultiRenamePreview();
+        }
 
         ColumnLayout {
             anchors.fill: parent
-            spacing: 10
+            spacing: 8
+
+            // Preset Bar
+            Rectangle {
+                Layout.fillWidth: true
+                height: 36
+                color: p.subBarBg
+                radius: win.smallRadius
+                border.width: 1
+                border.color: p.borderSubtle
+
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: 8
+                    anchors.rightMargin: 8
+                    spacing: 8
+
+                    Text { text: qsTr("Preset:"); color: p.textMuted; font.pixelSize: 12 }
+                    ComboBox {
+                        id: mrPresetCombo
+                        Layout.preferredWidth: 165
+                        model: backend.multiRenamePresets
+                        textRole: "name"
+                        onActivated: function(idx) {
+                            if (idx >= 0 && idx < backend.multiRenamePresets.length) {
+                                var pr = backend.multiRenamePresets[idx];
+                                mrPresetNameField.text = pr.name || "";
+                                multiRenameDialog.applyPresetMap(pr);
+                            }
+                        }
+                    }
+                    CompactField {
+                        id: mrPresetNameField
+                        Layout.fillWidth: true
+                        placeholderText: qsTr("Preset name...")
+                    }
+                    ToolbarBtn {
+                        label: qsTr("Save Preset")
+                        btnEnabled: mrPresetNameField.text.trim().length > 0
+                        onClicked: {
+                            var cStart = parseInt(mrCounterStartField.text, 10);
+                            var cStep = parseInt(mrCounterStepField.text, 10);
+                            var cDigits = parseInt(mrCounterDigitsField.text, 10);
+                            backend.saveMultiRenamePreset(mrPresetNameField.text.trim(), {
+                                nameMask: mrMaskField.text,
+                                findText: mrFindField.text,
+                                replaceText: mrReplaceField.text,
+                                prefix: mrPrefixField.text,
+                                suffix: mrSuffixField.text,
+                                caseMode: mrCaseCombo.currentIndex,
+                                addCounter: mrCounterCheck.checked,
+                                useRegex: mrRegexToggle.active,
+                                counterStart: isNaN(cStart) ? 1 : cStart,
+                                counterStep: isNaN(cStep) ? 1 : cStep,
+                                counterDigits: isNaN(cDigits) ? 3 : cDigits
+                            });
+                        }
+                    }
+                    ToolbarBtn {
+                        label: qsTr("Delete")
+                        btnEnabled: mrPresetCombo.currentIndex >= 0 && backend.multiRenamePresets.length > 0
+                        onClicked: {
+                            var targetName = mrPresetNameField.text.trim();
+                            if (!targetName && mrPresetCombo.currentIndex >= 0 && mrPresetCombo.currentIndex < backend.multiRenamePresets.length)
+                                targetName = backend.multiRenamePresets[mrPresetCombo.currentIndex].name || "";
+                            if (targetName) {
+                                backend.deleteMultiRenamePreset(targetName);
+                                mrPresetNameField.text = "";
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Dynamic Name Template Row + Quick Tag Chips
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+
+                Text { text: qsTr("Mask:"); color: p.textMuted; font.pixelSize: 12 }
+                CompactField {
+                    id: mrMaskField
+                    monospace: true
+                    text: "[N]"
+                    Layout.fillWidth: true
+                    placeholderText: "[N]_[Date]_[C]"
+                    onTextChanged: refreshMultiRenamePreview()
+                }
+                Repeater {
+                    model: ["[N]", "[Date]", "[Time]", "[ParentFolder]", "[Ext]", "[C]"]
+                    delegate: FilterPill {
+                        label: modelData
+                        active: false
+                        onClicked: insertRenameTag(modelData)
+                    }
+                }
+            }
 
             GridLayout {
-                columns: 4
+                columns: 5
                 Layout.fillWidth: true
-                columnSpacing: 10
+                columnSpacing: 8
                 rowSpacing: 8
 
                 Text { text: qsTr("Find:"); color: p.textMuted; font.pixelSize: 12 }
@@ -5697,6 +6652,16 @@ ApplicationWindow {
                     onTextChanged: refreshMultiRenamePreview()
                 }
 
+                FilterPill {
+                    id: mrRegexToggle
+                    label: "RegEx"
+                    active: false
+                    onClicked: {
+                        active = !active;
+                        refreshMultiRenamePreview();
+                    }
+                }
+
                 Text { text: qsTr("Prefix:"); color: p.textMuted; font.pixelSize: 12 }
                 CompactField {
                     id: mrPrefixField
@@ -5710,11 +6675,13 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     onTextChanged: refreshMultiRenamePreview()
                 }
+
+                Item { width: 1 }
             }
 
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 16
+                spacing: 10
 
                 Text { text: qsTr("Case:"); color: p.textMuted; font.pixelSize: 12 }
                 ComboBox {
@@ -5725,8 +6692,33 @@ ApplicationWindow {
 
                 CheckBox {
                     id: mrCounterCheck
-                    text: qsTr("Append counter (_001, _002...)")
+                    text: qsTr("Counter [C]")
                     onCheckedChanged: refreshMultiRenamePreview()
+                }
+
+                Text { text: qsTr("Start:"); color: p.textMuted; font.pixelSize: 11 }
+                CompactField {
+                    id: mrCounterStartField
+                    monospace: true
+                    text: "1"
+                    Layout.preferredWidth: 48
+                    onTextChanged: refreshMultiRenamePreview()
+                }
+                Text { text: qsTr("Step:"); color: p.textMuted; font.pixelSize: 11 }
+                CompactField {
+                    id: mrCounterStepField
+                    monospace: true
+                    text: "1"
+                    Layout.preferredWidth: 48
+                    onTextChanged: refreshMultiRenamePreview()
+                }
+                Text { text: qsTr("Digits:"); color: p.textMuted; font.pixelSize: 11 }
+                CompactField {
+                    id: mrCounterDigitsField
+                    monospace: true
+                    text: "3"
+                    Layout.preferredWidth: 44
+                    onTextChanged: refreshMultiRenamePreview()
                 }
             }
 
@@ -5761,7 +6753,7 @@ ApplicationWindow {
                         anchors.leftMargin: 10
                         anchors.rightMargin: 10
                         Text {
-                            text: modelData.oldName
+                            text: modelData ? modelData.oldName : ""
                             color: p.textMuted
                             font.pixelSize: 12
                             font.family: "monospace"
@@ -5769,7 +6761,7 @@ ApplicationWindow {
                             elide: Text.ElideMiddle
                         }
                         Text {
-                            text: "→  " + modelData.newName
+                            text: modelData ? ("→  " + modelData.newName) : ""
                             color: p.accent
                             font.bold: true
                             font.pixelSize: 12
@@ -5784,6 +6776,9 @@ ApplicationWindow {
 
         onAccepted: {
             win.multiRenameOpen = false;
+            var cStart = parseInt(mrCounterStartField.text, 10);
+            var cStep = parseInt(mrCounterStepField.text, 10);
+            var cDigits = parseInt(mrCounterDigitsField.text, 10);
             backend.executeMultiRename(
                 getSelectedOrCurrentPaths(),
                 mrFindField.text,
@@ -5791,7 +6786,12 @@ ApplicationWindow {
                 mrPrefixField.text,
                 mrSuffixField.text,
                 mrCaseCombo.currentIndex,
-                mrCounterCheck.checked
+                mrCounterCheck.checked,
+                mrRegexToggle.active,
+                mrMaskField.text,
+                isNaN(cStart) ? 1 : cStart,
+                isNaN(cStep) ? 1 : cStep,
+                isNaN(cDigits) ? 3 : cDigits
             );
         }
         onRejected: win.multiRenameOpen = false
@@ -5853,13 +6853,13 @@ ApplicationWindow {
         onRejected: win.commandOutputOpen = false
     }
 
-    // File Preview Modal (F3 View)
+    // File Preview Modal (F3 Next-Gen View)
     AppDialog {
         id: previewDialog
         visible: win.previewOpen
         title: qsTr("Preview: %1").arg(previewData.name || "")
-        width: 740
-        height: 540
+        width: Math.min(860, win.width - 40)
+        height: Math.min(640, win.height - 40)
         standardButtons: Dialog.Close
 
         ColumnLayout {
@@ -5875,32 +6875,1180 @@ ApplicationWindow {
                 elide: Text.ElideMiddle
             }
 
-            Image {
-                visible: previewData.isImage === true
-                source: previewData.imagePath || ""
+            RichPreviewSurface {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                fillMode: Image.PreserveAspectFit
-            }
-
-            ScrollView {
-                visible: previewData.isImage !== true
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                clip: true
-
-                TextArea {
-                    text: previewData.text || ""
-                    readOnly: true
-                    font.family: "monospace"
-                    font.pixelSize: 12
-                    color: p.textSecondary
-                    background: Rectangle { color: p.inputBg; radius: win.smallRadius; border.width: 1; border.color: p.borderSubtle }
+                previewItem: win.previewData
+                onRequestPage: function(page) {
+                    if (win.previewData && win.previewData.path)
+                        win.previewData = backend.getPreview(win.previewData.path, page);
                 }
             }
         }
 
         onRejected: win.previewOpen = false
+    }
+
+    // Operation Queue & Transfer Monitor Dialog (Ctrl+Shift+Q)
+    AppDialog {
+        id: operationQueueDialog
+        visible: win.queueDialogOpen
+        title: qsTr("Operation Queue (Ctrl+Shift+Q)")
+        width: Math.min(680, win.width - 40)
+        height: Math.min(480, win.height - 40)
+        standardButtons: Dialog.Close
+
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: 10
+
+            // Current Active Operation Card
+            Rectangle {
+                Layout.fillWidth: true
+                implicitHeight: activeOpCol.implicitHeight + 20
+                color: p.cardBg
+                radius: win.smallRadius
+                border.width: 1
+                border.color: backend.isBusy ? p.accent : p.borderSubtle
+
+                ColumnLayout {
+                    id: activeOpCol
+                    anchors.fill: parent
+                    anchors.margins: 10
+                    spacing: 6
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 8
+                        Text {
+                            text: backend.isBusy
+                                  ? (backend.isPaused ? qsTr("PAUSED: %1").arg(backend.busyTitle) : backend.busyTitle)
+                                  : qsTr("No transfer currently running")
+                            font.bold: true
+                            font.pixelSize: 12
+                            color: backend.isPaused ? p.warningText : (backend.isBusy ? p.accent : p.textMuted)
+                            Layout.fillWidth: true
+                        }
+                        Text {
+                            visible: backend.isBusy && (backend.busySpeed || "").length > 0
+                            text: backend.busySpeed
+                            font.pixelSize: 11
+                            font.family: "monospace"
+                            color: p.accent
+                        }
+                        Text {
+                            visible: backend.isBusy && (backend.busyEta || "").length > 0
+                            text: qsTr("ETA %1").arg(backend.busyEta)
+                            font.pixelSize: 11
+                            font.family: "monospace"
+                            color: p.textSecondary
+                        }
+                    }
+
+                    Text {
+                        visible: backend.isBusy
+                        text: backend.busyDetail || ""
+                        font.pixelSize: 11
+                        font.family: "monospace"
+                        color: p.textMuted
+                        Layout.fillWidth: true
+                        elide: Text.ElideMiddle
+                    }
+
+                    Rectangle {
+                        visible: backend.isBusy
+                        Layout.fillWidth: true
+                        height: 6
+                        radius: 3
+                        color: p.borderDefault
+                        Rectangle {
+                            width: parent.width * Math.max(0, Math.min(1, backend.busyProgress))
+                            height: parent.height
+                            radius: 3
+                            color: backend.isPaused ? p.warningText : p.accent
+                        }
+                    }
+
+                    RowLayout {
+                        visible: backend.isBusy
+                        Layout.fillWidth: true
+                        spacing: 8
+                        Item { Layout.fillWidth: true }
+                        ToolbarBtn {
+                            label: backend.isPaused ? qsTr("Resume") : qsTr("Pause")
+                            accentHighlight: backend.isPaused
+                            onClicked: backend.togglePauseOperation()
+                        }
+                        ToolbarBtn {
+                            label: qsTr("Cancel Current")
+                            btnEnabled: backend.canCancel
+                            onClicked: backend.cancelOperation()
+                        }
+                    }
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+                Text {
+                    text: qsTr("Waiting in Queue (%1)").arg(backend.queueCount)
+                    font.bold: true
+                    font.pixelSize: 12
+                    color: p.textSecondary
+                    Layout.fillWidth: true
+                }
+                ToolbarBtn {
+                    label: qsTr("Clear Queue")
+                    btnEnabled: backend.queueCount > 0
+                    onClicked: backend.clearOperationQueue()
+                }
+                ToolbarBtn {
+                    label: qsTr("Cancel All")
+                    btnEnabled: backend.isBusy || backend.queueCount > 0
+                    onClicked: backend.cancelAllOperations()
+                }
+            }
+
+            ListView {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+                model: backend.operationQueue
+
+                delegate: Rectangle {
+                    width: ListView.view.width
+                    height: 36
+                    color: index % 2 === 0 ? p.rowAltBg : "transparent"
+
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: 10
+                        anchors.rightMargin: 10
+                        spacing: 8
+
+                        Rectangle {
+                            height: 18
+                            width: qModeTxt.implicitWidth + 10
+                            radius: 3
+                            color: p.badgeBg
+                            Text {
+                                id: qModeTxt
+                                anchors.centerIn: parent
+                                text: modelData ? (modelData.mode === "move" ? "F6" : "F5") : ""
+                                font.pixelSize: 10; font.bold: true; font.family: "monospace"; color: p.accent
+                            }
+                        }
+                        Text {
+                            text: modelData ? (modelData.title || "") : ""
+                            font.pixelSize: 12
+                            color: p.textPrimary
+                            Layout.fillWidth: true
+                            elide: Text.ElideMiddle
+                        }
+                        ToolbarBtn {
+                            implicitHeight: 22
+                            label: qsTr("Remove")
+                            onClicked: if (modelData) backend.removeQueuedOperation(modelData.id)
+                        }
+                    }
+                }
+            }
+        }
+
+        onRejected: win.queueDialogOpen = false
+    }
+
+    // Remote Connections Manager Dialog (SFTP / SMB / SSHFS via GVFS / sshfs)
+    AppDialog {
+        id: remoteConnectionsDialog
+        visible: win.remoteConnectionsOpen
+        title: qsTr("Remote Connections — SFTP / SMB / SSHFS (Ctrl+Shift+M)")
+        width: Math.min(820, win.width - 40)
+        height: Math.min(540, win.height - 40)
+        standardButtons: Dialog.NoButton
+
+        property string editingId: ""
+        property string protocol: "sftp"
+
+        function resetForm() {
+            editingId = "";
+            protocol = "sftp";
+            if (!rcUriField) return;
+            rcUriField.text = "";
+            rcNameField.text = "";
+            rcHostField.text = "";
+            rcPortField.text = "22";
+            rcUserField.text = "";
+            rcPathField.text = "/";
+            rcDomainField.text = "";
+            rcHostField.forceFieldFocus();
+        }
+
+        function loadConnectionMap(m) {
+            if (!m || !rcUriField) return;
+            editingId = m.id || "";
+            protocol = m.protocol || "sftp";
+            rcUriField.text = m.uri || "";
+            rcNameField.text = m.name || "";
+            rcHostField.text = m.host || "";
+            rcPortField.text = String(m.port || (protocol === "smb" ? 445 : 22));
+            rcUserField.text = m.user || "";
+            rcPathField.text = m.remotePath || (protocol === "smb" ? "/share" : "/");
+            rcDomainField.text = m.domain || "";
+        }
+
+        function loadConnectionById(id) {
+            var list = backend.remoteConnections;
+            for (var i = 0; i < list.length; i++) {
+                if (list[i].id === id) {
+                    loadConnectionMap(list[i]);
+                    return;
+                }
+            }
+            resetForm();
+        }
+
+        function parseFromUriBar() {
+            var parsed = backend.parseRemoteUri(rcUriField.text);
+            if (!parsed || !parsed.host) {
+                backend.showStatus(qsTr("Enter a valid URI like sftp://user@host/path or smb://server/share"));
+                return;
+            }
+            protocol = parsed.protocol || "sftp";
+            rcHostField.text = parsed.host || "";
+            rcPortField.text = String(parsed.port || (protocol === "smb" ? 445 : 22));
+            rcUserField.text = parsed.user || "";
+            rcPathField.text = parsed.remotePath || "/";
+            rcDomainField.text = parsed.domain || "";
+            if (!rcNameField.text.trim())
+                rcNameField.text = parsed.name || parsed.host;
+        }
+
+        function buildFormMap() {
+            var portNum = parseInt(rcPortField.text, 10);
+            if (isNaN(portNum) || portNum <= 0)
+                portNum = (protocol === "smb") ? 445 : 22;
+            return {
+                id: editingId,
+                name: rcNameField.text.trim(),
+                protocol: protocol,
+                host: rcHostField.text.trim(),
+                port: portNum,
+                user: rcUserField.text.trim(),
+                remotePath: rcPathField.text.trim(),
+                domain: rcDomainField.text.trim(),
+                uri: rcUriField.text.trim()
+            };
+        }
+
+        contentItem: RowLayout {
+            spacing: 12
+
+            // Saved Connections Sidebar
+            ColumnLayout {
+                Layout.preferredWidth: 255
+                Layout.fillHeight: true
+                spacing: 8
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    Text {
+                        text: qsTr("Saved Servers (%1)").arg(backend.remoteConnections.length)
+                        font.bold: true
+                        font.pixelSize: 12
+                        color: p.textSecondary
+                        Layout.fillWidth: true
+                    }
+                    ToolbarBtn {
+                        implicitHeight: 24
+                        label: "+ " + qsTr("New")
+                        onClicked: remoteConnectionsDialog.resetForm()
+                    }
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    color: p.inputBg
+                    radius: win.smallRadius
+                    border.width: 1
+                    border.color: p.borderSubtle
+
+                    ListView {
+                        anchors.fill: parent
+                        anchors.margins: 4
+                        clip: true
+                        spacing: 4
+                        model: backend.remoteConnections
+
+                        delegate: Rectangle {
+                            width: ListView.view.width
+                            height: 54
+                            radius: win.smallRadius
+                            readonly property bool isSel: modelData && modelData.id === remoteConnectionsDialog.editingId
+                            color: isSel ? Qt.alpha(p.accent, win.isDark ? 0.2 : 0.12)
+                                         : (rcItemMouse.containsMouse ? p.rowHoverBg : p.cardBg)
+                            border.width: 1
+                            border.color: isSel ? p.accent : p.borderSubtle
+
+                            RowLayout {
+                                anchors.fill: parent
+                                anchors.margins: 8
+                                spacing: 8
+
+                                Rectangle {
+                                    width: 8
+                                    height: 8
+                                    radius: 4
+                                    color: (modelData && modelData.isMounted) ? p.successText : p.textDisabled
+                                }
+
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 1
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 6
+                                        Rectangle {
+                                            implicitHeight: 16
+                                            implicitWidth: rcProtoLbl.implicitWidth + 8
+                                            radius: 3
+                                            color: p.badgeBg
+                                            Text {
+                                                id: rcProtoLbl
+                                                anchors.centerIn: parent
+                                                text: modelData ? (modelData.protocol || "sftp").toUpperCase() : ""
+                                                font.pixelSize: 9
+                                                font.bold: true
+                                                font.family: "monospace"
+                                                color: p.accent
+                                            }
+                                        }
+                                        Text {
+                                            text: modelData ? (modelData.name || "") : ""
+                                            font.pixelSize: 12
+                                            font.bold: true
+                                            color: p.textPrimary
+                                            Layout.fillWidth: true
+                                            elide: Text.ElideRight
+                                        }
+                                    }
+                                    Text {
+                                        text: modelData ? (modelData.uri || "") : ""
+                                        font.pixelSize: 10
+                                        font.family: "monospace"
+                                        color: p.textDim
+                                        Layout.fillWidth: true
+                                        elide: Text.ElideMiddle
+                                    }
+                                }
+
+                                ToolbarBtn {
+                                    implicitHeight: 24
+                                    label: (modelData && modelData.isMounted) ? qsTr("Open") : qsTr("Connect")
+                                    onClicked: {
+                                        if (modelData && backend.connectRemote(modelData.id).length > 0) {
+                                            win.remoteConnectionsOpen = false;
+                                            currentListView().forceActiveFocus();
+                                        }
+                                    }
+                                }
+                            }
+
+                            MouseArea {
+                                id: rcItemMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                z: -1
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: if (modelData) remoteConnectionsDialog.loadConnectionMap(modelData)
+                                onDoubleClicked: {
+                                    if (modelData && backend.connectRemote(modelData.id).length > 0) {
+                                        win.remoteConnectionsOpen = false;
+                                        currentListView().forceActiveFocus();
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Text {
+                        anchors.centerIn: parent
+                        visible: backend.remoteConnections.length === 0
+                        width: parent.width - 24
+                        wrapMode: Text.WordWrap
+                        horizontalAlignment: Text.AlignHCenter
+                        text: qsTr("No saved servers yet.\nFill the form on the right to save SFTP, SMB, or SSHFS connections.")
+                        font.pixelSize: 11
+                        color: p.textDim
+                    }
+                }
+            }
+
+            // Connection Editor / Quick URI Connect
+            ColumnLayout {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                spacing: 10
+
+                // Quick URI Bar
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 8
+                    Text { text: qsTr("URI:"); color: p.textMuted; font.pixelSize: 12 }
+                    CompactField {
+                        id: rcUriField
+                        monospace: true
+                        Layout.fillWidth: true
+                        placeholderText: "sftp://user@server:22/var/www  |  smb://server/share"
+                        onAccepted: remoteConnectionsDialog.parseFromUriBar()
+                    }
+                    ToolbarBtn {
+                        label: qsTr("Parse")
+                        onClicked: remoteConnectionsDialog.parseFromUriBar()
+                    }
+                }
+
+                // Protocol Pills
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 8
+                    Text { text: qsTr("Protocol:"); color: p.textMuted; font.pixelSize: 12 }
+                    FilterPill {
+                        label: "SFTP / SSH (GVFS)"
+                        active: remoteConnectionsDialog.protocol === "sftp"
+                        onClicked: {
+                            remoteConnectionsDialog.protocol = "sftp";
+                            if (rcPortField.text === "445" || rcPortField.text === "")
+                                rcPortField.text = "22";
+                        }
+                    }
+                    FilterPill {
+                        label: "SMB / Samba (GVFS)"
+                        active: remoteConnectionsDialog.protocol === "smb"
+                        onClicked: {
+                            remoteConnectionsDialog.protocol = "smb";
+                            if (rcPortField.text === "22" || rcPortField.text === "")
+                                rcPortField.text = "445";
+                        }
+                    }
+                    FilterPill {
+                        label: "SSHFS (FUSE)"
+                        active: remoteConnectionsDialog.protocol === "sshfs"
+                        onClicked: {
+                            remoteConnectionsDialog.protocol = "sshfs";
+                            if (rcPortField.text === "445" || rcPortField.text === "")
+                                rcPortField.text = "22";
+                        }
+                    }
+                }
+
+                GridLayout {
+                    columns: 4
+                    Layout.fillWidth: true
+                    columnSpacing: 10
+                    rowSpacing: 8
+
+                    Text { text: qsTr("Name:"); color: p.textMuted; font.pixelSize: 12 }
+                    CompactField {
+                        id: rcNameField
+                        Layout.fillWidth: true
+                        Layout.columnSpan: 3
+                        placeholderText: qsTr("Production Server / NAS Media")
+                    }
+
+                    Text { text: qsTr("Host / Server:"); color: p.textMuted; font.pixelSize: 12 }
+                    CompactField {
+                        id: rcHostField
+                        monospace: true
+                        Layout.fillWidth: true
+                        placeholderText: "192.168.1.50 / nas.local"
+                    }
+
+                    Text { text: qsTr("Port:"); color: p.textMuted; font.pixelSize: 12 }
+                    CompactField {
+                        id: rcPortField
+                        monospace: true
+                        text: "22"
+                        Layout.preferredWidth: 82
+                    }
+
+                    Text { text: qsTr("Username:"); color: p.textMuted; font.pixelSize: 12 }
+                    CompactField {
+                        id: rcUserField
+                        monospace: true
+                        Layout.fillWidth: true
+                        placeholderText: qsTr("user (optional for guest SMB)")
+                    }
+
+                    Text { text: remoteConnectionsDialog.protocol === "smb" ? qsTr("Domain:") : qsTr("SSH Key:"); color: p.textMuted; font.pixelSize: 12 }
+                    CompactField {
+                        id: rcDomainField
+                        monospace: true
+                        Layout.fillWidth: true
+                        placeholderText: remoteConnectionsDialog.protocol === "smb" ? "WORKGROUP" : qsTr("~/.ssh/id_ed25519 (sshfs)")
+                    }
+
+                    Text { text: remoteConnectionsDialog.protocol === "smb" ? qsTr("Share / Path:") : qsTr("Remote Path:"); color: p.textMuted; font.pixelSize: 12 }
+                    CompactField {
+                        id: rcPathField
+                        monospace: true
+                        text: "/"
+                        Layout.fillWidth: true
+                        Layout.columnSpan: 3
+                        placeholderText: remoteConnectionsDialog.protocol === "smb" ? "/share/folder" : "/var/www"
+                    }
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    implicitHeight: tipText.implicitHeight + 16
+                    color: p.subBarBg
+                    radius: win.smallRadius
+                    border.width: 1
+                    border.color: p.borderSubtle
+
+                    Text {
+                        id: tipText
+                        anchors.fill: parent
+                        anchors.margins: 8
+                        wrapMode: Text.WordWrap
+                        font.pixelSize: 11
+                        color: p.textMuted
+                        text: remoteConnectionsDialog.protocol === "sshfs"
+                              ? qsTr("SSHFS mounts via FUSE under ~/.cache/omapanel/mounts/ using key authentication.")
+                              : qsTr("GVFS mounts via 'gio mount' (uses SSH Agent / GNOME Keyring) and appears directly in your Drives bar.")
+                    }
+                }
+
+                Item { Layout.fillHeight: true }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 8
+
+                    ToolbarBtn {
+                        label: qsTr("Delete")
+                        btnEnabled: remoteConnectionsDialog.editingId.length > 0
+                        onClicked: {
+                            if (backend.deleteRemoteConnection(remoteConnectionsDialog.editingId))
+                                remoteConnectionsDialog.resetForm();
+                        }
+                    }
+
+                    ToolbarBtn {
+                        label: qsTr("Save")
+                        btnEnabled: rcHostField.text.trim().length > 0
+                        onClicked: {
+                            var form = remoteConnectionsDialog.buildFormMap();
+                            if (backend.saveRemoteConnection(form))
+                                rcUriField.text = backend.buildRemoteUri(form);
+                        }
+                    }
+
+                    Item { Layout.fillWidth: true }
+
+                    ToolbarBtn {
+                        label: qsTr("Close")
+                        onClicked: remoteConnectionsDialog.reject()
+                    }
+
+                    ToolbarBtn {
+                        label: qsTr("Save & Connect")
+                        accentHighlight: true
+                        btnEnabled: rcHostField.text.trim().length > 0 || rcUriField.text.trim().length > 0
+                        onClicked: {
+                            if (rcHostField.text.trim().length === 0 && rcUriField.text.trim().length > 0)
+                                remoteConnectionsDialog.parseFromUriBar();
+                            var form = remoteConnectionsDialog.buildFormMap();
+                            if (form.host.length === 0) return;
+                            backend.saveRemoteConnection(form);
+                            var uri = backend.buildRemoteUri(form);
+                            if (backend.connectRemote(uri).length > 0) {
+                                win.remoteConnectionsOpen = false;
+                                currentListView().forceActiveFocus();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        onRejected: win.remoteConnectionsOpen = false
+    }
+
+    // Open With & Custom Actions Chooser Dialog (Ctrl+Shift+O)
+    AppDialog {
+        id: openWithDialog
+        visible: win.openWithOpen
+        title: qsTr("Open With & Custom Actions (Ctrl+Shift+O)")
+        width: Math.min(820, win.width - 40)
+        height: Math.min(580, win.height - 40)
+        standardButtons: Dialog.NoButton
+
+        property string editingActionId: ""
+        property string appFilter: ""
+        property bool showAllApps: false
+
+        function resetFilters() {
+            appFilter = "";
+            showAllApps = false;
+            editingActionId = "";
+            if (!openWithAppSearchField) return;
+            openWithAppSearchField.text = "";
+            openWithCustomExecField.text = "";
+            openWithSetDefaultCheck.checked = false;
+            resetCustomActionForm();
+        }
+
+        function resetCustomActionForm() {
+            editingActionId = "";
+            if (!caNameField) return;
+            caNameField.text = "";
+            caCmdField.text = "";
+            caPatternField.text = "*";
+            caTerminalCheck.checked = false;
+            caShowOutputCheck.checked = true;
+        }
+
+        function loadCustomAction(act) {
+            if (!act || !caNameField) return;
+            editingActionId = act.id || "";
+            caNameField.text = act.name || "";
+            caCmdField.text = act.command || "";
+            caPatternField.text = act.pattern || "*";
+            caTerminalCheck.checked = !!act.runInTerminal;
+            caShowOutputCheck.checked = !!act.showOutput;
+        }
+
+        function filteredApplications() {
+            var source = showAllApps ? win.openWithAllApps : win.openWithAppsList;
+            if (!source) return [];
+            var q = appFilter.trim().toLowerCase();
+            if (!q) return source;
+            var out = [];
+            for (var i = 0; i < source.length; i++) {
+                var a = source[i];
+                var hay = ((a.name || "") + " " + (a.genericName || "") + " " + (a.exec || "") + " " + (a.desktopId || "")).toLowerCase();
+                if (hay.indexOf(q) >= 0)
+                    out.push(a);
+            }
+            return out;
+        }
+
+        contentItem: ColumnLayout {
+            spacing: 10
+
+            // Target File & MIME Header Card
+            Rectangle {
+                Layout.fillWidth: true
+                implicitHeight: owHeaderRow.implicitHeight + 16
+                color: p.cardBg
+                radius: win.smallRadius
+                border.width: 1
+                border.color: p.borderSubtle
+
+                RowLayout {
+                    id: owHeaderRow
+                    anchors.fill: parent
+                    anchors.margins: 8
+                    spacing: 10
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 2
+                        Text {
+                            text: win.openWithTargetPath ? backend.fileName(win.openWithTargetPath) : ""
+                            font.bold: true
+                            font.pixelSize: 13
+                            color: p.textPrimary
+                            elide: Text.ElideMiddle
+                            Layout.fillWidth: true
+                        }
+                        Text {
+                            text: (win.openWithTargetPath || "") + ((win.openWithMimeInfo && win.openWithMimeInfo.comment) ? ("  •  " + win.openWithMimeInfo.comment) : "")
+                            font.pixelSize: 10
+                            font.family: "monospace"
+                            color: p.textDim
+                            elide: Text.ElideMiddle
+                            Layout.fillWidth: true
+                        }
+                    }
+
+                    Rectangle {
+                        height: 22
+                        width: owMimeTxt.implicitWidth + 14
+                        radius: 4
+                        color: p.badgeBg
+                        border.width: 1
+                        border.color: p.borderDefault
+                        Text {
+                            id: owMimeTxt
+                            anchors.centerIn: parent
+                            text: (win.openWithMimeInfo && win.openWithMimeInfo.mimeType) ? win.openWithMimeInfo.mimeType : "unknown"
+                            font.pixelSize: 11
+                            font.family: "monospace"
+                            font.bold: true
+                            color: p.accent
+                        }
+                    }
+                }
+            }
+
+            // Tab Strip: Open With vs Custom Actions
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+                FilterPill {
+                    label: qsTr("Applications (%1)").arg(win.openWithAppsList ? win.openWithAppsList.length : 0)
+                    active: win.openWithTab === 0
+                    onClicked: win.openWithTab = 0
+                }
+                FilterPill {
+                    label: qsTr("Custom Actions (%1)").arg(backend.customActions.length)
+                    active: win.openWithTab === 1
+                    onClicked: win.openWithTab = 1
+                }
+                Item { Layout.fillWidth: true }
+            }
+
+            // TAB 0: XDG Desktop Applications Chooser
+            ColumnLayout {
+                visible: win.openWithTab === 0
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                spacing: 8
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 8
+                    CompactField {
+                        id: openWithAppSearchField
+                        Layout.fillWidth: true
+                        placeholderText: qsTr("Filter installed applications...")
+                        onTextChanged: openWithDialog.appFilter = text
+                    }
+                    FilterPill {
+                        label: qsTr("Compatible Only")
+                        active: !openWithDialog.showAllApps
+                        onClicked: openWithDialog.showAllApps = false
+                    }
+                    FilterPill {
+                        label: qsTr("All Installed")
+                        active: openWithDialog.showAllApps
+                        onClicked: {
+                            if (!win.openWithAllApps || win.openWithAllApps.length === 0)
+                                win.openWithAllApps = backend.getAllInstalledApplications();
+                            openWithDialog.showAllApps = true;
+                        }
+                    }
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    color: p.inputBg
+                    radius: win.smallRadius
+                    border.width: 1
+                    border.color: p.borderSubtle
+
+                    ListView {
+                        id: owAppsListView
+                        anchors.fill: parent
+                        anchors.margins: 4
+                        clip: true
+                        spacing: 3
+                        model: openWithDialog.filteredApplications()
+
+                        delegate: Rectangle {
+                            width: ListView.view.width
+                            height: 46
+                            radius: win.smallRadius
+                            color: owRowMouse.containsMouse ? p.rowHoverBg : (index % 2 === 0 ? p.rowAltBg : "transparent")
+                            border.width: (modelData && modelData.isDefault) ? 1 : 0
+                            border.color: Qt.alpha(p.accent, 0.5)
+
+                            RowLayout {
+                                anchors.fill: parent
+                                anchors.leftMargin: 10
+                                anchors.rightMargin: 10
+                                spacing: 10
+
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 1
+                                    RowLayout {
+                                        spacing: 6
+                                        Text {
+                                            text: modelData ? (modelData.name || "") : ""
+                                            font.pixelSize: 12
+                                            font.bold: true
+                                            color: p.textPrimary
+                                        }
+                                        Rectangle {
+                                            visible: !!(modelData && modelData.isDefault)
+                                            implicitHeight: 16
+                                            implicitWidth: defLbl.implicitWidth + 8
+                                            radius: 3
+                                            color: Qt.alpha(p.accent, 0.18)
+                                            Text {
+                                                id: defLbl
+                                                anchors.centerIn: parent
+                                                text: qsTr("Default")
+                                                font.pixelSize: 9
+                                                font.bold: true
+                                                color: p.accent
+                                            }
+                                        }
+                                        Text {
+                                            visible: !!(modelData && modelData.genericName)
+                                            text: modelData ? ("· " + modelData.genericName) : ""
+                                            font.pixelSize: 11
+                                            color: p.textDim
+                                        }
+                                    }
+                                    Text {
+                                        text: modelData ? ((modelData.desktopId || "") + " — " + (modelData.exec || "")) : ""
+                                        font.pixelSize: 10
+                                        font.family: "monospace"
+                                        color: p.textDim
+                                        Layout.fillWidth: true
+                                        elide: Text.ElideRight
+                                    }
+                                }
+
+                                ToolbarBtn {
+                                    implicitHeight: 24
+                                    label: qsTr("Set Default")
+                                    btnEnabled: !!(modelData && !modelData.isDefault && win.openWithMimeInfo && win.openWithMimeInfo.mimeType)
+                                    onClicked: {
+                                        if (modelData && win.openWithMimeInfo && win.openWithMimeInfo.mimeType) {
+                                            backend.setDefaultApplicationForMime(win.openWithMimeInfo.mimeType, modelData.desktopId);
+                                            win.openWithMimeInfo = backend.getFileMimeInfo(win.openWithTargetPath);
+                                            win.openWithAppsList = backend.getApplicationsForFile(win.openWithTargetPath);
+                                        }
+                                    }
+                                }
+
+                                ToolbarBtn {
+                                    implicitHeight: 24
+                                    accentHighlight: true
+                                    label: qsTr("Open")
+                                    onClicked: {
+                                        var paths = win.getSelectedOrCurrentPaths();
+                                        if (paths.length === 0 && win.openWithTargetPath)
+                                            paths = [win.openWithTargetPath];
+                                        backend.openWithApplication(paths, modelData.desktopId, openWithSetDefaultCheck.checked);
+                                        win.openWithOpen = false;
+                                        currentListView().forceActiveFocus();
+                                    }
+                                }
+                            }
+
+                            MouseArea {
+                                id: owRowMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                z: -1
+                                cursorShape: Qt.PointingHandCursor
+                                onDoubleClicked: {
+                                    var paths = win.getSelectedOrCurrentPaths();
+                                    if (paths.length === 0 && win.openWithTargetPath)
+                                        paths = [win.openWithTargetPath];
+                                    backend.openWithApplication(paths, modelData.desktopId, openWithSetDefaultCheck.checked);
+                                    win.openWithOpen = false;
+                                    currentListView().forceActiveFocus();
+                                }
+                            }
+                        }
+                    }
+
+                    Text {
+                        anchors.centerIn: parent
+                        visible: owAppsListView.count === 0
+                        text: openWithDialog.showAllApps ? qsTr("No matching applications found.") : qsTr("No MIME-specific apps matched. Switch to 'All Installed' or enter a custom command below.")
+                        font.pixelSize: 12
+                        color: p.textDim
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 8
+                    CheckBox {
+                        id: openWithSetDefaultCheck
+                        text: qsTr("Set selected application as default for %1").arg((win.openWithMimeInfo && win.openWithMimeInfo.mimeType) ? win.openWithMimeInfo.mimeType : qsTr("this type"))
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 8
+                    Text { text: qsTr("Custom Command:"); color: p.textMuted; font.pixelSize: 12 }
+                    CompactField {
+                        id: openWithCustomExecField
+                        monospace: true
+                        Layout.fillWidth: true
+                        placeholderText: "e.g. code %f  |  mpv %F  |  gimp %f"
+                        onAccepted: {
+                            var cmd = text.trim();
+                            if (cmd.length > 0) {
+                                var paths = win.getSelectedOrCurrentPaths();
+                                if (paths.length === 0 && win.openWithTargetPath)
+                                    paths = [win.openWithTargetPath];
+                                backend.openWithApplication(paths, cmd, false);
+                                win.openWithOpen = false;
+                                currentListView().forceActiveFocus();
+                            }
+                        }
+                    }
+                    ToolbarBtn {
+                        label: qsTr("Launch")
+                        btnEnabled: openWithCustomExecField.text.trim().length > 0
+                        onClicked: {
+                            var paths = win.getSelectedOrCurrentPaths();
+                            if (paths.length === 0 && win.openWithTargetPath)
+                                paths = [win.openWithTargetPath];
+                            backend.openWithApplication(paths, openWithCustomExecField.text.trim(), false);
+                            win.openWithOpen = false;
+                            currentListView().forceActiveFocus();
+                        }
+                    }
+                    ToolbarBtn {
+                        label: qsTr("Close")
+                        onClicked: openWithDialog.reject()
+                    }
+                }
+            }
+
+            // TAB 1: Saved Custom Actions Manager
+            RowLayout {
+                visible: win.openWithTab === 1
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                spacing: 12
+
+                // Left list of Custom Actions
+                ColumnLayout {
+                    Layout.preferredWidth: 270
+                    Layout.fillHeight: true
+                    spacing: 6
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Text {
+                            text: qsTr("Saved Custom Actions")
+                            font.bold: true
+                            font.pixelSize: 12
+                            color: p.textSecondary
+                            Layout.fillWidth: true
+                        }
+                        ToolbarBtn {
+                            implicitHeight: 24
+                            label: "+ " + qsTr("New")
+                            onClicked: openWithDialog.resetCustomActionForm()
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        color: p.inputBg
+                        radius: win.smallRadius
+                        border.width: 1
+                        border.color: p.borderSubtle
+
+                        ListView {
+                            anchors.fill: parent
+                            anchors.margins: 4
+                            clip: true
+                            spacing: 3
+                            model: backend.customActions
+
+                            delegate: Rectangle {
+                                width: ListView.view.width
+                                height: 50
+                                radius: win.smallRadius
+                                readonly property bool isSel: modelData && modelData.id === openWithDialog.editingActionId
+                                color: isSel ? Qt.alpha(p.accent, win.isDark ? 0.2 : 0.12)
+                                             : (caRowMouse.containsMouse ? p.rowHoverBg : p.cardBg)
+                                border.width: 1
+                                border.color: isSel ? p.accent : p.borderSubtle
+
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.margins: 8
+                                    spacing: 6
+
+                                    ColumnLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 1
+                                        Text {
+                                            text: modelData ? (modelData.name || "") : ""
+                                            font.bold: true
+                                            font.pixelSize: 12
+                                            color: p.textPrimary
+                                            elide: Text.ElideRight
+                                            Layout.fillWidth: true
+                                        }
+                                        Text {
+                                            text: modelData ? ((modelData.pattern || "*") + "  ·  " + (modelData.command || "")) : ""
+                                            font.pixelSize: 10
+                                            font.family: "monospace"
+                                            color: p.textDim
+                                            elide: Text.ElideRight
+                                            Layout.fillWidth: true
+                                        }
+                                    }
+
+                                    ToolbarBtn {
+                                        implicitHeight: 24
+                                        accentHighlight: true
+                                        label: qsTr("Run")
+                                        onClicked: {
+                                            if (modelData) {
+                                                win.runCustomActionAndShow(modelData.id, win.openWithTargetPath);
+                                                win.openWithOpen = false;
+                                                currentListView().forceActiveFocus();
+                                            }
+                                        }
+                                    }
+                                }
+
+                                MouseArea {
+                                    id: caRowMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    z: -1
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: if (modelData) openWithDialog.loadCustomAction(modelData)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Right Custom Action Editor
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    spacing: 8
+
+                    Text { text: qsTr("Action Name:"); color: p.textMuted; font.pixelSize: 12 }
+                    CompactField {
+                        id: caNameField
+                        Layout.fillWidth: true
+                        placeholderText: qsTr("Compress PNG / Convert to WebP / Git Blame...")
+                    }
+
+                    Text { text: qsTr("Shell Command:"); color: p.textMuted; font.pixelSize: 12 }
+                    CompactField {
+                        id: caCmdField
+                        monospace: true
+                        Layout.fillWidth: true
+                        placeholderText: "e.g. magick %f %b.webp  |  wc -l %F"
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 5
+                        Text { text: qsTr("Insert:"); color: p.textDim; font.pixelSize: 11 }
+                        Repeater {
+                            model: ["%f", "%F", "%d", "%n", "%b", "%e"]
+                            delegate: FilterPill {
+                                label: modelData
+                                active: false
+                                onClicked: caCmdField.text = caCmdField.text + (caCmdField.text.length > 0 && !caCmdField.text.endsWith(" ") ? " " : "") + modelData
+                            }
+                        }
+                    }
+
+                    Text { text: qsTr("File / MIME Pattern (* = all, e.g. *.sh;*.py or image/*):"); color: p.textMuted; font.pixelSize: 11 }
+                    CompactField {
+                        id: caPatternField
+                        monospace: true
+                        text: "*"
+                        Layout.fillWidth: true
+                        placeholderText: "*  |  *.png;*.jpg  |  inode/directory  |  text/*"
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 12
+                        CheckBox {
+                            id: caTerminalCheck
+                            text: qsTr("Run in Terminal")
+                        }
+                        CheckBox {
+                            id: caShowOutputCheck
+                            checked: true
+                            text: qsTr("Show Output Window")
+                        }
+                    }
+
+                    Item { Layout.fillHeight: true }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 8
+
+                        ToolbarBtn {
+                            label: qsTr("Delete")
+                            btnEnabled: openWithDialog.editingActionId.length > 0
+                            onClicked: {
+                                if (backend.deleteCustomAction(openWithDialog.editingActionId))
+                                    openWithDialog.resetCustomActionForm();
+                            }
+                        }
+
+                        ToolbarBtn {
+                            label: qsTr("Save Action")
+                            btnEnabled: caNameField.text.trim().length > 0 && caCmdField.text.trim().length > 0
+                            onClicked: {
+                                backend.saveCustomAction({
+                                    id: openWithDialog.editingActionId,
+                                    name: caNameField.text.trim(),
+                                    command: caCmdField.text.trim(),
+                                    pattern: caPatternField.text.trim(),
+                                    runInTerminal: caTerminalCheck.checked,
+                                    showOutput: caShowOutputCheck.checked
+                                });
+                            }
+                        }
+
+                        Item { Layout.fillWidth: true }
+
+                        ToolbarBtn {
+                            label: qsTr("Close")
+                            onClicked: openWithDialog.reject()
+                        }
+
+                        ToolbarBtn {
+                            label: qsTr("Save & Run")
+                            accentHighlight: true
+                            btnEnabled: caNameField.text.trim().length > 0 && caCmdField.text.trim().length > 0
+                            onClicked: {
+                                var actObj = {
+                                    id: openWithDialog.editingActionId,
+                                    name: caNameField.text.trim(),
+                                    command: caCmdField.text.trim(),
+                                    pattern: caPatternField.text.trim(),
+                                    runInTerminal: caTerminalCheck.checked,
+                                    showOutput: caShowOutputCheck.checked
+                                };
+                                backend.saveCustomAction(actObj);
+                                win.runCustomActionAndShow(caNameField.text.trim(), win.openWithTargetPath);
+                                win.openWithOpen = false;
+                                currentListView().forceActiveFocus();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        onRejected: win.openWithOpen = false
     }
 
     // Alt+F7 Asynchronous Advanced Search Dialog
@@ -7287,6 +9435,9 @@ ApplicationWindow {
                         { key: "Ctrl + Shift + D", desc: qsTr("Toggle Disk Usage Analyzer (proportional bars & sorted sizes)") },
                         { key: "Ctrl + Shift + S", desc: qsTr("Synchronize Directories recursively between panels") },
                         { key: "Ctrl + Shift + F7", desc: qsTr("Find Duplicate Files by size and SHA-256 hash") },
+                        { key: "Ctrl + Shift + Q", desc: qsTr("Open Operation Queue & Pause / Speed / ETA monitor") },
+                        { key: "Ctrl + Shift + M", desc: qsTr("Connect & manage Remote SFTP / SMB / SSHFS servers") },
+                        { key: "Ctrl + Shift + O", desc: qsTr("Open With compatible apps & manage Custom Actions") },
                         { key: "Enter (on archive)", desc: qsTr("Browse inside .zip / .tar.* / .7z archive as virtual folder") },
                         { key: "Tab", desc: qsTr("Switch active panel (Left / Right)") },
                         { key: "Ctrl + Shift + T", desc: qsTr("Toggle between Light and Dark theme") },
@@ -7561,7 +9712,8 @@ ApplicationWindow {
                         && !win.searchOpen && !win.bookmarksOpen && !win.propertiesOpen
                         && !win.checksumOpen && !win.diffOpen && !win.symlinkOpen
                         && !win.maskOpen && !win.helpOpen && !win.aboutOpen && !win.previewOpen
-                        && !win.syncDirsOpen && !win.duplicateFinderOpen)
+                        && !win.syncDirsOpen && !win.duplicateFinderOpen && !win.queueDialogOpen
+                        && !win.remoteConnectionsOpen && !win.openWithOpen)
                     currentListView().forceActiveFocus();
             }
         }
