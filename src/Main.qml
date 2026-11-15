@@ -11,23 +11,133 @@ ApplicationWindow {
     minimumHeight: 540
     visible: true
     title: "AeroCommander — Total Commander for Linux"
-    color: "#0b0d13"
+    color: p.windowBg
+
+    readonly property bool isDark: backend.isDarkTheme
+
+    // Modern 2026 Dual Palette ("Obsidian Carbon" Dark & "Alabaster Daylight" Light)
+    readonly property QtObject themePalette: QtObject {
+        id: p
+        readonly property color accent: win.isDark ? theme.darkAccent : theme.lightAccent
+        readonly property color accentFg: win.isDark ? theme.darkAccentForeground : theme.lightAccentForeground
+
+        // Surfaces
+        readonly property color windowBg: win.isDark ? "#09090b" : "#eef0f5"
+        readonly property color appBarBg: win.isDark ? "#111114" : "#ffffff"
+        readonly property color subBarBg: win.isDark ? "#0d0d10" : "#f7f8fb"
+        readonly property color panelActiveBg: win.isDark ? "#121216" : "#ffffff"
+        readonly property color panelInactiveBg: win.isDark ? "#0c0c0f" : "#f8f9fc"
+        readonly property color panelHeaderActiveBg: win.isDark ? "#18181d" : "#f8fafc"
+        readonly property color panelHeaderInactiveBg: win.isDark ? "#121216" : "#f1f4f9"
+        readonly property color tabStripBg: win.isDark ? "#0c0c0f" : "#f3f5f9"
+        readonly property color tabActivePanelBg: win.isDark ? "#202028" : "#ffffff"
+        readonly property color tabActiveInactivePanelBg: win.isDark ? "#17171d" : "#eaedf4"
+        readonly property color tabHoverBg: win.isDark ? "#16161c" : "#e8ecf4"
+        readonly property color tableHeaderBg: win.isDark ? "#141419" : "#f6f8fb"
+        readonly property color tableHeaderHoverBg: win.isDark ? "#1c1c24" : "#ebeef5"
+        readonly property color panelFooterBg: win.isDark ? "#111115" : "#f7f8fb"
+        readonly property color filterBarBg: win.isDark ? "#16161c" : "#f1f4fa"
+        readonly property color inputBg: win.isDark ? "#09090c" : "#ffffff"
+        readonly property color breadcrumbBg: win.isDark ? "#0a0a0e" : "#ffffff"
+        readonly property color cardBg: win.isDark ? "#18181f" : "#f4f6fa"
+        readonly property color cardAltBg: win.isDark ? "#131318" : "#f8fafc"
+        readonly property color chipBg: win.isDark ? "#16161c" : "#ffffff"
+        readonly property color chipUnmountedBg: win.isDark ? "#111116" : "#f1f3f8"
+        readonly property color chipHoverBg: win.isDark ? "#22222b" : "#e9edf5"
+        readonly property color badgeBg: win.isDark ? "#1b1b23" : "#eef1f7"
+        readonly property color btnHoverBg: win.isDark ? "#22222b" : "#e8ecf4"
+        readonly property color btnPressedBg: win.isDark ? "#2b2b36" : "#dce2ee"
+        readonly property color fkeyBg: win.isDark ? "#16161c" : "#ffffff"
+        readonly property color fkeyHoverBg: win.isDark ? "#202029" : "#eef2f9"
+        readonly property color fkeyPressedBg: win.isDark ? "#2a2a36" : "#e2e8f4"
+        readonly property color fkeyBarBg: win.isDark ? "#0b0b0e" : "#f3f5f9"
+        readonly property color menuBg: win.isDark ? "#141419" : "#ffffff"
+        readonly property color dialogBg: win.isDark ? "#14141a" : "#ffffff"
+        readonly property color overlayDim: win.isDark ? Qt.rgba(0.02, 0.02, 0.04, 0.72) : Qt.rgba(0.06, 0.09, 0.16, 0.35)
+        readonly property color menuShadow: win.isDark ? "#050507" : "#cbd5e1"
+
+        // Row & Grid states
+        readonly property color rowAltBg: win.isDark ? "#0f0f14" : "#f8fafc"
+        readonly property color rowHoverBg: win.isDark ? "#191922" : "#eff3f9"
+        readonly property color rowCurrentActiveBg: win.isDark ? "#21212c" : "#e4ecf9"
+        readonly property color rowCurrentInactiveBg: win.isDark ? "#16161d" : "#edf0f6"
+        readonly property color gridCardBg: win.isDark ? "#121217" : "#f8fafc"
+        readonly property color scrollbarColor: win.isDark ? "#32323e" : "#cbd5e1"
+        readonly property color scrollbarHoverColor: win.isDark ? "#525264" : "#94a3b8"
+
+        // Borders & Dividers
+        readonly property color borderSubtle: win.isDark ? "#1c1c24" : "#e7ebf2"
+        readonly property color borderDefault: win.isDark ? "#262632" : "#d8dee9"
+        readonly property color borderStrong: win.isDark ? "#353545" : "#c3ccdc"
+        readonly property color cellDivider: win.isDark ? "#181820" : "#edf0f6"
+
+        // Typography
+        readonly property color textPrimary: win.isDark ? "#f4f4f6" : "#0f172a"
+        readonly property color textSecondary: win.isDark ? "#d4d4dc" : "#334155"
+        readonly property color textMuted: win.isDark ? "#9494a3" : "#5b677d"
+        readonly property color textDim: win.isDark ? "#6c6c7c" : "#78849b"
+        readonly property color textDisabled: win.isDark ? "#4e4e5c" : "#a0abc0"
+        readonly property color textOnHover: win.isDark ? "#ffffff" : "#090d16"
+
+        // Semantic File Icons
+        readonly property color iconFolder: win.isDark ? "#f59e0b" : "#d97706"
+        readonly property color iconParent: win.isDark ? "#8b8b9c" : "#64748b"
+        readonly property color iconCode: win.isDark ? "#60a5fa" : "#2563eb"
+        readonly property color iconArchive: win.isDark ? "#fb923c" : "#ea580c"
+        readonly property color iconImage: win.isDark ? "#c084fc" : "#9333ea"
+        readonly property color iconVideo: win.isDark ? "#f472b6" : "#db2777"
+        readonly property color iconAudio: win.isDark ? "#2dd4bf" : "#0d9488"
+        readonly property color iconBinary: win.isDark ? "#34d399" : "#059669"
+        readonly property color iconDefault: win.isDark ? "#9494a3" : "#64748b"
+
+        // Git & Status Semantics
+        readonly property color gitBranchText: win.isDark ? "#60a5fa" : "#2563eb"
+        readonly property color gitModBg: win.isDark ? "#451a03" : "#fef3c7"
+        readonly property color gitModBorder: win.isDark ? "#f59e0b" : "#d97706"
+        readonly property color gitModText: win.isDark ? "#fcd34d" : "#92400e"
+        readonly property color gitUntrackedBg: win.isDark ? "#064e3b" : "#d1fae5"
+        readonly property color gitUntrackedBorder: win.isDark ? "#10b981" : "#059669"
+        readonly property color gitUntrackedText: win.isDark ? "#6ee7b7" : "#065f46"
+        readonly property color gitStagedBg: win.isDark ? "#083344" : "#cffafe"
+        readonly property color gitStagedBorder: win.isDark ? "#06b6d4" : "#0891b2"
+        readonly property color gitStagedText: win.isDark ? "#67e8f9" : "#155e75"
+        readonly property color gitDeletedBg: win.isDark ? "#450a0a" : "#fee2e2"
+        readonly property color gitDeletedBorder: win.isDark ? "#ef4444" : "#dc2626"
+        readonly property color gitDeletedText: win.isDark ? "#fca5a5" : "#991b1b"
+        readonly property color gitDefaultBg: win.isDark ? "#1e293b" : "#e2e8f0"
+        readonly property color gitDefaultBorder: win.isDark ? "#64748b" : "#64748b"
+        readonly property color gitDefaultText: win.isDark ? "#cbd5e1" : "#334155"
+
+        readonly property color dangerText: win.isDark ? "#fca5a5" : "#b91c1c"
+        readonly property color dangerAccent: win.isDark ? "#f87171" : "#dc2626"
+        readonly property color dangerHoverBg: win.isDark ? "#3b1e22" : "#fee2e2"
+        readonly property color successText: win.isDark ? "#22c55e" : "#16a34a"
+        readonly property color warningText: win.isDark ? "#f59e0b" : "#d97706"
+
+        // Visual Diff
+        readonly property color diffAddedBg: win.isDark ? "#13311f" : "#dcfce7"
+        readonly property color diffAddedText: win.isDark ? "#86efac" : "#166534"
+        readonly property color diffDeletedBg: win.isDark ? "#361618" : "#fee2e2"
+        readonly property color diffDeletedText: win.isDark ? "#fca5a5" : "#991b1b"
+        readonly property color diffModifiedBg: win.isDark ? "#32230b" : "#fef3c7"
+        readonly property color diffModifiedText: win.isDark ? "#fde68a" : "#92400e"
+    }
 
     property bool windowSessionReady: false
     Component.onCompleted: windowSessionReady = true
     onWidthChanged: if (windowSessionReady && width >= minimumWidth) backend.windowWidth = width
     onHeightChanged: if (windowSessionReady && height >= minimumHeight) backend.windowHeight = height
 
-    Material.theme: Material.Dark
-    Material.accent: theme.accent
+    Material.theme: win.isDark ? Material.Dark : Material.Light
+    Material.accent: p.accent
     // Material.roundedScale is an enum, not a pixel radius; map Hyprland's rounding cleanly.
     Material.roundedScale: theme.radius <= 0 ? Material.NotRounded
                          : theme.radius <= 5 ? Material.ExtraSmallScale
                          : theme.radius <= 10 ? Material.SmallScale
                          : Material.MediumScale
 
-    readonly property int panelRadius: Math.min(6, theme.radius)
-    readonly property int smallRadius: Math.min(4, theme.radius)
+    readonly property int panelRadius: Math.min(8, theme.radius)
+    readonly property int smallRadius: Math.min(6, theme.radius)
 
     // UI State
     property bool helpOpen: false
@@ -36,7 +146,6 @@ ApplicationWindow {
     property bool quickViewActive: false
     property var quickViewData: ({})
     property bool searchOpen: false
-    property var searchResults: []
     property bool newFolderOpen: false
     property bool renameOpen: false
     property string renameOldPath: ""
@@ -62,6 +171,10 @@ ApplicationWindow {
     property bool checksumOpen: false
     property bool diffOpen: false
     property bool aboutOpen: false
+    property bool commandPaletteOpen: false
+    property string commandPaletteMode: "commands"
+    property bool syncDirsOpen: false
+    property bool duplicateFinderOpen: false
     property bool menuBarActive: false
 
     function isAnyMenuOpen() {
@@ -91,7 +204,7 @@ ApplicationWindow {
     component VectorIcon : Canvas {
         id: iconCanvas
         property string kind: "file"
-        property color iconColor: "#94a3b8"
+        property color iconColor: p.iconDefault
         implicitWidth: 16
         implicitHeight: 16
         width: 16
@@ -304,6 +417,97 @@ ApplicationWindow {
                 ctx.closePath();
                 if (kind === "star-filled") ctx.fill();
                 ctx.stroke();
+            } else if (kind === "sun") {
+                ctx.beginPath();
+                ctx.arc(8, 8, 3.1, 0, Math.PI * 2);
+                ctx.stroke();
+                for (var r = 0; r < 8; r++) {
+                    var angle = (r * 45) * Math.PI / 180;
+                    ctx.beginPath();
+                    ctx.moveTo(8 + Math.cos(angle) * 4.9, 8 + Math.sin(angle) * 4.9);
+                    ctx.lineTo(8 + Math.cos(angle) * 6.4, 8 + Math.sin(angle) * 6.4);
+                    ctx.stroke();
+                }
+            } else if (kind === "moon") {
+                var r = 5.0;
+                var cx = 8.5, cy = 8.0;
+                var a1 = 0.38 * Math.PI;
+                var a2 = 1.62 * Math.PI;
+                ctx.beginPath();
+                ctx.arc(cx, cy, r, a1, a2, false);
+                ctx.quadraticCurveTo(5.6, cy, cx + Math.cos(a1) * r, cy + Math.sin(a1) * r);
+                ctx.closePath();
+                ctx.globalAlpha = 0.22;
+                ctx.fill();
+                ctx.globalAlpha = 1.0;
+                ctx.stroke();
+            } else if (kind === "branch") {
+                ctx.beginPath();
+                ctx.moveTo(3.5, 2.5);
+                ctx.lineTo(3.5, 12.5);
+                ctx.moveTo(3.5, 3.5);
+                ctx.lineTo(7.2, 3.5);
+                ctx.moveTo(9.5, 3.5);
+                ctx.lineTo(13.5, 3.5);
+                ctx.moveTo(3.5, 8.0);
+                ctx.lineTo(7.2, 8.0);
+                ctx.moveTo(9.5, 8.0);
+                ctx.lineTo(13.5, 8.0);
+                ctx.moveTo(3.5, 12.5);
+                ctx.lineTo(7.2, 12.5);
+                ctx.moveTo(9.5, 12.5);
+                ctx.lineTo(13.5, 12.5);
+                ctx.stroke();
+            } else if (kind === "command") {
+                ctx.beginPath();
+                ctx.roundedRect(1.8, 2.5, 12.4, 11, 2.2, 2.2);
+                ctx.globalAlpha = 0.14;
+                ctx.fill();
+                ctx.globalAlpha = 1.0;
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(4.6, 5.8);
+                ctx.lineTo(7.4, 8.0);
+                ctx.lineTo(4.6, 10.2);
+                ctx.moveTo(8.8, 10.2);
+                ctx.lineTo(11.6, 10.2);
+                ctx.stroke();
+            } else if (kind === "chart") {
+                ctx.globalAlpha = 0.22;
+                ctx.fillRect(2.5, 9.5, 2.8, 4.0);
+                ctx.fillRect(6.6, 3.0, 2.8, 10.5);
+                ctx.fillRect(10.7, 6.2, 2.8, 7.3);
+                ctx.globalAlpha = 1.0;
+                ctx.strokeRect(2.5, 9.5, 2.8, 4.0);
+                ctx.strokeRect(6.6, 3.0, 2.8, 10.5);
+                ctx.strokeRect(10.7, 6.2, 2.8, 7.3);
+            } else if (kind === "sync") {
+                ctx.beginPath();
+                ctx.moveTo(13.5, 5.2);
+                ctx.lineTo(2.8, 5.2);
+                ctx.moveTo(5.4, 2.8);
+                ctx.lineTo(2.8, 5.2);
+                ctx.lineTo(5.4, 7.6);
+                ctx.moveTo(2.5, 10.8);
+                ctx.lineTo(13.2, 10.8);
+                ctx.moveTo(10.6, 8.4);
+                ctx.lineTo(13.2, 10.8);
+                ctx.lineTo(10.6, 13.2);
+                ctx.stroke();
+            } else if (kind === "duplicate") {
+                ctx.beginPath();
+                ctx.moveTo(5.4, 4.4);
+                ctx.lineTo(5.4, 2.2);
+                ctx.lineTo(13.0, 2.2);
+                ctx.lineTo(13.0, 11.2);
+                ctx.lineTo(10.8, 11.2);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.roundedRect(2.6, 4.6, 8.0, 9.2, 1.4, 1.4);
+                ctx.globalAlpha = 0.2;
+                ctx.fill();
+                ctx.globalAlpha = 1.0;
+                ctx.stroke();
             } else {
                 // Default document icon with folded corner
                 ctx.beginPath();
@@ -339,19 +543,19 @@ ApplicationWindow {
         opacity: btnEnabled ? 1.0 : 0.32
         color: {
             if (!btnEnabled) return "transparent";
-            if (btnMouse.pressed) return "#2a3147";
-            if (active) return Qt.alpha(theme.accent, 0.18);
-            if (btnMouse.containsMouse) return "#202637";
+            if (btnMouse.pressed) return p.btnPressedBg;
+            if (active) return Qt.alpha(p.accent, 0.16);
+            if (btnMouse.containsMouse) return p.btnHoverBg;
             return "transparent";
         }
         border.width: active ? 1 : 0
-        border.color: Qt.alpha(theme.accent, 0.5)
+        border.color: Qt.alpha(p.accent, 0.5)
 
         VectorIcon {
             visible: iconBtn.iconKind.length > 0
             anchors.centerIn: parent
             kind: iconBtn.iconKind
-            iconColor: iconBtn.active ? theme.accent : (btnMouse.containsMouse ? "#eef2ff" : "#9aa3b8")
+            iconColor: iconBtn.active ? p.accent : (btnMouse.containsMouse ? p.textOnHover : p.textMuted)
         }
 
         Text {
@@ -360,7 +564,7 @@ ApplicationWindow {
             text: iconBtn.label
             font.pixelSize: 12
             font.bold: true
-            color: iconBtn.active ? theme.accent : (btnMouse.containsMouse ? "#eef2ff" : "#9aa3b8")
+            color: iconBtn.active ? p.accent : (btnMouse.containsMouse ? p.textOnHover : p.textMuted)
         }
 
         MouseArea {
@@ -394,13 +598,13 @@ ApplicationWindow {
         opacity: btnEnabled ? 1.0 : 0.36
         color: {
             if (!btnEnabled) return "transparent";
-            if (tbMouse.pressed) return "#283046";
-            if (active) return Qt.alpha(theme.accent, 0.18);
-            if (tbMouse.containsMouse) return "#1c2233";
+            if (tbMouse.pressed) return p.btnPressedBg;
+            if (active) return Qt.alpha(p.accent, 0.16);
+            if (tbMouse.containsMouse) return p.btnHoverBg;
             return "transparent";
         }
         border.width: active ? 1 : 0
-        border.color: Qt.alpha(theme.accent, 0.5)
+        border.color: Qt.alpha(p.accent, 0.5)
 
         RowLayout {
             id: tbRow
@@ -411,8 +615,8 @@ ApplicationWindow {
                 text: tbBtn.label
                 font.pixelSize: 12
                 font.weight: (tbBtn.active || tbBtn.accentHighlight) ? Font.DemiBold : Font.Normal
-                color: (tbBtn.active || tbBtn.accentHighlight) ? theme.accent
-                     : (tbMouse.containsMouse && tbBtn.btnEnabled ? "#f1f5f9" : "#b8c1d4")
+                color: (tbBtn.active || tbBtn.accentHighlight) ? p.accent
+                     : (tbMouse.containsMouse && tbBtn.btnEnabled ? p.textPrimary : p.textSecondary)
             }
 
             Rectangle {
@@ -420,9 +624,9 @@ ApplicationWindow {
                 implicitHeight: 16
                 implicitWidth: hintText.implicitWidth + 8
                 radius: Math.min(3, theme.radius)
-                color: tbBtn.active ? Qt.alpha(theme.accent, 0.2) : "#171b27"
+                color: tbBtn.active ? Qt.alpha(p.accent, 0.18) : p.badgeBg
                 border.width: 1
-                border.color: tbBtn.active ? Qt.alpha(theme.accent, 0.35) : "#242a3b"
+                border.color: tbBtn.active ? Qt.alpha(p.accent, 0.38) : p.borderDefault
 
                 Text {
                     id: hintText
@@ -430,7 +634,7 @@ ApplicationWindow {
                     text: tbBtn.shortcutHint
                     font.pixelSize: 10
                     font.family: "monospace"
-                    color: tbBtn.active ? theme.accent : "#78829a"
+                    color: tbBtn.active ? p.accent : p.textMuted
                 }
             }
         }
@@ -462,12 +666,12 @@ ApplicationWindow {
         implicitWidth: mbText.implicitWidth + 18
         radius: win.smallRadius
         color: {
-            if (active) return Qt.alpha(theme.accent, 0.22);
-            if (mbMouse.containsMouse) return "#1c2233";
+            if (active) return Qt.alpha(p.accent, 0.18);
+            if (mbMouse.containsMouse) return p.btnHoverBg;
             return "transparent";
         }
         border.width: active ? 1 : 0
-        border.color: Qt.alpha(theme.accent, 0.5)
+        border.color: Qt.alpha(p.accent, 0.5)
 
         Text {
             id: mbText
@@ -475,8 +679,8 @@ ApplicationWindow {
             text: mbBtn.label
             font.pixelSize: 12
             font.weight: mbBtn.active ? Font.DemiBold : Font.Normal
-            color: mbBtn.active ? theme.accent
-                 : (mbMouse.containsMouse ? "#f8fafc" : "#b8c1d4")
+            color: mbBtn.active ? p.accent
+                 : (mbMouse.containsMouse ? p.textPrimary : p.textSecondary)
         }
 
         MouseArea {
@@ -489,7 +693,7 @@ ApplicationWindow {
         }
     }
 
-    // Sleek dark-themed popup dropdown menu.
+    // Sleek themed popup dropdown menu.
     component AppMenu : Menu {
         id: menuRoot
         topPadding: 5
@@ -502,9 +706,9 @@ ApplicationWindow {
 
         background: Rectangle {
             implicitWidth: 310
-            color: "#111522"
+            color: p.menuBg
             border.width: 1
-            border.color: "#273046"
+            border.color: p.borderDefault
             radius: win.panelRadius
 
             Rectangle {
@@ -514,8 +718,8 @@ ApplicationWindow {
                 radius: win.panelRadius + 1
                 color: "transparent"
                 border.width: 1
-                border.color: "#07090f"
-                opacity: 0.8
+                border.color: p.menuShadow
+                opacity: win.isDark ? 0.8 : 0.45
             }
         }
     }
@@ -550,7 +754,7 @@ ApplicationWindow {
                     text: "✓"
                     font.pixelSize: 12
                     font.bold: true
-                    color: theme.accent
+                    color: p.accent
                 }
             }
 
@@ -558,7 +762,7 @@ ApplicationWindow {
                 text: miRoot.text
                 font.pixelSize: 12
                 font.weight: miRoot.highlighted ? Font.Medium : Font.Normal
-                color: !miRoot.enabled ? "#525c76" : (miRoot.highlighted ? "#ffffff" : "#d8dfed")
+                color: !miRoot.enabled ? p.textDisabled : (miRoot.highlighted ? p.textPrimary : p.textSecondary)
                 Layout.fillWidth: true
                 elide: Text.ElideRight
                 verticalAlignment: Text.AlignVCenter
@@ -569,7 +773,7 @@ ApplicationWindow {
                 text: miRoot.shortcutHint
                 font.pixelSize: 11
                 font.family: "monospace"
-                color: !miRoot.enabled ? "#424b61" : (miRoot.highlighted ? theme.accent : "#7a859e")
+                color: !miRoot.enabled ? p.textDisabled : (miRoot.highlighted ? p.accent : p.textMuted)
                 verticalAlignment: Text.AlignVCenter
             }
         }
@@ -580,11 +784,11 @@ ApplicationWindow {
             radius: win.smallRadius
             color: {
                 if (!miRoot.enabled) return "transparent";
-                if (miRoot.highlighted) return Qt.alpha(theme.accent, 0.22);
+                if (miRoot.highlighted) return Qt.alpha(p.accent, win.isDark ? 0.2 : 0.14);
                 return "transparent";
             }
             border.width: miRoot.highlighted && miRoot.enabled ? 1 : 0
-            border.color: Qt.alpha(theme.accent, 0.45)
+            border.color: Qt.alpha(p.accent, 0.45)
         }
     }
 
@@ -600,7 +804,7 @@ ApplicationWindow {
         contentItem: Rectangle {
             implicitHeight: sepRoot.visible ? 1 : 0
             implicitWidth: 294
-            color: "#21293c"
+            color: p.borderSubtle
         }
     }
 
@@ -615,13 +819,13 @@ ApplicationWindow {
         implicitHeight: 26
         radius: win.smallRadius
         color: {
-            if (permMouse.pressed) return "#262f47";
-            if (isChecked) return Qt.alpha(theme.accent, 0.18);
-            if (permMouse.containsMouse) return "#1b2133";
-            return "#131724";
+            if (permMouse.pressed) return p.btnPressedBg;
+            if (isChecked) return Qt.alpha(p.accent, 0.16);
+            if (permMouse.containsMouse) return p.btnHoverBg;
+            return p.cardBg;
         }
         border.width: 1
-        border.color: isChecked ? Qt.alpha(theme.accent, 0.55) : "#22293d"
+        border.color: isChecked ? Qt.alpha(p.accent, 0.55) : p.borderDefault
 
         Text {
             anchors.centerIn: parent
@@ -629,7 +833,7 @@ ApplicationWindow {
             font.pixelSize: 11
             font.family: "monospace"
             font.weight: permBtn.isChecked ? Font.DemiBold : Font.Normal
-            color: permBtn.isChecked ? theme.accent : "#8b95ab"
+            color: permBtn.isChecked ? p.accent : p.textMuted
         }
 
         MouseArea {
@@ -660,9 +864,9 @@ ApplicationWindow {
         implicitHeight: 32
         implicitWidth: 240
         radius: win.smallRadius
-        color: "#0a0c12"
+        color: p.inputBg
         border.width: 1
-        border.color: textInput.activeFocus ? theme.accent : "#242a3d"
+        border.color: textInput.activeFocus ? p.accent : p.borderDefault
         clip: true
 
         Text {
@@ -675,7 +879,7 @@ ApplicationWindow {
             text: fieldRoot.placeholderText
             font.pixelSize: 12
             font.family: fieldRoot.monospace ? "monospace" : ""
-            color: "#5c657d"
+            color: p.textDim
             elide: Text.ElideRight
         }
 
@@ -688,9 +892,9 @@ ApplicationWindow {
             anchors.verticalCenter: parent.verticalCenter
             font.pixelSize: 12
             font.family: fieldRoot.monospace ? "monospace" : ""
-            color: "#eef2ff"
-            selectionColor: Qt.alpha(theme.accent, 0.38)
-            selectedTextColor: "#ffffff"
+            color: p.textPrimary
+            selectionColor: Qt.alpha(p.accent, 0.35)
+            selectedTextColor: p.textOnHover
             selectByMouse: true
             onTextEdited: fieldRoot.textEdited()
             clip: true
@@ -699,6 +903,39 @@ ApplicationWindow {
                 fieldRoot.escaped();
                 event.accepted = true;
             }
+        }
+    }
+
+    // Compact selectable filter chip for Search, Sync & Duplicate Finder dialogs.
+    component FilterPill : Rectangle {
+        id: pillRoot
+        property string label: ""
+        property bool active: false
+        signal clicked()
+
+        implicitHeight: 24
+        implicitWidth: pillText.implicitWidth + 14
+        radius: win.smallRadius
+        color: active ? Qt.alpha(p.accent, win.isDark ? 0.24 : 0.16)
+                      : (pillMouse.containsMouse ? p.btnHoverBg : p.cardBg)
+        border.width: 1
+        border.color: active ? Qt.alpha(p.accent, 0.55) : p.borderDefault
+
+        Text {
+            id: pillText
+            anchors.centerIn: parent
+            text: pillRoot.label
+            font.pixelSize: 11
+            font.weight: pillRoot.active ? Font.DemiBold : Font.Normal
+            color: pillRoot.active ? p.accent : p.textSecondary
+        }
+
+        MouseArea {
+            id: pillMouse
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: pillRoot.clicked()
         }
     }
 
@@ -712,9 +949,9 @@ ApplicationWindow {
         Layout.fillWidth: true
         Layout.fillHeight: true
         radius: win.smallRadius
-        color: fkeyMouse.pressed ? "#252c40" : (fkeyMouse.containsMouse ? "#1c2233" : "#131722")
+        color: fkeyMouse.pressed ? p.fkeyPressedBg : (fkeyMouse.containsMouse ? p.fkeyHoverBg : p.fkeyBg)
         border.width: 1
-        border.color: fkeyMouse.containsMouse ? "#2f3750" : "#1e2436"
+        border.color: fkeyMouse.containsMouse ? p.borderStrong : p.borderDefault
 
         RowLayout {
             anchors.centerIn: parent
@@ -724,7 +961,7 @@ ApplicationWindow {
                 implicitHeight: 18
                 implicitWidth: fkeyText.implicitWidth + 8
                 radius: Math.min(3, theme.radius)
-                color: Qt.alpha(theme.accent, 0.16)
+                color: Qt.alpha(p.accent, 0.15)
 
                 Text {
                     id: fkeyText
@@ -733,7 +970,7 @@ ApplicationWindow {
                     font.pixelSize: 11
                     font.bold: true
                     font.family: "monospace"
-                    color: theme.accent
+                    color: p.accent
                 }
             }
 
@@ -741,7 +978,7 @@ ApplicationWindow {
                 text: fkeyBtn.actionLabel
                 font.pixelSize: 12
                 font.weight: Font.Medium
-                color: fkeyMouse.containsMouse ? "#ffffff" : "#d5dceb"
+                color: fkeyMouse.containsMouse ? p.textPrimary : p.textSecondary
             }
         }
 
@@ -1035,7 +1272,7 @@ ApplicationWindow {
 
         readonly property bool isActive: backend.activePanel === panelIndex
         readonly property int colExtWidth: width < 480 ? 48 : 58
-        readonly property int colSizeWidth: width < 480 ? 74 : 84
+        readonly property int colSizeWidth: panelModel.diskUsageMode ? (width < 480 ? 110 : 128) : (width < 480 ? 74 : 84)
         readonly property int colDateWidth: width < 480 ? 114 : 124
 
         function focusList() {
@@ -1081,8 +1318,9 @@ ApplicationWindow {
         function displayStem(name, ext, isDir) {
             if (isDir || !ext || ext.length === 0)
                 return name;
-            // Keep dotfiles like .bashrc intact in the Name column.
-            if (name === "." + ext)
+            // Keep dotfiles like .bashrc (or nested sub/.gitignore in Flat View) intact in the Name column.
+            var nestedDot = "/." + ext;
+            if (name === "." + ext || (name.length > nestedDot.length && name.slice(-nestedDot.length) === nestedDot))
                 return name;
             var suffix = "." + ext;
             if (name.length > suffix.length && name.slice(-suffix.length) === suffix)
@@ -1091,7 +1329,9 @@ ApplicationWindow {
         }
 
         function displayExt(name, ext, isDir) {
-            if (isDir || !ext || ext.length === 0 || name === "." + ext)
+            var nestedDot = "/." + ext;
+            if (isDir || !ext || ext.length === 0 || name === "." + ext
+                    || (name.length > nestedDot.length && name.slice(-nestedDot.length) === nestedDot))
                 return "";
             return ext;
         }
@@ -1106,23 +1346,23 @@ ApplicationWindow {
         }
 
         function iconColorFor(isParent, isDir, iconType, isSelected) {
-            if (isSelected) return theme.accent;
-            if (isParent) return "#7c859c";
-            if (isDir) return "#eab308";
-            if (iconType === "code") return "#60a5fa";
-            if (iconType === "archive") return "#f59e0b";
-            if (iconType === "image") return "#c084fc";
-            if (iconType === "video") return "#f472b6";
-            if (iconType === "audio") return "#2dd4bf";
-            if (iconType === "binary") return "#34d399";
-            return "#8b95ab";
+            if (isSelected) return p.accent;
+            if (isParent) return p.iconParent;
+            if (isDir) return p.iconFolder;
+            if (iconType === "code") return p.iconCode;
+            if (iconType === "archive") return p.iconArchive;
+            if (iconType === "image") return p.iconImage;
+            if (iconType === "video") return p.iconVideo;
+            if (iconType === "audio") return p.iconAudio;
+            if (iconType === "binary") return p.iconBinary;
+            return p.iconDefault;
         }
 
         Layout.fillWidth: true
         Layout.fillHeight: true
-        color: isActive ? "#10131d" : "#0c0f17"
+        color: isActive ? p.panelActiveBg : p.panelInactiveBg
         border.width: 1
-        border.color: isActive ? Qt.alpha(theme.accent, 0.65) : "#1d2232"
+        border.color: isActive ? Qt.alpha(p.accent, 0.65) : p.borderDefault
         radius: win.panelRadius
         clip: true
 
@@ -1133,7 +1373,7 @@ ApplicationWindow {
             anchors.right: parent.right
             height: 2
             visible: panelRoot.isActive
-            color: theme.accent
+            color: p.accent
             z: 5
         }
 
@@ -1142,7 +1382,7 @@ ApplicationWindow {
             visible: win.quickViewActive && !panelRoot.isActive
             anchors.fill: parent
             anchors.margins: 1
-            color: "#0f121b"
+            color: p.panelActiveBg
             radius: Math.max(0, win.panelRadius - 1)
             z: 10
 
@@ -1153,7 +1393,7 @@ ApplicationWindow {
                 Rectangle {
                     Layout.fillWidth: true
                     height: 36
-                    color: "#151926"
+                    color: p.panelHeaderActiveBg
 
                     RowLayout {
                         anchors.fill: parent
@@ -1165,7 +1405,7 @@ ApplicationWindow {
                             text: qsTr("Quick View: %1").arg(win.quickViewData.name || "")
                             font.bold: true
                             font.pixelSize: 12
-                            color: theme.accent
+                            color: p.accent
                             Layout.fillWidth: true
                             elide: Text.ElideMiddle
                         }
@@ -1175,7 +1415,7 @@ ApplicationWindow {
                             text: win.quickViewData.formattedSize || ""
                             font.pixelSize: 11
                             font.family: "monospace"
-                            color: "#7c859c"
+                            color: p.textMuted
                         }
 
                         Text {
@@ -1183,7 +1423,7 @@ ApplicationWindow {
                             text: (win.quickViewData.imageDimensions || "") + (win.quickViewData.imageFormat ? " (" + win.quickViewData.imageFormat + ")" : "")
                             font.pixelSize: 11
                             font.family: "monospace"
-                            color: "#9aa6bf"
+                            color: p.textSecondary
                         }
 
                         IconBtn {
@@ -1198,7 +1438,7 @@ ApplicationWindow {
                         anchors.left: parent.left
                         anchors.right: parent.right
                         height: 1
-                        color: "#202638"
+                        color: p.borderSubtle
                     }
                 }
 
@@ -1222,7 +1462,7 @@ ApplicationWindow {
                         readOnly: true
                         font.family: "monospace"
                         font.pixelSize: 12
-                        color: "#d4dceb"
+                        color: p.textSecondary
                         leftPadding: 12
                         rightPadding: 12
                         topPadding: 10
@@ -1242,7 +1482,7 @@ ApplicationWindow {
             Rectangle {
                 Layout.fillWidth: true
                 height: 29
-                color: "#0b0e16"
+                color: p.tabStripBg
 
                 RowLayout {
                     anchors.fill: parent
@@ -1282,14 +1522,14 @@ ApplicationWindow {
                                     width: Math.min(180, Math.max(72, tabContentRow.implicitWidth + 14))
                                     radius: win.smallRadius
                                     color: {
-                                        if (dropHover) return Qt.alpha(theme.accent, 0.24);
-                                        if (isTabActive) return panelRoot.isActive ? "#192034" : "#151926";
-                                        if (tabMouse.containsMouse) return "#131724";
+                                        if (dropHover) return Qt.alpha(p.accent, 0.24);
+                                        if (isTabActive) return panelRoot.isActive ? p.tabActivePanelBg : p.tabActiveInactivePanelBg;
+                                        if (tabMouse.containsMouse) return p.tabHoverBg;
                                         return "transparent";
                                     }
                                     border.width: (isTabActive || dropHover) ? 1 : 0
-                                    border.color: dropHover ? theme.accent
-                                                : (panelRoot.isActive ? Qt.alpha(theme.accent, 0.52) : "#252c40")
+                                    border.color: dropHover ? p.accent
+                                                : (panelRoot.isActive ? Qt.alpha(p.accent, 0.52) : p.borderDefault)
 
                                     MouseArea {
                                         id: tabMouse
@@ -1335,16 +1575,16 @@ ApplicationWindow {
                                             height: 12
                                             kind: "folder"
                                             iconColor: tabPill.isTabActive
-                                                       ? (panelRoot.isActive ? theme.accent : "#94a3b8")
-                                                       : "#5c657d"
+                                                       ? (panelRoot.isActive ? p.accent : p.textMuted)
+                                                       : p.textDim
                                         }
 
                                         Text {
                                             text: modelData.title
                                             font.pixelSize: 11
                                             font.weight: tabPill.isTabActive ? Font.DemiBold : Font.Normal
-                                            color: tabPill.isTabActive ? "#f1f5f9"
-                                                 : (tabMouse.containsMouse ? "#cbd5e1" : "#7e879e")
+                                            color: tabPill.isTabActive ? p.textPrimary
+                                                 : (tabMouse.containsMouse ? p.textSecondary : p.textMuted)
                                             Layout.fillWidth: true
                                             elide: Text.ElideMiddle
                                         }
@@ -1354,14 +1594,14 @@ ApplicationWindow {
                                             width: 15
                                             height: 15
                                             radius: Math.min(3, theme.radius)
-                                            color: closeTabMouse.containsMouse ? "#283048" : "transparent"
+                                            color: closeTabMouse.containsMouse ? p.btnHoverBg : "transparent"
 
                                             Text {
                                                 anchors.centerIn: parent
                                                 text: "×"
                                                 font.pixelSize: 12
                                                 font.bold: true
-                                                color: closeTabMouse.containsMouse ? "#f8fafc" : "#737d96"
+                                                color: closeTabMouse.containsMouse ? p.textPrimary : p.textMuted
                                             }
 
                                             MouseArea {
@@ -1401,7 +1641,7 @@ ApplicationWindow {
                     anchors.left: parent.left
                     anchors.right: parent.right
                     height: 1
-                    color: "#1b2133"
+                    color: p.borderSubtle
                 }
             }
 
@@ -1409,7 +1649,7 @@ ApplicationWindow {
             Rectangle {
                 Layout.fillWidth: true
                 height: 38
-                color: panelRoot.isActive ? "#151927" : "#10131d"
+                color: panelRoot.isActive ? p.panelHeaderActiveBg : p.panelHeaderInactiveBg
 
                 RowLayout {
                     anchors.fill: parent
@@ -1470,9 +1710,9 @@ ApplicationWindow {
                             anchors.fill: parent
                             visible: !panelRoot.pathEditing
                             radius: win.smallRadius
-                            color: "#090b11"
+                            color: p.breadcrumbBg
                             border.width: 1
-                            border.color: panelRoot.isActive ? "#252c40" : "#1b2030"
+                            border.color: panelRoot.isActive ? p.borderStrong : p.borderDefault
                             clip: true
 
                             RowLayout {
@@ -1521,7 +1761,7 @@ ApplicationWindow {
                                                     anchors.verticalCenter: parent.verticalCenter
                                                     text: "›"
                                                     font.pixelSize: 12
-                                                    color: "#4c556b"
+                                                    color: p.textDim
                                                 }
 
                                                 Rectangle {
@@ -1529,7 +1769,7 @@ ApplicationWindow {
                                                     height: 22
                                                     width: segText.implicitWidth + 10
                                                     radius: Math.min(3, theme.radius)
-                                                    color: segMouse.containsMouse ? "#1b2133" : "transparent"
+                                                    color: segMouse.containsMouse ? p.btnHoverBg : "transparent"
 
                                                     Text {
                                                         id: segText
@@ -1538,8 +1778,8 @@ ApplicationWindow {
                                                         font.pixelSize: 12
                                                         font.family: "monospace"
                                                         font.weight: isLast ? Font.DemiBold : Font.Normal
-                                                        color: isLast ? (panelRoot.isActive ? "#f8fafc" : "#cbd5e1")
-                                                             : (segMouse.containsMouse ? "#e2e8f0" : "#8b95ab")
+                                                        color: isLast ? (panelRoot.isActive ? p.textPrimary : p.textSecondary)
+                                                             : (segMouse.containsMouse ? p.textPrimary : p.textMuted)
                                                     }
 
                                                     MouseArea {
@@ -1564,20 +1804,101 @@ ApplicationWindow {
                                 }
 
                                 Rectangle {
-                                    visible: !panelRoot.panelModel.isWritable
+                                    visible: panelRoot.panelModel.isArchiveView
+                                    implicitHeight: 18
+                                    implicitWidth: archBadgeText.implicitWidth + 8
+                                    radius: 3
+                                    color: Qt.alpha(p.accent, 0.16)
+                                    border.width: 1
+                                    border.color: Qt.alpha(p.accent, 0.45)
+                                    Text {
+                                        id: archBadgeText
+                                        anchors.centerIn: parent
+                                        text: qsTr("Archive")
+                                        font.pixelSize: 10
+                                        font.bold: true
+                                        color: p.accent
+                                    }
+                                }
+
+                                Rectangle {
+                                    visible: panelRoot.panelModel.flatView
+                                    implicitHeight: 18
+                                    implicitWidth: flatBadgeText.implicitWidth + 8
+                                    radius: 3
+                                    color: Qt.alpha(p.accent, 0.16)
+                                    border.width: 1
+                                    border.color: Qt.alpha(p.accent, 0.45)
+                                    Text {
+                                        id: flatBadgeText
+                                        anchors.centerIn: parent
+                                        text: qsTr("Flat")
+                                        font.pixelSize: 10
+                                        font.bold: true
+                                        color: p.accent
+                                    }
+                                }
+
+                                Rectangle {
+                                    visible: panelRoot.panelModel.isCollectionView
+                                    implicitHeight: 18
+                                    implicitWidth: colBadgeText.implicitWidth + 10
+                                    radius: 3
+                                    color: Qt.alpha(p.accent, 0.18)
+                                    border.width: 1
+                                    border.color: Qt.alpha(p.accent, 0.5)
+                                    Text {
+                                        id: colBadgeText
+                                        anchors.centerIn: parent
+                                        text: (panelRoot.panelModel.collectionTitle || qsTr("Results")) + "  ×"
+                                        font.pixelSize: 10
+                                        font.bold: true
+                                        color: p.accent
+                                    }
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: {
+                                            backend.activePanel = panelRoot.panelIndex;
+                                            panelRoot.panelModel.exitCollectionView();
+                                            panelRoot.focusList();
+                                        }
+                                    }
+                                }
+
+                                Rectangle {
+                                    visible: panelRoot.panelModel.diskUsageMode
+                                    implicitHeight: 18
+                                    implicitWidth: duBadgeText.implicitWidth + 8
+                                    radius: 3
+                                    color: Qt.alpha(p.accent, 0.16)
+                                    border.width: 1
+                                    border.color: Qt.alpha(p.accent, 0.45)
+                                    Text {
+                                        id: duBadgeText
+                                        anchors.centerIn: parent
+                                        text: qsTr("Disk Usage")
+                                        font.pixelSize: 10
+                                        font.bold: true
+                                        color: p.accent
+                                    }
+                                }
+
+                                Rectangle {
+                                    visible: !panelRoot.panelModel.isWritable && !panelRoot.panelModel.isArchiveView
                                     implicitHeight: 18
                                     implicitWidth: roText.implicitWidth + 8
                                     radius: 3
-                                    color: Qt.alpha("#ef4444", 0.15)
+                                    color: Qt.alpha(p.dangerAccent, 0.14)
                                     border.width: 1
-                                    border.color: Qt.alpha("#ef4444", 0.4)
+                                    border.color: Qt.alpha(p.dangerAccent, 0.4)
                                     Text {
                                         id: roText
                                         anchors.centerIn: parent
                                         text: qsTr("Read-Only")
                                         font.pixelSize: 10
                                         font.bold: true
-                                        color: "#fca5a5"
+                                        color: p.dangerText
                                     }
                                 }
 
@@ -1629,6 +1950,28 @@ ApplicationWindow {
                     }
 
                     IconBtn {
+                        iconKind: "chart"
+                        active: panelRoot.panelModel.diskUsageMode
+                        tooltipText: qsTr("Disk Usage Analyzer (Ctrl+Shift+D)")
+                        onClicked: {
+                            backend.activePanel = panelRoot.panelIndex;
+                            panelRoot.panelModel.toggleDiskUsageMode();
+                            panelRoot.focusList();
+                        }
+                    }
+
+                    IconBtn {
+                        iconKind: "branch"
+                        active: panelRoot.panelModel.flatView
+                        tooltipText: qsTr("Flat / Branch View (Ctrl+Shift+B)")
+                        onClicked: {
+                            backend.activePanel = panelRoot.panelIndex;
+                            panelRoot.panelModel.toggleFlatView();
+                            panelRoot.focusList();
+                        }
+                    }
+
+                    IconBtn {
                         iconKind: "filter"
                         active: panelRoot.filterVisible || panelRoot.panelModel.filter.length > 0
                         tooltipText: qsTr("Quick filter (Ctrl+S)")
@@ -1663,7 +2006,7 @@ ApplicationWindow {
                     anchors.left: parent.left
                     anchors.right: parent.right
                     height: 1
-                    color: "#1e2436"
+                    color: p.borderSubtle
                 }
             }
 
@@ -1672,7 +2015,7 @@ ApplicationWindow {
                 visible: panelRoot.filterVisible || panelRoot.panelModel.filter.length > 0
                 Layout.fillWidth: true
                 height: 34
-                color: "#131826"
+                color: p.filterBarBg
 
                 RowLayout {
                     anchors.fill: parent
@@ -1684,7 +2027,7 @@ ApplicationWindow {
                         text: qsTr("Filter:")
                         font.pixelSize: 11
                         font.bold: true
-                        color: theme.accent
+                        color: p.accent
                     }
 
                     CompactField {
@@ -1722,7 +2065,7 @@ ApplicationWindow {
                     anchors.left: parent.left
                     anchors.right: parent.right
                     height: 1
-                    color: "#1e2436"
+                    color: p.borderSubtle
                 }
             }
 
@@ -1731,7 +2074,7 @@ ApplicationWindow {
                 visible: panelRoot.panelModel.viewMode === 0
                 Layout.fillWidth: true
                 height: 26
-                color: "#121622"
+                color: p.tableHeaderBg
 
                 RowLayout {
                     anchors.fill: parent
@@ -1741,7 +2084,7 @@ ApplicationWindow {
                     Rectangle {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        color: nameHdrMouse.containsMouse ? "#1a2030" : "transparent"
+                        color: nameHdrMouse.containsMouse ? p.tableHeaderHoverBg : "transparent"
 
                         Text {
                             anchors.left: parent.left
@@ -1750,7 +2093,7 @@ ApplicationWindow {
                             anchors.rightMargin: 8
                             anchors.verticalCenter: parent.verticalCenter
                             text: qsTr("Name") + (panelRoot.panelModel.sortField === 0 ? (panelRoot.panelModel.sortAscending ? "  ↑" : "  ↓") : "")
-                            color: panelRoot.panelModel.sortField === 0 ? theme.accent : "#7e879e"
+                            color: panelRoot.panelModel.sortField === 0 ? p.accent : p.textMuted
                             font.pixelSize: 11
                             font.bold: true
                             elide: Text.ElideRight
@@ -1768,13 +2111,13 @@ ApplicationWindow {
                         }
                     }
 
-                    Rectangle { width: 1; Layout.fillHeight: true; color: "#1c2132" }
+                    Rectangle { width: 1; Layout.fillHeight: true; color: p.borderSubtle }
 
                     // Ext Header
                     Rectangle {
                         Layout.preferredWidth: panelRoot.colExtWidth
                         Layout.fillHeight: true
-                        color: extHdrMouse.containsMouse ? "#1a2030" : "transparent"
+                        color: extHdrMouse.containsMouse ? p.tableHeaderHoverBg : "transparent"
 
                         Text {
                             anchors.left: parent.left
@@ -1783,7 +2126,7 @@ ApplicationWindow {
                             anchors.rightMargin: 6
                             anchors.verticalCenter: parent.verticalCenter
                             text: qsTr("Ext") + (panelRoot.panelModel.sortField === 1 ? (panelRoot.panelModel.sortAscending ? " ↑" : " ↓") : "")
-                            color: panelRoot.panelModel.sortField === 1 ? theme.accent : "#7e879e"
+                            color: panelRoot.panelModel.sortField === 1 ? p.accent : p.textMuted
                             font.pixelSize: 11
                             font.bold: true
                             elide: Text.ElideRight
@@ -1801,13 +2144,13 @@ ApplicationWindow {
                         }
                     }
 
-                    Rectangle { width: 1; Layout.fillHeight: true; color: "#1c2132" }
+                    Rectangle { width: 1; Layout.fillHeight: true; color: p.borderSubtle }
 
                     // Size Header
                     Rectangle {
                         Layout.preferredWidth: panelRoot.colSizeWidth
                         Layout.fillHeight: true
-                        color: sizeHdrMouse.containsMouse ? "#1a2030" : "transparent"
+                        color: sizeHdrMouse.containsMouse ? p.tableHeaderHoverBg : "transparent"
 
                         Text {
                             anchors.left: parent.left
@@ -1817,7 +2160,7 @@ ApplicationWindow {
                             anchors.verticalCenter: parent.verticalCenter
                             horizontalAlignment: Text.AlignRight
                             text: qsTr("Size") + (panelRoot.panelModel.sortField === 2 ? (panelRoot.panelModel.sortAscending ? " ↑" : " ↓") : "")
-                            color: panelRoot.panelModel.sortField === 2 ? theme.accent : "#7e879e"
+                            color: panelRoot.panelModel.sortField === 2 ? p.accent : p.textMuted
                             font.pixelSize: 11
                             font.bold: true
                             elide: Text.ElideLeft
@@ -1835,13 +2178,13 @@ ApplicationWindow {
                         }
                     }
 
-                    Rectangle { width: 1; Layout.fillHeight: true; color: "#1c2132" }
+                    Rectangle { width: 1; Layout.fillHeight: true; color: p.borderSubtle }
 
                     // Date Header
                     Rectangle {
                         Layout.preferredWidth: panelRoot.colDateWidth
                         Layout.fillHeight: true
-                        color: dateHdrMouse.containsMouse ? "#1a2030" : "transparent"
+                        color: dateHdrMouse.containsMouse ? p.tableHeaderHoverBg : "transparent"
 
                         Text {
                             anchors.left: parent.left
@@ -1851,7 +2194,7 @@ ApplicationWindow {
                             anchors.verticalCenter: parent.verticalCenter
                             horizontalAlignment: Text.AlignRight
                             text: qsTr("Modified") + (panelRoot.panelModel.sortField === 3 ? (panelRoot.panelModel.sortAscending ? " ↑" : " ↓") : "")
-                            color: panelRoot.panelModel.sortField === 3 ? theme.accent : "#7e879e"
+                            color: panelRoot.panelModel.sortField === 3 ? p.accent : p.textMuted
                             font.pixelSize: 11
                             font.bold: true
                             elide: Text.ElideLeft
@@ -1875,7 +2218,7 @@ ApplicationWindow {
                     anchors.left: parent.left
                     anchors.right: parent.right
                     height: 1
-                    color: "#202638"
+                    color: p.borderDefault
                 }
             }
 
@@ -1890,9 +2233,9 @@ ApplicationWindow {
                     id: rubberBandBox
                     visible: false
                     z: 99
-                    color: Qt.alpha(theme.accent, 0.22)
+                    color: Qt.alpha(p.accent, 0.20)
                     border.width: 1
-                    border.color: theme.accent
+                    border.color: p.accent
                     radius: 2
                 }
 
@@ -1978,7 +2321,7 @@ ApplicationWindow {
                             implicitWidth: 4
                             radius: 2
                             visible: vbar.size < 1.0
-                            color: vbar.pressed ? theme.accent : (vbar.hovered ? "#586380" : "#343c52")
+                            color: vbar.pressed ? p.accent : (vbar.hovered ? p.scrollbarHoverColor : p.scrollbarColor)
                         }
                         background: Item {}
                     }
@@ -1994,22 +2337,22 @@ ApplicationWindow {
 
                         opacity: isCutItem ? 0.48 : 1.0
                         border.width: isDropTargetDir ? 1 : 0
-                        border.color: theme.accent
+                        border.color: p.accent
 
                         color: {
                             if (isDropTargetDir)
-                                return Qt.alpha(theme.accent, 0.28);
+                                return Qt.alpha(p.accent, 0.24);
                             if (model.isSelected && isCurrent && panelRoot.isActive)
-                                return Qt.alpha(theme.accent, 0.28);
+                                return Qt.alpha(p.accent, win.isDark ? 0.26 : 0.18);
                             if (model.isSelected)
-                                return Qt.alpha(theme.accent, 0.17);
+                                return Qt.alpha(p.accent, win.isDark ? 0.16 : 0.11);
                             if (isCurrent && panelRoot.isActive)
-                                return "#1c2236";
+                                return p.rowCurrentActiveBg;
                             if (isCurrent)
-                                return "#141826";
+                                return p.rowCurrentInactiveBg;
                             if (rowMouse.containsMouse)
-                                return "#151928";
-                            return index % 2 === 0 ? "transparent" : "#0e111a";
+                                return p.rowHoverBg;
+                            return index % 2 === 0 ? "transparent" : p.rowAltBg;
                         }
 
                         // Crisp left cursor / selection accent bar instead of a noisy 4-sided box
@@ -2019,7 +2362,7 @@ ApplicationWindow {
                             anchors.bottom: parent.bottom
                             width: (rowDelegate.isCurrent && panelRoot.isActive) ? 3 : (model.isSelected ? 2 : 0)
                             visible: width > 0
-                            color: theme.accent
+                            color: p.accent
                         }
 
                         MouseArea {
@@ -2148,10 +2491,14 @@ ApplicationWindow {
                                 if (mouse.button !== Qt.LeftButton)
                                     return;
                                 panelRoot.focusList();
-                                if (model.isDir)
+                                if (model.isDir) {
                                     panelRoot.panelModel.cd(model.name);
-                                else
+                                } else if (panelRoot.panelModel.isArchiveView) {
+                                    fileList.currentIndex = index;
+                                    win.triggerF3View();
+                                } else {
                                     backend.openItem(model.path);
+                                }
                             }
                         }
 
@@ -2185,10 +2532,10 @@ ApplicationWindow {
                                         font.pixelSize: 12
                                         font.weight: (model.isDir && !model.isParent) || model.isSelected ? Font.DemiBold : Font.Normal
                                         color: {
-                                            if (model.isSelected) return theme.accent;
-                                            if (model.isParent) return "#8b95ab";
-                                            if (model.isDir) return "#f1f5f9";
-                                            return "#cbd5e1";
+                                            if (model.isSelected) return p.accent;
+                                            if (model.isParent) return p.textMuted;
+                                            if (model.isDir) return p.textPrimary;
+                                            return p.textSecondary;
                                         }
                                     }
 
@@ -2200,20 +2547,20 @@ ApplicationWindow {
                                         radius: 3
                                         color: {
                                             var s = model.gitStatus;
-                                            if (s === "modified") return "#451a03";
-                                            if (s === "untracked") return "#064e3b";
-                                            if (s === "staged") return "#083344";
-                                            if (s === "deleted") return "#450a0a";
-                                            return "#1e293b";
+                                            if (s === "modified") return p.gitModBg;
+                                            if (s === "untracked") return p.gitUntrackedBg;
+                                            if (s === "staged") return p.gitStagedBg;
+                                            if (s === "deleted") return p.gitDeletedBg;
+                                            return p.gitDefaultBg;
                                         }
                                         border.width: 1
                                         border.color: {
                                             var s = model.gitStatus;
-                                            if (s === "modified") return "#f59e0b";
-                                            if (s === "untracked") return "#10b981";
-                                            if (s === "staged") return "#06b6d4";
-                                            if (s === "deleted") return "#ef4444";
-                                            return "#64748b";
+                                            if (s === "modified") return p.gitModBorder;
+                                            if (s === "untracked") return p.gitUntrackedBorder;
+                                            if (s === "staged") return p.gitStagedBorder;
+                                            if (s === "deleted") return p.gitDeletedBorder;
+                                            return p.gitDefaultBorder;
                                         }
 
                                         Text {
@@ -2231,18 +2578,18 @@ ApplicationWindow {
                                             font.family: "monospace"
                                             color: {
                                                 var s = model.gitStatus;
-                                                if (s === "modified") return "#fcd34d";
-                                                if (s === "untracked") return "#6ee7b7";
-                                                if (s === "staged") return "#67e8f9";
-                                                if (s === "deleted") return "#fca5a5";
-                                                return "#cbd5e1";
+                                                if (s === "modified") return p.gitModText;
+                                                if (s === "untracked") return p.gitUntrackedText;
+                                                if (s === "staged") return p.gitStagedText;
+                                                if (s === "deleted") return p.gitDeletedText;
+                                                return p.gitDefaultText;
                                             }
                                         }
                                     }
                                 }
                             }
 
-                            Rectangle { width: 1; Layout.fillHeight: true; color: "#151926" }
+                            Rectangle { width: 1; Layout.fillHeight: true; color: p.cellDivider }
 
                             // Ext Cell
                             Item {
@@ -2258,12 +2605,12 @@ ApplicationWindow {
                                     text: panelRoot.displayExt(model.name, model.extension, model.isDir)
                                     font.pixelSize: 11
                                     font.family: "monospace"
-                                    color: model.isSelected ? theme.accent : "#737d96"
+                                    color: model.isSelected ? p.accent : p.textMuted
                                     elide: Text.ElideRight
                                 }
                             }
 
-                            Rectangle { width: 1; Layout.fillHeight: true; color: "#151926" }
+                            Rectangle { width: 1; Layout.fillHeight: true; color: p.cellDivider }
 
                             // Size Cell
                             Item {
@@ -2271,6 +2618,25 @@ ApplicationWindow {
                                 Layout.fillHeight: true
 
                                 readonly property bool isPlaceholderTag: model.formattedSize === "<DIR>" || model.formattedSize === "<UP>"
+                                readonly property real ratio: model.sizeRatio || 0
+                                readonly property real pct: model.sizePercent || 0
+
+                                // Proportional ncdu / WizTree disk usage bar
+                                Rectangle {
+                                    visible: !parent.isPlaceholderTag && parent.ratio > 0
+                                    anchors.right: parent.right
+                                    anchors.rightMargin: 4
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    height: parent.height - 6
+                                    width: Math.max(3, Math.round((parent.width - 8) * Math.min(1.0, parent.ratio)))
+                                    radius: 3
+                                    color: Qt.alpha(p.accent,
+                                                    panelRoot.panelModel.diskUsageMode
+                                                    ? (win.isDark ? 0.30 : 0.22)
+                                                    : (win.isDark ? 0.14 : 0.10))
+                                    border.width: panelRoot.panelModel.diskUsageMode ? 1 : 0
+                                    border.color: Qt.alpha(p.accent, 0.38)
+                                }
 
                                 Text {
                                     anchors.left: parent.left
@@ -2279,22 +2645,27 @@ ApplicationWindow {
                                     anchors.rightMargin: 8
                                     anchors.verticalCenter: parent.verticalCenter
                                     horizontalAlignment: Text.AlignRight
-                                    text: model.formattedSize === "<DIR>" ? qsTr("DIR")
-                                        : model.formattedSize === "<UP>" ? qsTr("UP")
-                                        : model.formattedSize
+                                    elide: Text.ElideLeft
+                                    text: {
+                                        if (model.formattedSize === "<DIR>") return qsTr("DIR");
+                                        if (model.formattedSize === "<UP>") return qsTr("UP");
+                                        if (panelRoot.panelModel.diskUsageMode && parent.pct >= 0.1)
+                                            return model.formattedSize + " (" + Number(parent.pct).toFixed(parent.pct >= 10 ? 0 : 1) + "%)";
+                                        return model.formattedSize;
+                                    }
                                     font.pixelSize: parent.isPlaceholderTag ? 10 : 11
                                     font.family: "monospace"
                                     font.weight: (model.isDir && !parent.isPlaceholderTag) ? Font.DemiBold : Font.Normal
                                     color: {
-                                        if (model.isSelected) return theme.accent;
-                                        if (parent.isPlaceholderTag) return "#566079";
-                                        if (model.isDir) return "#e2e8f0";
-                                        return "#94a0b8";
+                                        if (model.isSelected) return p.accent;
+                                        if (parent.isPlaceholderTag) return p.textDim;
+                                        if (model.isDir) return p.textPrimary;
+                                        return p.textMuted;
                                     }
                                 }
                             }
 
-                            Rectangle { width: 1; Layout.fillHeight: true; color: "#151926" }
+                            Rectangle { width: 1; Layout.fillHeight: true; color: p.cellDivider }
 
                             // Date Cell
                             Item {
@@ -2311,7 +2682,7 @@ ApplicationWindow {
                                     text: model.isParent ? "" : model.modified
                                     font.pixelSize: 11
                                     font.family: "monospace"
-                                    color: model.isSelected ? Qt.alpha(theme.accent, 0.85) : "#68728a"
+                                    color: model.isSelected ? Qt.alpha(p.accent, 0.85) : p.textDim
                                 }
                             }
                         }
@@ -2323,6 +2694,8 @@ ApplicationWindow {
                             if (currentIndex >= 0 && currentIndex < m.itemCount) {
                                 if (m.itemIsDir(currentIndex))
                                     m.cd(m.itemName(currentIndex));
+                                else if (m.isArchiveView)
+                                    win.triggerF3View();
                                 else
                                     backend.openItem(m.itemPath(currentIndex));
                             }
@@ -2426,7 +2799,7 @@ ApplicationWindow {
                             implicitWidth: 4
                             radius: 2
                             visible: gridVbar.size < 1.0
-                            color: gridVbar.pressed ? theme.accent : (gridVbar.hovered ? "#586380" : "#343c52")
+                            color: gridVbar.pressed ? p.accent : (gridVbar.hovered ? p.scrollbarHoverColor : p.scrollbarColor)
                         }
                         background: Item {}
                     }
@@ -2445,17 +2818,17 @@ ApplicationWindow {
 
                         opacity: isCutItem ? 0.48 : 1.0
                         border.width: (isDropTargetDir || (isCurrent && panelRoot.isActive)) ? 1 : (model.isSelected ? 1 : 0)
-                        border.color: isDropTargetDir ? theme.accent
-                                    : (isCurrent && panelRoot.isActive ? theme.accent
-                                    : (model.isSelected ? Qt.alpha(theme.accent, 0.6) : "transparent"))
+                        border.color: isDropTargetDir ? p.accent
+                                    : (isCurrent && panelRoot.isActive ? p.accent
+                                    : (model.isSelected ? Qt.alpha(p.accent, 0.6) : "transparent"))
 
                         color: {
-                            if (isDropTargetDir) return Qt.alpha(theme.accent, 0.28);
-                            if (model.isSelected && isCurrent && panelRoot.isActive) return Qt.alpha(theme.accent, 0.28);
-                            if (model.isSelected) return Qt.alpha(theme.accent, 0.17);
-                            if (isCurrent && panelRoot.isActive) return "#1c2236";
-                            if (gridItemMouse.containsMouse) return "#151928";
-                            return "#0f121b";
+                            if (isDropTargetDir) return Qt.alpha(p.accent, 0.24);
+                            if (model.isSelected && isCurrent && panelRoot.isActive) return Qt.alpha(p.accent, win.isDark ? 0.26 : 0.18);
+                            if (model.isSelected) return Qt.alpha(p.accent, win.isDark ? 0.16 : 0.11);
+                            if (isCurrent && panelRoot.isActive) return p.rowCurrentActiveBg;
+                            if (gridItemMouse.containsMouse) return p.rowHoverBg;
+                            return p.gridCardBg;
                         }
 
                         MouseArea {
@@ -2574,10 +2947,14 @@ ApplicationWindow {
                                 if (mouse.button !== Qt.LeftButton)
                                     return;
                                 panelRoot.focusList();
-                                if (model.isDir)
+                                if (model.isDir) {
                                     panelRoot.panelModel.cd(model.name);
-                                else
+                                } else if (panelRoot.panelModel.isArchiveView) {
+                                    fileGrid.currentIndex = index;
+                                    win.triggerF3View();
+                                } else {
                                     backend.openItem(model.path);
+                                }
                             }
                         }
 
@@ -2621,20 +2998,20 @@ ApplicationWindow {
                                     radius: 3
                                     color: {
                                         var s = model.gitStatus;
-                                        if (s === "modified") return "#451a03";
-                                        if (s === "untracked") return "#064e3b";
-                                        if (s === "staged") return "#083344";
-                                        if (s === "deleted") return "#450a0a";
-                                        return "#1e293b";
+                                        if (s === "modified") return p.gitModBg;
+                                        if (s === "untracked") return p.gitUntrackedBg;
+                                        if (s === "staged") return p.gitStagedBg;
+                                        if (s === "deleted") return p.gitDeletedBg;
+                                        return p.gitDefaultBg;
                                     }
                                     border.width: 1
                                     border.color: {
                                         var s = model.gitStatus;
-                                        if (s === "modified") return "#f59e0b";
-                                        if (s === "untracked") return "#10b981";
-                                        if (s === "staged") return "#06b6d4";
-                                        if (s === "deleted") return "#ef4444";
-                                        return "#64748b";
+                                        if (s === "modified") return p.gitModBorder;
+                                        if (s === "untracked") return p.gitUntrackedBorder;
+                                        if (s === "staged") return p.gitStagedBorder;
+                                        if (s === "deleted") return p.gitDeletedBorder;
+                                        return p.gitDefaultBorder;
                                     }
 
                                     Text {
@@ -2652,11 +3029,11 @@ ApplicationWindow {
                                         font.family: "monospace"
                                         color: {
                                             var s = model.gitStatus;
-                                            if (s === "modified") return "#fcd34d";
-                                            if (s === "untracked") return "#6ee7b7";
-                                            if (s === "staged") return "#67e8f9";
-                                            if (s === "deleted") return "#fca5a5";
-                                            return "#cbd5e1";
+                                            if (s === "modified") return p.gitModText;
+                                            if (s === "untracked") return p.gitUntrackedText;
+                                            if (s === "staged") return p.gitStagedText;
+                                            if (s === "deleted") return p.gitDeletedText;
+                                            return p.gitDefaultText;
                                         }
                                     }
                                 }
@@ -2672,10 +3049,10 @@ ApplicationWindow {
                                 maximumLineCount: 2
                                 wrapMode: Text.WrapAnywhere
                                 color: {
-                                    if (model.isSelected) return theme.accent;
-                                    if (model.isParent) return "#8b95ab";
-                                    if (model.isDir) return "#f1f5f9";
-                                    return "#cbd5e1";
+                                    if (model.isSelected) return p.accent;
+                                    if (model.isParent) return p.textMuted;
+                                    if (model.isDir) return p.textPrimary;
+                                    return p.textSecondary;
                                 }
                             }
                         }
@@ -2687,6 +3064,8 @@ ApplicationWindow {
                             if (currentIndex >= 0 && currentIndex < m.itemCount) {
                                 if (m.itemIsDir(currentIndex))
                                     m.cd(m.itemName(currentIndex));
+                                else if (m.isArchiveView)
+                                    win.triggerF3View();
                                 else
                                     backend.openItem(m.itemPath(currentIndex));
                             }
@@ -2753,9 +3132,9 @@ ApplicationWindow {
                 Rectangle {
                     visible: panelDropArea.containsDrag && panelDropArea.hoveredDirIndex < 0
                     anchors.fill: parent
-                    color: Qt.alpha(theme.accent, 0.05)
+                    color: Qt.alpha(p.accent, 0.06)
                     border.width: 2
-                    border.color: theme.accent
+                    border.color: p.accent
 
                     Rectangle {
                         anchors.horizontalCenter: parent.horizontalCenter
@@ -2764,9 +3143,9 @@ ApplicationWindow {
                         height: 26
                         width: dropHintLabel.implicitWidth + 20
                         radius: win.smallRadius
-                        color: "#151a2a"
+                        color: p.cardBg
                         border.width: 1
-                        border.color: theme.accent
+                        border.color: p.accent
 
                         Text {
                             id: dropHintLabel
@@ -2776,7 +3155,7 @@ ApplicationWindow {
                                   : qsTr("Drop to Copy here (Shift = Move)")
                             font.pixelSize: 11
                             font.bold: true
-                            color: theme.accent
+                            color: p.accent
                         }
                     }
                 }
@@ -2860,14 +3239,14 @@ ApplicationWindow {
             Rectangle {
                 Layout.fillWidth: true
                 height: 26
-                color: "#111520"
+                color: p.panelFooterBg
 
                 Rectangle {
                     anchors.top: parent.top
                     anchors.left: parent.left
                     anchors.right: parent.right
                     height: 1
-                    color: "#1e2436"
+                    color: p.borderSubtle
                 }
 
                 RowLayout {
@@ -2881,7 +3260,7 @@ ApplicationWindow {
                         implicitHeight: 18
                         implicitWidth: selBadgeText.implicitWidth + 10
                         radius: Math.min(3, theme.radius)
-                        color: Qt.alpha(theme.accent, 0.18)
+                        color: Qt.alpha(p.accent, 0.16)
 
                         Text {
                             id: selBadgeText
@@ -2891,14 +3270,14 @@ ApplicationWindow {
                                   .arg(panelRoot.panelModel.totalSelectedSizeFormatted)
                             font.pixelSize: 11
                             font.weight: Font.DemiBold
-                            color: theme.accent
+                            color: p.accent
                         }
                     }
 
                     Text {
                         text: qsTr("%1 items").arg(panelRoot.panelModel.itemCount)
                         font.pixelSize: 11
-                        color: "#7c859c"
+                        color: p.textMuted
                     }
 
                     Rectangle {
@@ -2906,9 +3285,9 @@ ApplicationWindow {
                         implicitHeight: 18
                         implicitWidth: gitRow.implicitWidth + 10
                         radius: Math.min(3, theme.radius)
-                        color: "#161d2d"
+                        color: p.chipBg
                         border.width: 1
-                        border.color: "#2a344a"
+                        border.color: p.borderDefault
 
                         RowLayout {
                             id: gitRow
@@ -2920,7 +3299,7 @@ ApplicationWindow {
                                 font.pixelSize: 11
                                 font.family: "monospace"
                                 font.bold: true
-                                color: "#60a5fa"
+                                color: p.gitBranchText
                             }
 
                             Text {
@@ -2929,7 +3308,7 @@ ApplicationWindow {
                                 font.pixelSize: 10
                                 font.family: "monospace"
                                 font.bold: true
-                                color: "#f59e0b"
+                                color: p.warningText
                             }
 
                             Text {
@@ -2938,7 +3317,7 @@ ApplicationWindow {
                                 font.pixelSize: 10
                                 font.family: "monospace"
                                 font.bold: true
-                                color: "#10b981"
+                                color: p.successText
                             }
                         }
                     }
@@ -2950,20 +3329,20 @@ ApplicationWindow {
                         text: fileList.currentItem ? fileList.currentItem.itemPermissions : ""
                         font.pixelSize: 11
                         font.family: "monospace"
-                        color: "#5f6880"
+                        color: p.textDim
                     }
 
                     Text {
                         visible: fileList.currentItem && fileList.currentItem.itemPermissions.length > 0
                         text: "·"
                         font.pixelSize: 11
-                        color: "#434b61"
+                        color: p.textDisabled
                     }
 
                     Text {
                         text: qsTr("Free: %1").arg(panelRoot.panelModel.freeSpaceFormatted)
                         font.pixelSize: 11
-                        color: "#8b95ab"
+                        color: p.textMuted
                     }
                 }
             }
@@ -3081,7 +3460,7 @@ ApplicationWindow {
             if (name === "..")
                 return;
             renameOldPath = m.itemPath(lv.currentIndex);
-            renameOldName = name;
+            renameOldName = backend.fileName(renameOldPath);
             renameInput.text = renameOldName;
             renameOpen = true;
             renameInput.forceFieldFocus();
@@ -3254,9 +3633,140 @@ ApplicationWindow {
         win.diffOpen = true;
     }
 
+    function fuzzyScoreCommand(query, title, category, shortcut) {
+        if (!query || query.length === 0)
+            return 1;
+        var q = query.toLowerCase().trim();
+        if (q.length === 0)
+            return 1;
+        var haystackTitle = title.toLowerCase();
+        var haystackAll = (category + " " + title + " " + shortcut).toLowerCase();
+
+        var exactIdx = haystackTitle.indexOf(q);
+        if (exactIdx === 0)
+            return 500 - title.length;
+        if (exactIdx > 0)
+            return 350 - exactIdx * 2;
+
+        var tokens = q.split(/\s+/);
+        if (tokens.length > 1) {
+            var allOk = true;
+            for (var t = 0; t < tokens.length; t++) {
+                if (tokens[t].length > 0 && haystackAll.indexOf(tokens[t]) === -1) {
+                    allOk = false;
+                    break;
+                }
+            }
+            if (allOk)
+                return 260 - title.length;
+        }
+
+        var qi = 0;
+        var score = 0;
+        var consecutive = 0;
+        for (var i = 0; i < haystackTitle.length && qi < q.length; i++) {
+            if (haystackTitle.charAt(i) === q.charAt(qi)) {
+                score += 10 + consecutive * 6;
+                if (i === 0 || haystackTitle.charAt(i - 1) === " " || haystackTitle.charAt(i - 1) === "/")
+                    score += 12;
+                consecutive++;
+                qi++;
+            } else {
+                consecutive = 0;
+            }
+        }
+        return qi === q.length ? score : -1;
+    }
+
+    function getCommandList() {
+        var flatActive = currentModel().flatView;
+        var hiddenActive = currentModel().showHidden;
+        return [
+            { id: "quickJump", title: qsTr("Quick Jump to Folder..."), category: qsTr("Navigation"), shortcut: "Ctrl+P", run: function() { win.openCommandPalette("jump"); } },
+            { id: "flatView", title: flatActive ? qsTr("Disable Flat / Branch View") : qsTr("Flat / Branch View (Recursive)"), category: qsTr("View"), shortcut: "Ctrl+Shift+B", run: function() { currentModel().toggleFlatView(); } },
+            { id: "toggleTheme", title: backend.isDarkTheme ? qsTr("Switch to Light Theme") : qsTr("Switch to Dark Theme"), category: qsTr("Appearance"), shortcut: "Ctrl+Shift+T", run: function() { backend.toggleThemeMode(); } },
+            { id: "quickView", title: qsTr("Toggle Quick View Panel"), category: qsTr("View"), shortcut: "Ctrl+Q", run: function() { win.quickViewActive = !win.quickViewActive; if (win.quickViewActive) updateQuickView(); } },
+            { id: "showHidden", title: hiddenActive ? qsTr("Hide Hidden Files") : qsTr("Show Hidden Files"), category: qsTr("View"), shortcut: "Ctrl+H", run: function() { var m = currentModel(); m.setShowHidden(!m.showHidden); } },
+            { id: "listView", title: qsTr("View Mode: List"), category: qsTr("View"), shortcut: "Ctrl+1", run: function() { currentModel().setViewMode(0); } },
+            { id: "gridView", title: qsTr("View Mode: Grid Thumbnails"), category: qsTr("View"), shortcut: "Ctrl+2", run: function() { currentModel().setViewMode(1); } },
+            { id: "quickFilter", title: qsTr("Toggle Quick Filter"), category: qsTr("View"), shortcut: "Ctrl+S", run: function() { toggleFilterBar(); } },
+            { id: "refresh", title: qsTr("Refresh Active Panel"), category: qsTr("View"), shortcut: "Ctrl+R", run: function() { currentModel().refresh(); } },
+            { id: "calcSizes", title: qsTr("Calculate All Folder Sizes"), category: qsTr("View"), shortcut: "Alt+Shift+Enter", run: function() { currentModel().calculateAllFolderSizes(); backend.showStatus(qsTr("Calculated sizes for all folders.")); } },
+            { id: "sortName", title: qsTr("Sort by Name"), category: qsTr("Sort"), shortcut: "Ctrl+F3", run: function() { currentModel().setSortField(0); } },
+            { id: "sortExt", title: qsTr("Sort by Extension"), category: qsTr("Sort"), shortcut: "Ctrl+F4", run: function() { currentModel().setSortField(1); } },
+            { id: "sortDate", title: qsTr("Sort by Date"), category: qsTr("Sort"), shortcut: "Ctrl+F5", run: function() { currentModel().setSortField(3); } },
+            { id: "sortSize", title: qsTr("Sort by Size"), category: qsTr("Sort"), shortcut: "Ctrl+F6", run: function() { currentModel().setSortField(2); } },
+            { id: "switchPanel", title: qsTr("Switch Active Panel"), category: qsTr("Navigation"), shortcut: "Tab", run: function() { backend.switchPanel(); currentListView().forceActiveFocus(); updateQuickView(); } },
+            { id: "editPath", title: qsTr("Edit Active Path Bar"), category: qsTr("Navigation"), shortcut: "Ctrl+L", run: function() { currentPanelItem().openPathEditor(); } },
+            { id: "goBack", title: qsTr("Navigate Back in History"), category: qsTr("Navigation"), shortcut: "Alt+Left", run: function() { currentModel().goBack(); } },
+            { id: "goForward", title: qsTr("Navigate Forward in History"), category: qsTr("Navigation"), shortcut: "Alt+Right", run: function() { currentModel().goForward(); } },
+            { id: "goUp", title: qsTr("Go to Parent Directory"), category: qsTr("Navigation"), shortcut: "Backspace", run: function() { currentModel().cdUp(); } },
+            { id: "newTab", title: qsTr("Open New Tab"), category: qsTr("Tabs"), shortcut: "Ctrl+T", run: function() { currentModel().addTab(); currentListView().forceActiveFocus(); } },
+            { id: "closeTab", title: qsTr("Close Active Tab"), category: qsTr("Tabs"), shortcut: "Ctrl+W", run: function() { currentModel().closeTab(); currentListView().forceActiveFocus(); } },
+            { id: "nextTab", title: qsTr("Next Tab"), category: qsTr("Tabs"), shortcut: "Ctrl+Tab", run: function() { currentModel().nextTab(); currentListView().forceActiveFocus(); } },
+            { id: "bookmarks", title: qsTr("Open Bookmarks Manager"), category: qsTr("Bookmarks"), shortcut: "Ctrl+B", run: function() { win.bookmarksOpen = true; } },
+            { id: "toggleBookmark", title: qsTr("Toggle Bookmark for Current Folder"), category: qsTr("Bookmarks"), shortcut: "", run: function() { backend.toggleBookmark(currentModel().path); } },
+            { id: "swapPanels", title: qsTr("Swap Left & Right Panels"), category: qsTr("Panels"), shortcut: "Ctrl+U", run: function() { backend.swapPanels(); } },
+            { id: "syncPanels", title: qsTr("Sync Target Panel to Active"), category: qsTr("Panels"), shortcut: "Alt+=", run: function() { backend.syncPanels(); } },
+            { id: "compareDirs", title: qsTr("Compare Left & Right Directories"), category: qsTr("Commands"), shortcut: "Shift+F2", run: function() { backend.compareDirectories(); } },
+            { id: "findFiles", title: qsTr("Advanced Find Files (Name / Content / Filter)..."), category: qsTr("Commands"), shortcut: "Alt+F7", run: function() { win.openAdvancedSearchDialog(); } },
+            { id: "diskUsage", title: flatActive ? qsTr("Disk Usage Analyzer (with Sizes)") : qsTr("Disk Usage Analyzer (Ctrl+Shift+D)"), category: qsTr("View"), shortcut: "Ctrl+Shift+D", run: function() { currentModel().toggleDiskUsageMode(); } },
+            { id: "syncDirs", title: qsTr("Synchronize Directories (Recursive)..."), category: qsTr("Commands"), shortcut: "Ctrl+Shift+S", run: function() { win.openSyncDirsDialog(); } },
+            { id: "duplicateFinder", title: qsTr("Find Duplicate Files..."), category: qsTr("Commands"), shortcut: "Ctrl+Shift+F7", run: function() { win.openDuplicateFinderDialog(); } },
+            { id: "diffFiles", title: qsTr("Compare Files (Visual Diff)..."), category: qsTr("Commands"), shortcut: "Ctrl+Alt+D", run: function() { triggerFileDiff(); } },
+            { id: "checksum", title: qsTr("Compute File Checksums..."), category: qsTr("Commands"), shortcut: "", run: function() { triggerChecksum(); } },
+            { id: "terminal", title: qsTr("Open Terminal in Current Folder"), category: qsTr("Commands"), shortcut: "F9", run: function() { backend.openInTerminal(currentModel().path); } },
+            { id: "preview", title: qsTr("View / Preview Item"), category: qsTr("Files"), shortcut: "F3", run: function() { triggerF3View(); } },
+            { id: "editFile", title: qsTr("Edit Item with $EDITOR"), category: qsTr("Files"), shortcut: "F4", run: function() { triggerF4Edit(); } },
+            { id: "newFile", title: qsTr("Create New File..."), category: qsTr("Files"), shortcut: "Shift+F4", run: function() { triggerNewFile(); } },
+            { id: "copy", title: qsTr("Copy Selected to Target Panel..."), category: qsTr("Files"), shortcut: "F5", run: function() { triggerF5Copy(); } },
+            { id: "move", title: qsTr("Move Selected to Target Panel..."), category: qsTr("Files"), shortcut: "F6", run: function() { triggerF6Move(); } },
+            { id: "rename", title: qsTr("Rename Item..."), category: qsTr("Files"), shortcut: "Shift+F6", run: function() { triggerRename(); } },
+            { id: "multiRename", title: qsTr("Multi-Rename Tool..."), category: qsTr("Files"), shortcut: "Ctrl+M", run: function() { triggerMultiRename(); } },
+            { id: "symlink", title: qsTr("Create Symbolic Link..."), category: qsTr("Files"), shortcut: "Ctrl+Shift+F5", run: function() { triggerSymlink(); } },
+            { id: "mkdir", title: qsTr("Create New Folder..."), category: qsTr("Files"), shortcut: "F7", run: function() { triggerF7NewFolder(); } },
+            { id: "delete", title: qsTr("Delete Selected Item(s)"), category: qsTr("Files"), shortcut: "F8", run: function() { triggerF8Delete(); } },
+            { id: "pack", title: qsTr("Pack Selected to Archive..."), category: qsTr("Archives"), shortcut: "Alt+F5", run: function() { triggerPackArchive(); } },
+            { id: "extract", title: qsTr("Extract Archive"), category: qsTr("Archives"), shortcut: "Alt+F9", run: function() { triggerExtractArchive(); } },
+            { id: "properties", title: qsTr("Item Properties & Permissions"), category: qsTr("Files"), shortcut: "Alt+Enter", run: function() { triggerProperties(); } },
+            { id: "selectAll", title: qsTr("Select All Items"), category: qsTr("Selection"), shortcut: "Ctrl+A", run: function() { currentModel().selectAll(); } },
+            { id: "deselectAll", title: qsTr("Deselect All Items"), category: qsTr("Selection"), shortcut: "Ctrl+D", run: function() { currentModel().deselectAll(); } },
+            { id: "invertSel", title: qsTr("Invert Selection"), category: qsTr("Selection"), shortcut: "Ctrl+Shift+A", run: function() { currentModel().invertSelection(); } },
+            { id: "selectMask", title: qsTr("Select by Wildcard..."), category: qsTr("Selection"), shortcut: "Num+", run: function() { openMaskDialog(true); } },
+            { id: "deselectMask", title: qsTr("Deselect by Wildcard..."), category: qsTr("Selection"), shortcut: "Num-", run: function() { openMaskDialog(false); } },
+            { id: "undo", title: qsTr("Undo Last Operation"), category: qsTr("Edit"), shortcut: "Ctrl+Z", run: function() { backend.undoLastOperation(); } },
+            { id: "shortcuts", title: qsTr("Keyboard Shortcuts"), category: qsTr("Help"), shortcut: "?", run: function() { win.helpOpen = true; } },
+            { id: "about", title: qsTr("About AeroCommander"), category: qsTr("Help"), shortcut: "", run: function() { win.aboutOpen = true; } }
+        ];
+    }
+
+    function openCommandPalette(mode) {
+        win.closeAllMenus();
+        win.commandPaletteOpen = true;
+        commandPaletteDialog.resetAndRefresh(mode);
+    }
+
+    function openAdvancedSearchDialog() {
+        win.closeAllMenus();
+        win.searchOpen = true;
+        searchInput.forceFieldFocus();
+    }
+
+    function openSyncDirsDialog() {
+        win.closeAllMenus();
+        win.syncDirsOpen = true;
+        syncDirsDialog.refreshCompare();
+    }
+
+    function openDuplicateFinderDialog() {
+        win.closeAllMenus();
+        win.duplicateFinderOpen = true;
+        duplicateFinderDialog.runScan();
+    }
+
     // ================= GLOBAL SHORTCUTS =================
 
-    Shortcut { sequence: "Tab"; context: Qt.ApplicationShortcut; onActivated: {
+    Shortcut { sequence: "Tab"; enabled: !win.commandPaletteOpen; context: Qt.ApplicationShortcut; onActivated: {
         backend.switchPanel();
         currentListView().forceActiveFocus();
         updateQuickView();
@@ -3320,7 +3830,7 @@ ApplicationWindow {
     }}
 
     // Item Properties & Permissions
-    Shortcut { sequences: ["Alt+Return", "Alt+Enter"]; context: Qt.ApplicationShortcut; onActivated: triggerProperties() }
+    Shortcut { sequences: ["Alt+Return", "Alt+Enter"]; enabled: !win.commandPaletteOpen; context: Qt.ApplicationShortcut; onActivated: triggerProperties() }
 
     Shortcut { sequence: "Ctrl+Q"; context: Qt.ApplicationShortcut; onActivated: {
         win.quickViewActive = !win.quickViewActive;
@@ -3343,12 +3853,10 @@ ApplicationWindow {
     Shortcut { sequence: "Ctrl+S"; context: Qt.ApplicationShortcut; onActivated: toggleFilterBar() }
     Shortcut { sequence: "Ctrl+B"; context: Qt.ApplicationShortcut; onActivated: win.bookmarksOpen = !win.bookmarksOpen }
     Shortcut { sequence: "Ctrl+D"; context: Qt.ApplicationShortcut; onActivated: currentModel().deselectAll() }
-    Shortcut { sequence: "Alt+F7"; context: Qt.ApplicationShortcut; onActivated: {
-        searchInput.text = "";
-        searchResults = [];
-        searchOpen = true;
-        searchInput.forceFieldFocus();
-    }}
+    Shortcut { sequence: "Alt+F7"; context: Qt.ApplicationShortcut; onActivated: win.openAdvancedSearchDialog() }
+    Shortcut { sequence: "Ctrl+Shift+D"; context: Qt.ApplicationShortcut; onActivated: currentModel().toggleDiskUsageMode() }
+    Shortcut { sequence: "Ctrl+Shift+S"; context: Qt.ApplicationShortcut; onActivated: win.openSyncDirsDialog() }
+    Shortcut { sequence: "Ctrl+Shift+F7"; context: Qt.ApplicationShortcut; onActivated: win.openDuplicateFinderDialog() }
     Shortcut { sequence: "Ctrl+H"; context: Qt.ApplicationShortcut; onActivated: {
         var m = currentModel();
         m.setShowHidden(!m.showHidden);
@@ -3375,9 +3883,13 @@ ApplicationWindow {
     Shortcut { sequences: ["-", "Num+-"]; enabled: !win.isTextInputFocused(); context: Qt.ApplicationShortcut; onActivated: openMaskDialog(false) }
     Shortcut { sequences: ["*", "Num+*"]; enabled: !win.isTextInputFocused(); context: Qt.ApplicationShortcut; onActivated: currentModel().invertSelection() }
 
-    // View Modes (Ctrl+1 / Ctrl+2)
+    // View Modes (Ctrl+1 / Ctrl+2), Flat View (Ctrl+Shift+B), Palette (Ctrl+Shift+P / Ctrl+P) & Theme Toggle (Ctrl+Shift+T)
     Shortcut { sequence: "Ctrl+1"; context: Qt.ApplicationShortcut; onActivated: currentModel().setViewMode(0) }
     Shortcut { sequence: "Ctrl+2"; context: Qt.ApplicationShortcut; onActivated: currentModel().setViewMode(1) }
+    Shortcut { sequence: "Ctrl+Shift+B"; context: Qt.ApplicationShortcut; onActivated: currentModel().toggleFlatView() }
+    Shortcut { sequence: "Ctrl+Shift+P"; context: Qt.ApplicationShortcut; onActivated: win.openCommandPalette("commands") }
+    Shortcut { sequence: "Ctrl+P"; context: Qt.ApplicationShortcut; onActivated: win.openCommandPalette("jump") }
+    Shortcut { sequence: "Ctrl+Shift+T"; context: Qt.ApplicationShortcut; onActivated: backend.toggleThemeMode() }
 
     // Menu Bar Access Shortcuts (Alt+F, Alt+E, Alt+V, Alt+C, Alt+H)
     Shortcut { sequence: "Alt+F"; enabled: !win.isTextInputFocused(); context: Qt.ApplicationShortcut; onActivated: { win.closeAllMenus(); filesMenu.open(); win.menuBarActive = true; } }
@@ -3388,12 +3900,20 @@ ApplicationWindow {
 
     Shortcut { sequence: "Escape"; context: Qt.ApplicationShortcut; onActivated: {
         if (win.isAnyMenuOpen()) { win.closeAllMenus(); return; }
+        if (commandPaletteOpen) { commandPaletteOpen = false; currentListView().forceActiveFocus(); return; }
+        if (syncDirsOpen) { syncDirsOpen = false; currentListView().forceActiveFocus(); return; }
+        if (duplicateFinderOpen) { duplicateFinderOpen = false; currentListView().forceActiveFocus(); return; }
         if (aboutOpen) { aboutOpen = false; return; }
         if (conflictDialog.visible) { conflictDialog.answer(4); return; }
         if (propertiesOpen) { propertiesOpen = false; return; }
         if (helpOpen) { helpOpen = false; return; }
         if (previewOpen) { previewOpen = false; return; }
-        if (searchOpen) { searchOpen = false; return; }
+        if (searchOpen) {
+            if (backend.searchRunning)
+                backend.cancelSearch();
+            searchOpen = false;
+            return;
+        }
         if (newFileOpen) { newFileOpen = false; return; }
         if (symlinkOpen) { symlinkOpen = false; return; }
         if (maskOpen) { maskOpen = false; return; }
@@ -3442,7 +3962,7 @@ ApplicationWindow {
                 Layout.preferredHeight: 40
                 implicitHeight: 40
                 height: 40
-                color: "#11141e"
+                color: p.appBarBg
 
                 RowLayout {
                     anchors.fill: parent
@@ -3470,11 +3990,11 @@ ApplicationWindow {
                             text: "AeroCommander"
                             font.bold: true
                             font.pixelSize: 14
-                            color: "#f8fafc"
+                            color: p.textPrimary
                         }
                     }
 
-                    Rectangle { width: 1; height: 18; color: "#22283a" }
+                    Rectangle { width: 1; height: 18; color: p.borderDefault }
 
                     // Dropdown Menu Bar
                     RowLayout {
@@ -3776,6 +4296,20 @@ ApplicationWindow {
                                             updateQuickView();
                                     }
                                 }
+                                AppMenuItem {
+                                    text: qsTr("Flat / Branch View")
+                                    shortcutHint: "Ctrl+Shift+B"
+                                    checkable: true
+                                    checked: currentModel().flatView
+                                    onTriggered: currentModel().toggleFlatView()
+                                }
+                                AppMenuItem {
+                                    text: qsTr("Disk Usage Analyzer")
+                                    shortcutHint: "Ctrl+Shift+D"
+                                    checkable: true
+                                    checked: currentModel().diskUsageMode
+                                    onTriggered: currentModel().toggleDiskUsageMode()
+                                }
 
                                 AppMenuSeparator {}
 
@@ -3826,6 +4360,23 @@ ApplicationWindow {
                                     checked: currentModel().sortField === 3
                                     onTriggered: currentModel().setSortField(3)
                                 }
+
+                                AppMenuSeparator {}
+
+                                AppMenuItem {
+                                    text: qsTr("Theme: Dark")
+                                    shortcutHint: "Ctrl+Shift+T"
+                                    checkable: true
+                                    checked: win.isDark
+                                    onTriggered: backend.themeMode = "dark"
+                                }
+                                AppMenuItem {
+                                    text: qsTr("Theme: Light")
+                                    shortcutHint: "Ctrl+Shift+T"
+                                    checkable: true
+                                    checked: !win.isDark
+                                    onTriggered: backend.themeMode = "light"
+                                }
                             }
                         }
 
@@ -3858,14 +4409,32 @@ ApplicationWindow {
                                 onClosed: Qt.callLater(function() { if (!win.isAnyMenuOpen()) win.menuBarActive = false; })
 
                                 AppMenuItem {
+                                    text: qsTr("Command Palette...")
+                                    shortcutHint: "Ctrl+Shift+P"
+                                    onTriggered: win.openCommandPalette("commands")
+                                }
+                                AppMenuItem {
+                                    text: qsTr("Quick Jump to Folder...")
+                                    shortcutHint: "Ctrl+P"
+                                    onTriggered: win.openCommandPalette("jump")
+                                }
+
+                                AppMenuSeparator {}
+
+                                AppMenuItem {
                                     text: qsTr("Find Files...")
                                     shortcutHint: "Alt+F7"
-                                    onTriggered: {
-                                        searchInput.text = "";
-                                        searchResults = [];
-                                        searchOpen = true;
-                                        searchInput.forceFieldFocus();
-                                    }
+                                    onTriggered: win.openAdvancedSearchDialog()
+                                }
+                                AppMenuItem {
+                                    text: qsTr("Find Duplicate Files...")
+                                    shortcutHint: "Ctrl+Shift+F7"
+                                    onTriggered: win.openDuplicateFinderDialog()
+                                }
+                                AppMenuItem {
+                                    text: qsTr("Synchronize Directories...")
+                                    shortcutHint: "Ctrl+Shift+S"
+                                    onTriggered: win.openSyncDirsDialog()
                                 }
                                 AppMenuItem {
                                     text: qsTr("Compare Directories")
@@ -4025,11 +4594,121 @@ ApplicationWindow {
                         }
 
                         ToolbarBtn {
+                            label: qsTr("Palette")
+                            shortcutHint: "Ctrl+P"
+                            tooltipText: qsTr("Command Palette (Ctrl+Shift+P) & Quick Jump (Ctrl+P)")
+                            onClicked: win.openCommandPalette("commands")
+                        }
+
+                        ToolbarBtn {
                             label: qsTr("Shortcuts")
                             shortcutHint: "?"
                             accentHighlight: true
                             tooltipText: qsTr("Keyboard Shortcuts (?)")
                             onClicked: win.helpOpen = true
+                        }
+
+                        Rectangle { width: 1; height: 16; color: p.borderDefault }
+
+                        // Segmented 2026 Light / Dark Theme Switcher Pill
+                        Rectangle {
+                            id: themeSwitcherPill
+                            implicitHeight: 26
+                            implicitWidth: themeSwitchRow.implicitWidth + 4
+                            radius: win.smallRadius
+                            color: p.subBarBg
+                            border.width: 1
+                            border.color: p.borderDefault
+
+                            RowLayout {
+                                id: themeSwitchRow
+                                anchors.centerIn: parent
+                                spacing: 2
+
+                                Rectangle {
+                                    implicitHeight: 20
+                                    implicitWidth: lightSegRow.implicitWidth + 12
+                                    radius: Math.max(0, win.smallRadius - 1)
+                                    color: !win.isDark ? Qt.alpha(p.accent, 0.16)
+                                                       : (lightSegMouse.containsMouse ? p.btnHoverBg : "transparent")
+                                    border.width: !win.isDark ? 1 : 0
+                                    border.color: Qt.alpha(p.accent, 0.48)
+
+                                    RowLayout {
+                                        id: lightSegRow
+                                        anchors.centerIn: parent
+                                        spacing: 4
+
+                                        VectorIcon {
+                                            width: 12
+                                            height: 12
+                                            kind: "sun"
+                                            iconColor: !win.isDark ? p.accent : (lightSegMouse.containsMouse ? p.textPrimary : p.textMuted)
+                                        }
+
+                                        Text {
+                                            text: qsTr("Light")
+                                            font.pixelSize: 11
+                                            font.weight: !win.isDark ? Font.DemiBold : Font.Normal
+                                            color: !win.isDark ? p.accent : (lightSegMouse.containsMouse ? p.textPrimary : p.textMuted)
+                                        }
+                                    }
+
+                                    MouseArea {
+                                        id: lightSegMouse
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: backend.themeMode = "light"
+                                    }
+
+                                    ToolTip.visible: lightSegMouse.containsMouse
+                                    ToolTip.delay: 450
+                                    ToolTip.text: qsTr("Switch to Light theme (Ctrl+Shift+T)")
+                                }
+
+                                Rectangle {
+                                    implicitHeight: 20
+                                    implicitWidth: darkSegRow.implicitWidth + 12
+                                    radius: Math.max(0, win.smallRadius - 1)
+                                    color: win.isDark ? Qt.alpha(p.accent, 0.16)
+                                                      : (darkSegMouse.containsMouse ? p.btnHoverBg : "transparent")
+                                    border.width: win.isDark ? 1 : 0
+                                    border.color: Qt.alpha(p.accent, 0.48)
+
+                                    RowLayout {
+                                        id: darkSegRow
+                                        anchors.centerIn: parent
+                                        spacing: 4
+
+                                        VectorIcon {
+                                            width: 12
+                                            height: 12
+                                            kind: "moon"
+                                            iconColor: win.isDark ? p.accent : (darkSegMouse.containsMouse ? p.textPrimary : p.textMuted)
+                                        }
+
+                                        Text {
+                                            text: qsTr("Dark")
+                                            font.pixelSize: 11
+                                            font.weight: win.isDark ? Font.DemiBold : Font.Normal
+                                            color: win.isDark ? p.accent : (darkSegMouse.containsMouse ? p.textPrimary : p.textMuted)
+                                        }
+                                    }
+
+                                    MouseArea {
+                                        id: darkSegMouse
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: backend.themeMode = "dark"
+                                    }
+
+                                    ToolTip.visible: darkSegMouse.containsMouse
+                                    ToolTip.delay: 450
+                                    ToolTip.text: qsTr("Switch to Dark theme (Ctrl+Shift+T)")
+                                }
+                            }
                         }
                     }
                 }
@@ -4039,7 +4718,7 @@ ApplicationWindow {
                     anchors.left: parent.left
                     anchors.right: parent.right
                     height: 1
-                    color: "#1c2132"
+                    color: p.borderSubtle
                 }
             }
 
@@ -4047,7 +4726,7 @@ ApplicationWindow {
             Rectangle {
                 Layout.fillWidth: true
                 height: 32
-                color: "#0e111a"
+                color: p.subBarBg
 
                 RowLayout {
                     anchors.fill: parent
@@ -4071,7 +4750,7 @@ ApplicationWindow {
                                 text: qsTr("Drives")
                                 font.pixelSize: 11
                                 font.bold: true
-                                color: "#646e87"
+                                color: p.textDim
                             }
 
                             Repeater {
@@ -4081,9 +4760,9 @@ ApplicationWindow {
                                     implicitHeight: 22
                                     implicitWidth: driveRow.implicitWidth + (modelData.canUnmount ? 24 : 12)
                                     radius: win.smallRadius
-                                    color: driveMouse.containsMouse ? "#1d2336" : (isDevMounted ? "#141824" : "#10131f")
+                                    color: driveMouse.containsMouse ? p.chipHoverBg : (isDevMounted ? p.chipBg : p.chipUnmountedBg)
                                     border.width: 1
-                                    border.color: !isDevMounted ? "#333d59" : (currentModel().path === modelData.path ? Qt.alpha(theme.accent, 0.55) : "#21273a")
+                                    border.color: !isDevMounted ? p.borderStrong : (currentModel().path === modelData.path ? Qt.alpha(p.accent, 0.55) : p.borderDefault)
 
                                     RowLayout {
                                         id: driveRow
@@ -4094,14 +4773,14 @@ ApplicationWindow {
                                             width: 13
                                             height: 13
                                             kind: modelData.isRemovable ? "usb" : "drive"
-                                            iconColor: !isDevMounted ? "#64748b" : (currentModel().path === modelData.path ? theme.accent : "#8b95ab")
+                                            iconColor: !isDevMounted ? p.textDim : (currentModel().path === modelData.path ? p.accent : p.textMuted)
                                         }
 
                                         Text {
                                             text: modelData.label
                                             font.pixelSize: 11
                                             font.weight: Font.Medium
-                                            color: isDevMounted ? "#dce3f2" : "#94a3b8"
+                                            color: isDevMounted ? p.textPrimary : p.textMuted
                                         }
 
                                         Text {
@@ -4109,7 +4788,7 @@ ApplicationWindow {
                                             text: modelData.free
                                             font.pixelSize: 10
                                             font.family: "monospace"
-                                            color: "#6b758f"
+                                            color: p.textDim
                                         }
 
                                         // Mount button for unmounted disks
@@ -4118,7 +4797,7 @@ ApplicationWindow {
                                             implicitHeight: 16
                                             implicitWidth: mntText.implicitWidth + 8
                                             radius: 2
-                                            color: mntMouse.containsMouse ? theme.accent : "#1e293b"
+                                            color: mntMouse.containsMouse ? p.accent : p.badgeBg
 
                                             Text {
                                                 id: mntText
@@ -4126,7 +4805,7 @@ ApplicationWindow {
                                                 text: qsTr("Mount")
                                                 font.pixelSize: 9
                                                 font.bold: true
-                                                color: mntMouse.containsMouse ? "#0f172a" : "#cbd5e1"
+                                                color: mntMouse.containsMouse ? p.accentFg : p.textSecondary
                                             }
 
                                             MouseArea {
@@ -4144,13 +4823,13 @@ ApplicationWindow {
                                             implicitHeight: 16
                                             implicitWidth: 16
                                             radius: 2
-                                            color: unmountMouse.containsMouse ? "#3b1e22" : "transparent"
+                                            color: unmountMouse.containsMouse ? p.dangerHoverBg : "transparent"
 
                                             Text {
                                                 anchors.centerIn: parent
                                                 text: "⏏"
                                                 font.pixelSize: 10
-                                                color: unmountMouse.containsMouse ? "#f87171" : "#94a3b8"
+                                                color: unmountMouse.containsMouse ? p.dangerAccent : p.textMuted
                                             }
 
                                             MouseArea {
@@ -4180,13 +4859,13 @@ ApplicationWindow {
                                 }
                             }
 
-                            Rectangle { width: 1; height: 14; color: "#22283a" }
+                            Rectangle { width: 1; height: 14; color: p.borderDefault }
 
                             Text {
                                 text: qsTr("Bookmarks")
                                 font.pixelSize: 11
                                 font.bold: true
-                                color: "#646e87"
+                                color: p.textDim
                             }
 
                             Repeater {
@@ -4195,9 +4874,9 @@ ApplicationWindow {
                                     implicitHeight: 22
                                     implicitWidth: bmRow.implicitWidth + 12
                                     radius: win.smallRadius
-                                    color: bmMouse.containsMouse ? "#1d2336" : "#141824"
+                                    color: bmMouse.containsMouse ? p.chipHoverBg : p.chipBg
                                     border.width: 1
-                                    border.color: currentModel().path === modelData ? Qt.alpha(theme.accent, 0.65) : "#21273a"
+                                    border.color: currentModel().path === modelData ? Qt.alpha(p.accent, 0.65) : p.borderDefault
 
                                     RowLayout {
                                         id: bmRow
@@ -4207,13 +4886,13 @@ ApplicationWindow {
                                         Text {
                                             text: "★"
                                             font.pixelSize: 10
-                                            color: theme.accent
+                                            color: p.accent
                                         }
 
                                         Text {
                                             text: modelData === "/" ? "/" : modelData.split("/").pop()
                                             font.pixelSize: 11
-                                            color: currentModel().path === modelData ? theme.accent : "#cbd5e1"
+                                            color: currentModel().path === modelData ? p.accent : p.textSecondary
                                         }
                                     }
 
@@ -4243,9 +4922,9 @@ ApplicationWindow {
                                 implicitHeight: 22
                                 implicitWidth: addBmLabel.implicitWidth + 12
                                 radius: win.smallRadius
-                                color: addBmMouse.containsMouse ? "#1d2336" : "transparent"
+                                color: addBmMouse.containsMouse ? p.chipHoverBg : "transparent"
                                 border.width: 1
-                                border.color: "#252c40"
+                                border.color: p.borderDefault
 
                                 Text {
                                     id: addBmLabel
@@ -4253,7 +4932,7 @@ ApplicationWindow {
                                     text: "+ ★"
                                     font.pixelSize: 11
                                     font.bold: true
-                                    color: theme.accent
+                                    color: p.accent
                                 }
 
                                 MouseArea {
@@ -4271,7 +4950,7 @@ ApplicationWindow {
                         }
                     }
 
-                    Rectangle { width: 1; height: 14; color: "#22283a" }
+                    Rectangle { width: 1; height: 14; color: p.borderDefault }
 
                     // Pinned panel sync actions on the right so they never scroll out of view
                     ToolbarBtn {
@@ -4294,7 +4973,7 @@ ApplicationWindow {
                     anchors.left: parent.left
                     anchors.right: parent.right
                     height: 1
-                    color: "#191e2d"
+                    color: p.borderSubtle
                 }
             }
 
@@ -4329,14 +5008,14 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 height: backend.isBusy ? 30 : (backend.statusMessage.length > 0 ? 26 : 0)
                 visible: height > 0
-                color: "#131724"
+                color: p.panelFooterBg
 
                 Rectangle {
                     anchors.top: parent.top
                     anchors.left: parent.left
                     anchors.right: parent.right
                     height: 1
-                    color: "#1f2538"
+                    color: p.borderSubtle
                 }
 
                 RowLayout {
@@ -4349,14 +5028,14 @@ ApplicationWindow {
                         width: 6
                         height: 6
                         radius: 3
-                        color: theme.accent
+                        color: p.accent
                     }
 
                     Text {
                         text: backend.isBusy ? backend.busyTitle : backend.statusMessage
                         font.pixelSize: 11
                         font.weight: backend.isBusy ? Font.DemiBold : Font.Normal
-                        color: backend.isBusy ? theme.accent : "#cbd5e1"
+                        color: backend.isBusy ? p.accent : p.textSecondary
                         Layout.fillWidth: !backend.isBusy
                         elide: Text.ElideRight
                     }
@@ -4366,7 +5045,7 @@ ApplicationWindow {
                         text: backend.busyDetail
                         font.pixelSize: 11
                         font.family: "monospace"
-                        color: "#94a3b8"
+                        color: p.textMuted
                         Layout.fillWidth: true
                         elide: Text.ElideMiddle
                     }
@@ -4376,7 +5055,7 @@ ApplicationWindow {
                         text: Math.round(backend.busyProgress * 100) + "%"
                         font.pixelSize: 11
                         font.family: "monospace"
-                        color: "#cbd5e1"
+                        color: p.textSecondary
                     }
 
                     // Slim custom progress track
@@ -4385,13 +5064,13 @@ ApplicationWindow {
                         Layout.preferredWidth: 180
                         Layout.preferredHeight: 6
                         radius: 3
-                        color: "#22283a"
+                        color: p.borderDefault
 
                         Rectangle {
                             width: parent.width * Math.max(0, Math.min(1, backend.busyProgress))
                             height: parent.height
                             radius: 3
-                            color: theme.accent
+                            color: p.accent
                         }
                     }
 
@@ -4409,14 +5088,14 @@ ApplicationWindow {
             Rectangle {
                 Layout.fillWidth: true
                 height: 34
-                color: "#0e111a"
+                color: p.subBarBg
 
                 Rectangle {
                     anchors.top: parent.top
                     anchors.left: parent.left
                     anchors.right: parent.right
                     height: 1
-                    color: "#1a2030"
+                    color: p.borderSubtle
                 }
 
                 RowLayout {
@@ -4430,7 +5109,7 @@ ApplicationWindow {
                         font.family: "monospace"
                         font.bold: true
                         font.pixelSize: 11
-                        color: theme.accent
+                        color: p.accent
                         Layout.maximumWidth: 360
                         elide: Text.ElideLeft
                     }
@@ -4461,14 +5140,14 @@ ApplicationWindow {
             Rectangle {
                 Layout.fillWidth: true
                 height: 36
-                color: "#0b0d14"
+                color: p.fkeyBarBg
 
                 Rectangle {
                     anchors.top: parent.top
                     anchors.left: parent.left
                     anchors.right: parent.right
                     height: 1
-                    color: "#1a2030"
+                    color: p.borderSubtle
                 }
 
                 RowLayout {
@@ -4494,7 +5173,7 @@ ApplicationWindow {
 
     // ================= MODALS & DIALOGS =================
 
-    // Consistent opaque dark dialog shell matching the app's surface palette.
+    // Consistent opaque themed dialog shell matching the app's surface palette.
     component AppDialog : Dialog {
         id: dlg
         property bool showCloseButton: true
@@ -4505,13 +5184,13 @@ ApplicationWindow {
         bottomPadding: 14
 
         Overlay.modal: Rectangle {
-            color: Qt.rgba(0.02, 0.03, 0.06, 0.74)
+            color: p.overlayDim
         }
 
         background: Rectangle {
-            color: "#111521"
+            color: p.dialogBg
             border.width: 1
-            border.color: "#262f47"
+            border.color: p.borderDefault
             radius: Math.min(8, theme.radius)
         }
 
@@ -4525,7 +5204,7 @@ ApplicationWindow {
                 anchors.leftMargin: 1
                 anchors.rightMargin: 1
                 height: 1
-                color: "#20273c"
+                color: p.borderSubtle
             }
 
             RowLayout {
@@ -4538,7 +5217,7 @@ ApplicationWindow {
                     text: dlg.title
                     font.pixelSize: 14
                     font.bold: true
-                    color: "#f1f5f9"
+                    color: p.textPrimary
                     Layout.fillWidth: true
                     elide: Text.ElideRight
                 }
@@ -4551,12 +5230,24 @@ ApplicationWindow {
             }
         }
 
+        Component {
+            id: footerBgComponent
+            Item {
+                Rectangle {
+                    anchors.top: parent.top
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.leftMargin: 1
+                    anchors.rightMargin: 1
+                    height: 1
+                    color: p.borderSubtle
+                }
+            }
+        }
+
         Component.onCompleted: {
             if (footer) {
-                footer.background = Qt.createQmlObject(
-                    'import QtQuick; Item { Rectangle { anchors.top: parent.top; anchors.left: parent.left; anchors.right: parent.right; anchors.leftMargin: 1; anchors.rightMargin: 1; height: 1; color: "#20273c" } }',
-                    footer
-                );
+                footer.background = footerBgComponent.createObject(footer);
             }
         }
     }
@@ -4595,7 +5286,7 @@ ApplicationWindow {
 
             Text {
                 text: qsTr("The destination already contains \"%1\".").arg(conflictDialog.info.name || "")
-                color: "#ffffff"
+                color: p.textPrimary
                 font.pixelSize: 13
                 font.bold: true
                 Layout.preferredWidth: 480
@@ -4607,30 +5298,30 @@ ApplicationWindow {
                 columnSpacing: 12
                 rowSpacing: 4
 
-                Text { text: qsTr("New:"); color: "#8a92a6"; font.pixelSize: 12 }
+                Text { text: qsTr("New:"); color: p.textMuted; font.pixelSize: 12 }
                 Text {
                     text: conflictDialog.info.sourcePath
                           ? backend.formatConflictDetails(conflictDialog.info.sourceSize,
                                                           conflictDialog.info.sourceModified,
                                                           conflictDialog.info.sourceIsDir)
                           : ""
-                    color: "#ffffff"
+                    color: p.textPrimary
                     font.pixelSize: 12
                 }
-                Text { text: qsTr("Existing:"); color: "#8a92a6"; font.pixelSize: 12 }
+                Text { text: qsTr("Existing:"); color: p.textMuted; font.pixelSize: 12 }
                 Text {
                     text: conflictDialog.info.destPath
                           ? backend.formatConflictDetails(conflictDialog.info.destSize,
                                                           conflictDialog.info.destModified,
                                                           conflictDialog.info.destIsDir)
                           : ""
-                    color: "#ffffff"
+                    color: p.textPrimary
                     font.pixelSize: 12
                 }
-                Text { text: qsTr("In:"); color: "#8a92a6"; font.pixelSize: 12 }
+                Text { text: qsTr("In:"); color: p.textMuted; font.pixelSize: 12 }
                 Text {
                     text: (conflictDialog.info.destPath || "").replace(/\/[^\/]*$/, "")
-                    color: "#b0b8cb"
+                    color: p.textSecondary
                     font.pixelSize: 12
                     elide: Text.ElideMiddle
                     Layout.preferredWidth: 400
@@ -4676,7 +5367,7 @@ ApplicationWindow {
             spacing: 10
             Text {
                 text: qsTr("Copy %1 item(s) to:").arg(getSelectedOrCurrentPaths().length)
-                color: "#e2e8f0"
+                color: p.textSecondary
                 font.pixelSize: 13
             }
             CompactField {
@@ -4707,7 +5398,7 @@ ApplicationWindow {
             spacing: 10
             Text {
                 text: qsTr("Move %1 item(s) to:").arg(getSelectedOrCurrentPaths().length)
-                color: "#e2e8f0"
+                color: p.textSecondary
                 font.pixelSize: 13
             }
             CompactField {
@@ -4738,7 +5429,7 @@ ApplicationWindow {
             spacing: 10
             Text {
                 text: qsTr("Are you sure you want to delete %1 selected item(s)?").arg(getSelectedOrCurrentPaths().length)
-                color: "#e2e8f0"
+                color: p.textSecondary
                 font.pixelSize: 13
             }
             CheckBox {
@@ -4770,12 +5461,12 @@ ApplicationWindow {
                 Layout.preferredWidth: 380
                 Text {
                     text: qsTr("In:")
-                    color: "#94a3b8"
+                    color: p.textMuted
                     font.pixelSize: 12
                 }
                 Text {
                     text: currentModel().path
-                    color: currentModel().isWritable ? theme.accent : "#f87171"
+                    color: currentModel().isWritable ? p.accent : p.dangerAccent
                     font.family: "monospace"
                     font.pixelSize: 12
                     font.bold: true
@@ -4789,18 +5480,18 @@ ApplicationWindow {
                 Layout.preferredWidth: 380
                 implicitHeight: 28
                 radius: 4
-                color: Qt.alpha("#ef4444", 0.15)
+                color: Qt.alpha(p.dangerAccent, 0.14)
                 border.width: 1
-                border.color: Qt.alpha("#ef4444", 0.4)
+                border.color: Qt.alpha(p.dangerAccent, 0.4)
                 RowLayout {
                     anchors.fill: parent
                     anchors.leftMargin: 8
                     anchors.rightMargin: 8
                     spacing: 6
-                    Text { text: "⚠"; color: "#f87171"; font.pixelSize: 13 }
+                    Text { text: "⚠"; color: p.dangerAccent; font.pixelSize: 13 }
                     Text {
                         text: qsTr("This folder is read-only (Permission denied)")
-                        color: "#fca5a5"
+                        color: p.dangerText
                         font.pixelSize: 11
                         font.bold: true
                     }
@@ -4809,7 +5500,7 @@ ApplicationWindow {
 
             Text {
                 text: qsTr("Folder name(s) (comma-separated for multiple):")
-                color: "#e2e8f0"
+                color: p.textSecondary
                 font.pixelSize: 13
             }
             CompactField {
@@ -4827,15 +5518,15 @@ ApplicationWindow {
                     implicitWidth: 16
                     implicitHeight: 16
                     radius: 8
-                    color: Qt.alpha(theme.accent, 0.2)
+                    color: Qt.alpha(p.accent, 0.18)
                     border.width: 1
-                    border.color: Qt.alpha(theme.accent, 0.5)
+                    border.color: Qt.alpha(p.accent, 0.5)
                     Text {
                         anchors.centerIn: parent
                         text: "i"
                         font.pixelSize: 10
                         font.bold: true
-                        color: theme.accent
+                        color: p.accent
                     }
                 }
                 Text {
@@ -4844,7 +5535,7 @@ ApplicationWindow {
                         return qsTr("Will create %1 folders").arg(count);
                     }
                     font.pixelSize: 11
-                    color: theme.accent
+                    color: p.accent
                 }
             }
         }
@@ -4867,7 +5558,7 @@ ApplicationWindow {
             spacing: 10
             Text {
                 text: qsTr("New name for %1:").arg(win.renameOldName)
-                color: "#e2e8f0"
+                color: p.textSecondary
                 font.pixelSize: 13
             }
             CompactField {
@@ -4902,7 +5593,7 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 Text {
                     text: qsTr("Active folder: %1").arg(currentModel().path)
-                    color: "#94a3b8"
+                    color: p.textMuted
                     font.pixelSize: 12
                     font.family: "monospace"
                     Layout.fillWidth: true
@@ -4924,7 +5615,7 @@ ApplicationWindow {
                 delegate: Rectangle {
                     width: ListView.view.width
                     height: 32
-                    color: index % 2 === 0 ? "#141824" : "transparent"
+                    color: index % 2 === 0 ? p.rowAltBg : "transparent"
                     radius: win.smallRadius
 
                     RowLayout {
@@ -4936,12 +5627,12 @@ ApplicationWindow {
                         Text {
                             text: "★"
                             font.pixelSize: 12
-                            color: theme.accent
+                            color: p.accent
                         }
 
                         Text {
                             text: modelData
-                            color: "#e2e8f0"
+                            color: p.textSecondary
                             font.pixelSize: 12
                             font.family: "monospace"
                             Layout.fillWidth: true
@@ -4992,28 +5683,28 @@ ApplicationWindow {
                 columnSpacing: 10
                 rowSpacing: 8
 
-                Text { text: qsTr("Find:"); color: "#b0b8cb"; font.pixelSize: 12 }
+                Text { text: qsTr("Find:"); color: p.textMuted; font.pixelSize: 12 }
                 CompactField {
                     id: mrFindField
                     Layout.fillWidth: true
                     onTextChanged: refreshMultiRenamePreview()
                 }
 
-                Text { text: qsTr("Replace:"); color: "#b0b8cb"; font.pixelSize: 12 }
+                Text { text: qsTr("Replace:"); color: p.textMuted; font.pixelSize: 12 }
                 CompactField {
                     id: mrReplaceField
                     Layout.fillWidth: true
                     onTextChanged: refreshMultiRenamePreview()
                 }
 
-                Text { text: qsTr("Prefix:"); color: "#b0b8cb"; font.pixelSize: 12 }
+                Text { text: qsTr("Prefix:"); color: p.textMuted; font.pixelSize: 12 }
                 CompactField {
                     id: mrPrefixField
                     Layout.fillWidth: true
                     onTextChanged: refreshMultiRenamePreview()
                 }
 
-                Text { text: qsTr("Suffix:"); color: "#b0b8cb"; font.pixelSize: 12 }
+                Text { text: qsTr("Suffix:"); color: p.textMuted; font.pixelSize: 12 }
                 CompactField {
                     id: mrSuffixField
                     Layout.fillWidth: true
@@ -5025,7 +5716,7 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 spacing: 16
 
-                Text { text: qsTr("Case:"); color: "#b0b8cb"; font.pixelSize: 12 }
+                Text { text: qsTr("Case:"); color: p.textMuted; font.pixelSize: 12 }
                 ComboBox {
                     id: mrCaseCombo
                     model: [qsTr("Unchanged"), qsTr("lowercase"), qsTr("UPPERCASE"), qsTr("Title Case")]
@@ -5042,15 +5733,15 @@ ApplicationWindow {
             Rectangle {
                 Layout.fillWidth: true
                 height: 26
-                color: "#151926"
+                color: p.tableHeaderBg
                 radius: win.smallRadius
 
                 RowLayout {
                     anchors.fill: parent
                     anchors.leftMargin: 10
                     anchors.rightMargin: 10
-                    Text { text: qsTr("Original Name"); font.bold: true; font.pixelSize: 11; color: "#8b92a5"; Layout.fillWidth: true }
-                    Text { text: qsTr("New Name Preview"); font.bold: true; font.pixelSize: 11; color: theme.accent; Layout.fillWidth: true }
+                    Text { text: qsTr("Original Name"); font.bold: true; font.pixelSize: 11; color: p.textMuted; Layout.fillWidth: true }
+                    Text { text: qsTr("New Name Preview"); font.bold: true; font.pixelSize: 11; color: p.accent; Layout.fillWidth: true }
                 }
             }
 
@@ -5063,7 +5754,7 @@ ApplicationWindow {
                 delegate: Rectangle {
                     width: ListView.view.width
                     height: 26
-                    color: index % 2 === 0 ? "#121520" : "transparent"
+                    color: index % 2 === 0 ? p.rowAltBg : "transparent"
 
                     RowLayout {
                         anchors.fill: parent
@@ -5071,7 +5762,7 @@ ApplicationWindow {
                         anchors.rightMargin: 10
                         Text {
                             text: modelData.oldName
-                            color: "#9da5bc"
+                            color: p.textMuted
                             font.pixelSize: 12
                             font.family: "monospace"
                             Layout.fillWidth: true
@@ -5079,7 +5770,7 @@ ApplicationWindow {
                         }
                         Text {
                             text: "→  " + modelData.newName
-                            color: theme.accent
+                            color: p.accent
                             font.bold: true
                             font.pixelSize: 12
                             font.family: "monospace"
@@ -5117,7 +5808,7 @@ ApplicationWindow {
             spacing: 10
             Text {
                 text: qsTr("Create archive (.zip, .tar.gz, .tar.xz) from %1 item(s):").arg(getSelectedOrCurrentPaths().length)
-                color: "#e2e8f0"
+                color: p.textSecondary
                 font.pixelSize: 13
             }
             CompactField {
@@ -5154,8 +5845,8 @@ ApplicationWindow {
                 readOnly: true
                 font.family: "monospace"
                 font.pixelSize: 12
-                color: "#d0d6e5"
-                background: Rectangle { color: "#0d1018"; radius: win.smallRadius }
+                color: p.textSecondary
+                background: Rectangle { color: p.inputBg; radius: win.smallRadius; border.width: 1; border.color: p.borderSubtle }
             }
         }
 
@@ -5179,7 +5870,7 @@ ApplicationWindow {
                 text: qsTr("Path: %1 | Size: %2 | Modified: %3").arg(previewData.path || "").arg(previewData.formattedSize || "").arg(previewData.modified || "")
                 font.pixelSize: 11
                 font.family: "monospace"
-                color: "#8b92a5"
+                color: p.textMuted
                 Layout.fillWidth: true
                 elide: Text.ElideMiddle
             }
@@ -5203,8 +5894,8 @@ ApplicationWindow {
                     readOnly: true
                     font.family: "monospace"
                     font.pixelSize: 12
-                    color: "#d0d6e5"
-                    background: Rectangle { color: "#0d1018"; radius: win.smallRadius }
+                    color: p.textSecondary
+                    background: Rectangle { color: p.inputBg; radius: win.smallRadius; border.width: 1; border.color: p.borderSubtle }
                 }
             }
         }
@@ -5212,14 +5903,63 @@ ApplicationWindow {
         onRejected: win.previewOpen = false
     }
 
-    // Alt+F7 Search Dialog
+    // Alt+F7 Asynchronous Advanced Search Dialog
     AppDialog {
         id: searchDialog
         visible: win.searchOpen
-        title: qsTr("Find Files (Alt+F7)")
-        width: 650
-        height: 480
-        standardButtons: Dialog.Close
+        title: qsTr("Advanced Search (Alt+F7)")
+        width: Math.min(820, win.width - 40)
+        height: Math.min(620, win.height - 40)
+        standardButtons: Dialog.NoButton
+
+        property string typeFilter: "all"
+        property var minSizeBytes: 0
+        property int modifiedWithinDays: 0
+        property bool useRegex: false
+        property bool caseSensitive: false
+        property bool includeHidden: true
+
+        function startSearch() {
+            backend.startAdvancedSearch(currentModel().path, {
+                nameQuery: searchInput.text,
+                contentQuery: searchContentInput.text,
+                caseSensitive: caseSensitive,
+                useRegex: useRegex,
+                includeHidden: includeHidden,
+                typeFilter: typeFilter,
+                minSizeBytes: minSizeBytes,
+                modifiedWithinDays: modifiedWithinDays,
+                maxResults: 2000
+            });
+        }
+
+        function feedResults(newTab) {
+            var items = backend.searchResultItems;
+            if (!items || items.length === 0)
+                return;
+            var paths = [];
+            for (var i = 0; i < items.length; i++) {
+                if (items[i] && items[i].path)
+                    paths.push(items[i].path);
+            }
+            if (paths.length === 0)
+                return;
+            var label = searchInput.text.trim();
+            if (label.length === 0)
+                label = searchContentInput.text.trim();
+            if (label.length === 0)
+                label = "*";
+            backend.feedPathsToPanel(paths, qsTr("Search: %1").arg(label), newTab);
+            win.searchOpen = false;
+            currentListView().forceActiveFocus();
+        }
+
+        onRejected: {
+            if (backend.searchRunning)
+                backend.cancelSearch();
+            win.searchOpen = false;
+            currentListView().forceActiveFocus();
+        }
 
         ColumnLayout {
             anchors.fill: parent
@@ -5228,69 +5968,247 @@ ApplicationWindow {
             RowLayout {
                 Layout.fillWidth: true
                 spacing: 8
+                Text {
+                    text: qsTr("Name:")
+                    font.pixelSize: 12
+                    color: p.textSecondary
+                    Layout.preferredWidth: 58
+                }
                 CompactField {
                     id: searchInput
-                    placeholderText: qsTr("Type file name to search...")
+                    placeholderText: qsTr("File name, wildcard (*.cpp), or RegEx (empty = all)...")
                     Layout.fillWidth: true
-                    onAccepted: {
-                        win.searchResults = backend.searchFiles(currentModel().path, searchInput.text);
-                    }
+                    onAccepted: searchDialog.startSearch()
                     onEscaped: searchDialog.reject()
                 }
-                Button {
-                    text: qsTr("Search")
-                    font.bold: true
+                ToolbarBtn {
+                    implicitHeight: 32
+                    label: backend.searchRunning ? qsTr("Stop") : qsTr("Search")
+                    accentHighlight: true
                     onClicked: {
-                        win.searchResults = backend.searchFiles(currentModel().path, searchInput.text);
+                        if (backend.searchRunning)
+                            backend.cancelSearch();
+                        else
+                            searchDialog.startSearch();
                     }
                 }
             }
 
-            Text {
-                text: qsTr("%1 result(s) found in %2").arg(win.searchResults.length).arg(currentModel().path)
-                font.pixelSize: 11
-                color: "#8b92a5"
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+                Text {
+                    text: qsTr("Content:")
+                    font.pixelSize: 12
+                    color: p.textSecondary
+                    Layout.preferredWidth: 58
+                }
+                CompactField {
+                    id: searchContentInput
+                    placeholderText: qsTr("Contains text or RegEx inside files (optional)...")
+                    Layout.fillWidth: true
+                    onAccepted: searchDialog.startSearch()
+                    onEscaped: searchDialog.reject()
+                }
+                FilterPill {
+                    label: ".*"
+                    active: searchDialog.useRegex
+                    onClicked: searchDialog.useRegex = !searchDialog.useRegex
+                }
+                FilterPill {
+                    label: "Aa"
+                    active: searchDialog.caseSensitive
+                    onClicked: searchDialog.caseSensitive = !searchDialog.caseSensitive
+                }
+                FilterPill {
+                    label: qsTr("Hidden")
+                    active: searchDialog.includeHidden
+                    onClicked: searchDialog.includeHidden = !searchDialog.includeHidden
+                }
             }
 
-            ListView {
+            // Filter Bar (Type / Min Size / Modified Date)
+            Flow {
+                Layout.fillWidth: true
+                spacing: 6
+
+                Text { text: qsTr("Type:"); font.pixelSize: 11; color: p.textDim; height: 24; verticalAlignment: Text.AlignVCenter }
+                FilterPill { label: qsTr("All"); active: searchDialog.typeFilter === "all"; onClicked: searchDialog.typeFilter = "all" }
+                FilterPill { label: qsTr("Files"); active: searchDialog.typeFilter === "files"; onClicked: searchDialog.typeFilter = "files" }
+                FilterPill { label: qsTr("Folders"); active: searchDialog.typeFilter === "dirs"; onClicked: searchDialog.typeFilter = "dirs" }
+
+                Item { width: 8; height: 24 }
+
+                Text { text: qsTr("Min Size:"); font.pixelSize: 11; color: p.textDim; height: 24; verticalAlignment: Text.AlignVCenter }
+                FilterPill { label: qsTr("Any"); active: searchDialog.minSizeBytes === 0; onClicked: searchDialog.minSizeBytes = 0 }
+                FilterPill { label: "> 1 MB"; active: searchDialog.minSizeBytes === 1048576; onClicked: searchDialog.minSizeBytes = 1048576 }
+                FilterPill { label: "> 10 MB"; active: searchDialog.minSizeBytes === 10485760; onClicked: searchDialog.minSizeBytes = 10485760 }
+                FilterPill { label: "> 100 MB"; active: searchDialog.minSizeBytes === 104857600; onClicked: searchDialog.minSizeBytes = 104857600 }
+
+                Item { width: 8; height: 24 }
+
+                Text { text: qsTr("Modified:"); font.pixelSize: 11; color: p.textDim; height: 24; verticalAlignment: Text.AlignVCenter }
+                FilterPill { label: qsTr("Any"); active: searchDialog.modifiedWithinDays === 0; onClicked: searchDialog.modifiedWithinDays = 0 }
+                FilterPill { label: qsTr("24h"); active: searchDialog.modifiedWithinDays === 1; onClicked: searchDialog.modifiedWithinDays = 1 }
+                FilterPill { label: qsTr("7d"); active: searchDialog.modifiedWithinDays === 7; onClicked: searchDialog.modifiedWithinDays = 7 }
+                FilterPill { label: qsTr("30d"); active: searchDialog.modifiedWithinDays === 30; onClicked: searchDialog.modifiedWithinDays = 30 }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+                Text {
+                    Layout.fillWidth: true
+                    text: backend.searchRunning
+                          ? qsTr("Scanning (%1 items)... %2 match(es) in %3")
+                                .arg(backend.searchScannedCount)
+                                .arg(backend.searchResultItems.length)
+                                .arg(currentModel().path)
+                          : qsTr("%1 result(s) across %2 item(s) in %3")
+                                .arg(backend.searchResultItems.length)
+                                .arg(backend.searchScannedCount)
+                                .arg(currentModel().path)
+                    font.pixelSize: 11
+                    color: backend.searchRunning ? p.accent : p.textMuted
+                    elide: Text.ElideMiddle
+                }
+            }
+
+            Rectangle {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
+                radius: win.smallRadius
+                color: p.cardBg
+                border.width: 1
+                border.color: p.borderSubtle
                 clip: true
-                model: win.searchResults
 
-                delegate: Rectangle {
-                    width: ListView.view.width
-                    height: 28
-                    color: index % 2 === 0 ? "#121520" : "transparent"
-                    radius: win.smallRadius
+                ListView {
+                    id: searchResultsView
+                    anchors.fill: parent
+                    anchors.margins: 4
+                    clip: true
+                    boundsBehavior: Flickable.StopAtBounds
+                    model: backend.searchResultItems
 
-                    RowLayout {
-                        anchors.fill: parent
-                        anchors.leftMargin: 8
-                        anchors.rightMargin: 8
-                        Text {
-                            text: modelData
-                            color: "#c8cedd"
-                            font.pixelSize: 12
-                            font.family: "monospace"
-                            Layout.fillWidth: true
-                            elide: Text.ElideMiddle
+                    ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+
+                    delegate: Rectangle {
+                        id: srRow
+                        width: ListView.view.width
+                        readonly property int lineNum: modelData ? (modelData.matchLine || 0) : 0
+                        height: lineNum > 0 ? 44 : 28
+                        color: srMouse.containsMouse ? p.rowHoverBg : (index % 2 === 0 ? p.rowAltBg : "transparent")
+                        radius: win.smallRadius
+
+                        ColumnLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: 8
+                            anchors.rightMargin: 8
+                            anchors.topMargin: 3
+                            anchors.bottomMargin: 3
+                            spacing: 1
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 8
+
+                                VectorIcon {
+                                    kind: (modelData && modelData.isDir) ? "folder" : "file"
+                                    iconColor: (modelData && modelData.isDir) ? p.accent : p.textMuted
+                                }
+
+                                Text {
+                                    text: modelData ? (modelData.relPath || modelData.path || "") : ""
+                                    color: p.textPrimary
+                                    font.pixelSize: 12
+                                    font.family: "monospace"
+                                    Layout.fillWidth: true
+                                    elide: Text.ElideMiddle
+                                }
+
+                                Text {
+                                    text: modelData ? (modelData.formattedSize || "") : ""
+                                    color: p.textDim
+                                    font.pixelSize: 11
+                                    font.family: "monospace"
+                                }
+
+                                Text {
+                                    text: modelData ? (modelData.modified || "") : ""
+                                    color: p.textDim
+                                    font.pixelSize: 11
+                                    font.family: "monospace"
+                                }
+
+                                ToolbarBtn {
+                                    implicitHeight: 22
+                                    label: qsTr("Open")
+                                    accentHighlight: true
+                                    onClicked: {
+                                        if (modelData && modelData.path) {
+                                            backend.openItem(modelData.path);
+                                            win.searchOpen = false;
+                                        }
+                                    }
+                                }
+                            }
+
+                            Text {
+                                visible: srRow.lineNum > 0
+                                Layout.fillWidth: true
+                                Layout.leftMargin: 24
+                                text: srRow.lineNum > 0
+                                      ? (qsTr("Line %1: ").arg(srRow.lineNum) + (modelData ? (modelData.matchPreview || "") : ""))
+                                      : ""
+                                font.pixelSize: 10
+                                font.family: "monospace"
+                                color: p.accent
+                                elide: Text.ElideRight
+                            }
                         }
-                        ToolbarBtn {
-                            implicitHeight: 22
-                            label: qsTr("Open")
-                            accentHighlight: true
-                            onClicked: {
-                                backend.openItem(modelData);
-                                win.searchOpen = false;
+
+                        MouseArea {
+                            id: srMouse
+                            anchors.fill: parent
+                            z: -1
+                            hoverEnabled: true
+                            onDoubleClicked: {
+                                if (modelData && modelData.path) {
+                                    backend.openItem(modelData.path);
+                                    win.searchOpen = false;
+                                }
                             }
                         }
                     }
                 }
             }
-        }
 
-        onRejected: win.searchOpen = false
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+
+                ToolbarBtn {
+                    label: qsTr("Feed to Panel")
+                    accentHighlight: true
+                    btnEnabled: backend.searchResultItems.length > 0
+                    onClicked: searchDialog.feedResults(false)
+                }
+
+                ToolbarBtn {
+                    label: qsTr("Feed to New Tab")
+                    btnEnabled: backend.searchResultItems.length > 0
+                    onClicked: searchDialog.feedResults(true)
+                }
+
+                Item { Layout.fillWidth: true }
+
+                ToolbarBtn {
+                    label: qsTr("Close")
+                    onClicked: searchDialog.reject()
+                }
+            }
+        }
     }
 
     // Item Properties & Permissions Dialog (Alt+Enter)
@@ -5312,9 +6230,9 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 height: 54
                 radius: win.smallRadius
-                color: "#151a28"
+                color: p.cardBg
                 border.width: 1
-                border.color: "#22293e"
+                border.color: p.borderDefault
 
                 RowLayout {
                     anchors.fill: parent
@@ -5326,7 +6244,7 @@ ApplicationWindow {
                         width: 20
                         height: 20
                         kind: win.propData.isDir ? "folder" : "file"
-                        iconColor: win.propData.isDir ? "#eab308" : theme.accent
+                        iconColor: win.propData.isDir ? p.iconFolder : p.accent
                     }
 
                     ColumnLayout {
@@ -5341,7 +6259,7 @@ ApplicationWindow {
                                 text: win.propData.name || ""
                                 font.pixelSize: 13
                                 font.bold: true
-                                color: "#f8fafc"
+                                color: p.textPrimary
                                 Layout.fillWidth: true
                                 elide: Text.ElideMiddle
                             }
@@ -5351,7 +6269,7 @@ ApplicationWindow {
                                 implicitHeight: 18
                                 implicitWidth: kindTag.implicitWidth + 10
                                 radius: Math.min(3, theme.radius)
-                                color: Qt.alpha(theme.accent, 0.16)
+                                color: Qt.alpha(p.accent, 0.16)
 
                                 Text {
                                     id: kindTag
@@ -5360,7 +6278,7 @@ ApplicationWindow {
                                     font.pixelSize: 10
                                     font.bold: true
                                     font.family: "monospace"
-                                    color: theme.accent
+                                    color: p.accent
                                 }
                             }
                         }
@@ -5369,7 +6287,7 @@ ApplicationWindow {
                             text: win.propData.path || ""
                             font.pixelSize: 11
                             font.family: "monospace"
-                            color: "#8b95ab"
+                            color: p.textMuted
                             Layout.fillWidth: true
                             elide: Text.ElideMiddle
                         }
@@ -5384,11 +6302,11 @@ ApplicationWindow {
                 columnSpacing: 14
                 rowSpacing: 6
 
-                Text { text: qsTr("MIME Type:"); color: "#8a93a8"; font.pixelSize: 12 }
+                Text { text: qsTr("MIME Type:"); color: p.textMuted; font.pixelSize: 12 }
                 Text {
                     text: (win.propData.mimeComment || "")
                           + ((win.propData.mimeName || "").length > 0 ? "  (" + win.propData.mimeName + ")" : "")
-                    color: "#e2e8f0"
+                    color: p.textPrimary
                     font.pixelSize: 12
                     Layout.fillWidth: true
                     elide: Text.ElideRight
@@ -5397,60 +6315,60 @@ ApplicationWindow {
                 Text {
                     visible: win.propData.isSymLink === true
                     text: qsTr("Link Target:")
-                    color: "#8a93a8"
+                    color: p.textMuted
                     font.pixelSize: 12
                 }
                 Text {
                     visible: win.propData.isSymLink === true
                     text: win.propData.symLinkTarget || ""
-                    color: theme.accent
+                    color: p.accent
                     font.pixelSize: 12
                     font.family: "monospace"
                     Layout.fillWidth: true
                     elide: Text.ElideMiddle
                 }
 
-                Text { text: qsTr("Size:"); color: "#8a93a8"; font.pixelSize: 12 }
+                Text { text: qsTr("Size:"); color: p.textMuted; font.pixelSize: 12 }
                 Text {
                     text: (win.propData.formattedSize || "")
                           + ((win.propData.itemCounts || "").length > 0 ? "  —  " + win.propData.itemCounts : "")
-                    color: "#e2e8f0"
+                    color: p.textPrimary
                     font.pixelSize: 12
                     font.family: "monospace"
                     Layout.fillWidth: true
                     elide: Text.ElideRight
                 }
 
-                Text { text: qsTr("Owner / Group:"); color: "#8a93a8"; font.pixelSize: 12 }
+                Text { text: qsTr("Owner / Group:"); color: p.textMuted; font.pixelSize: 12 }
                 Text {
                     text: (win.propData.owner || "") + " : " + (win.propData.group || "")
-                    color: "#e2e8f0"
+                    color: p.textPrimary
                     font.pixelSize: 12
                     font.family: "monospace"
                     Layout.fillWidth: true
                     elide: Text.ElideRight
                 }
 
-                Text { text: qsTr("Modified:"); color: "#8a93a8"; font.pixelSize: 12 }
+                Text { text: qsTr("Modified:"); color: p.textMuted; font.pixelSize: 12 }
                 Text {
                     text: win.propData.modified || "—"
-                    color: "#cbd5e1"
+                    color: p.textSecondary
                     font.pixelSize: 12
                     font.family: "monospace"
                 }
 
-                Text { text: qsTr("Created:"); color: "#8a93a8"; font.pixelSize: 12 }
+                Text { text: qsTr("Created:"); color: p.textMuted; font.pixelSize: 12 }
                 Text {
                     text: win.propData.created || "—"
-                    color: "#cbd5e1"
+                    color: p.textSecondary
                     font.pixelSize: 12
                     font.family: "monospace"
                 }
 
-                Text { text: qsTr("Accessed:"); color: "#8a93a8"; font.pixelSize: 12 }
+                Text { text: qsTr("Accessed:"); color: p.textMuted; font.pixelSize: 12 }
                 Text {
                     text: win.propData.accessed || "—"
-                    color: "#cbd5e1"
+                    color: p.textSecondary
                     font.pixelSize: 12
                     font.family: "monospace"
                 }
@@ -5461,9 +6379,9 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 implicitHeight: chmodCol.implicitHeight + 22
                 radius: win.smallRadius
-                color: "#0d1018"
+                color: p.cardAltBg
                 border.width: 1
-                border.color: "#20273c"
+                border.color: p.borderDefault
 
                 ColumnLayout {
                     id: chmodCol
@@ -5479,7 +6397,7 @@ ApplicationWindow {
                             text: qsTr("Permissions (chmod)")
                             font.pixelSize: 12
                             font.bold: true
-                            color: "#f1f5f9"
+                            color: p.textPrimary
                         }
 
                         Item { Layout.fillWidth: true }
@@ -5488,9 +6406,9 @@ ApplicationWindow {
                             implicitHeight: 24
                             implicitWidth: symLabel.implicitWidth + 14
                             radius: win.smallRadius
-                            color: "#151a28"
+                            color: p.chipBg
                             border.width: 1
-                            border.color: "#242c42"
+                            border.color: p.borderDefault
 
                             Text {
                                 id: symLabel
@@ -5499,14 +6417,14 @@ ApplicationWindow {
                                 font.pixelSize: 12
                                 font.family: "monospace"
                                 font.bold: true
-                                color: theme.accent
+                                color: p.accent
                             }
                         }
 
                         Text {
                             text: qsTr("Octal:")
                             font.pixelSize: 11
-                            color: "#8a93a8"
+                            color: p.textMuted
                         }
 
                         CompactField {
@@ -5534,17 +6452,17 @@ ApplicationWindow {
                         rowSpacing: 6
                         opacity: win.propData.isSymLink ? 0.45 : 1.0
 
-                        Text { text: qsTr("Owner"); color: "#b8c1d4"; font.pixelSize: 12; Layout.preferredWidth: 70 }
+                        Text { text: qsTr("Owner"); color: p.textSecondary; font.pixelSize: 12; Layout.preferredWidth: 70 }
                         PermBitBtn { label: qsTr("Read (r)"); bitMask: 256 }
                         PermBitBtn { label: qsTr("Write (w)"); bitMask: 128 }
                         PermBitBtn { label: qsTr("Exec (x)"); bitMask: 64 }
 
-                        Text { text: qsTr("Group"); color: "#b8c1d4"; font.pixelSize: 12; Layout.preferredWidth: 70 }
+                        Text { text: qsTr("Group"); color: p.textSecondary; font.pixelSize: 12; Layout.preferredWidth: 70 }
                         PermBitBtn { label: qsTr("Read (r)"); bitMask: 32 }
                         PermBitBtn { label: qsTr("Write (w)"); bitMask: 16 }
                         PermBitBtn { label: qsTr("Exec (x)"); bitMask: 8 }
 
-                        Text { text: qsTr("Others"); color: "#b8c1d4"; font.pixelSize: 12; Layout.preferredWidth: 70 }
+                        Text { text: qsTr("Others"); color: p.textSecondary; font.pixelSize: 12; Layout.preferredWidth: 70 }
                         PermBitBtn { label: qsTr("Read (r)"); bitMask: 4 }
                         PermBitBtn { label: qsTr("Write (w)"); bitMask: 2 }
                         PermBitBtn { label: qsTr("Exec (x)"); bitMask: 1 }
@@ -5596,12 +6514,12 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 Text {
                     text: qsTr("In:")
-                    color: "#94a3b8"
+                    color: p.textMuted
                     font.pixelSize: 12
                 }
                 Text {
                     text: currentModel().path
-                    color: currentModel().isWritable ? theme.accent : "#f87171"
+                    color: currentModel().isWritable ? p.accent : p.dangerAccent
                     font.family: "monospace"
                     font.pixelSize: 12
                     font.bold: true
@@ -5615,18 +6533,18 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 implicitHeight: 28
                 radius: 4
-                color: Qt.alpha("#ef4444", 0.15)
+                color: Qt.alpha(p.dangerAccent, 0.14)
                 border.width: 1
-                border.color: Qt.alpha("#ef4444", 0.4)
+                border.color: Qt.alpha(p.dangerAccent, 0.4)
                 RowLayout {
                     anchors.fill: parent
                     anchors.leftMargin: 8
                     anchors.rightMargin: 8
                     spacing: 6
-                    Text { text: "⚠"; color: "#f87171"; font.pixelSize: 13 }
+                    Text { text: "⚠"; color: p.dangerAccent; font.pixelSize: 13 }
                     Text {
                         text: qsTr("This folder is read-only (Permission denied)")
-                        color: "#fca5a5"
+                        color: p.dangerText
                         font.pixelSize: 11
                         font.bold: true
                     }
@@ -5635,7 +6553,7 @@ ApplicationWindow {
 
             Text {
                 text: qsTr("Enter file name(s) (comma-separated for multiple):")
-                color: "#e2e8f0"
+                color: p.textSecondary
                 font.pixelSize: 12
             }
 
@@ -5656,15 +6574,15 @@ ApplicationWindow {
                     implicitWidth: 16
                     implicitHeight: 16
                     radius: 8
-                    color: Qt.alpha(theme.accent, 0.2)
+                    color: Qt.alpha(p.accent, 0.18)
                     border.width: 1
-                    border.color: Qt.alpha(theme.accent, 0.5)
+                    border.color: Qt.alpha(p.accent, 0.5)
                     Text {
                         anchors.centerIn: parent
                         text: "i"
                         font.pixelSize: 10
                         font.bold: true
-                        color: theme.accent
+                        color: p.accent
                     }
                 }
                 Text {
@@ -5673,7 +6591,7 @@ ApplicationWindow {
                         return qsTr("Will create %1 files").arg(count);
                     }
                     font.pixelSize: 11
-                    color: theme.accent
+                    color: p.accent
                 }
             }
         }
@@ -5707,7 +6625,7 @@ ApplicationWindow {
                 text: symlinkDialog.paths.length === 1
                       ? qsTr("Create symlink for: %1").arg(backend.fileName(symlinkDialog.paths[0]))
                       : qsTr("Create %1 symlinks in target folder").arg(symlinkDialog.paths.length)
-                color: "#f8fafc"
+                color: p.textPrimary
                 font.bold: true
                 font.pixelSize: 12
                 Layout.fillWidth: true
@@ -5716,7 +6634,7 @@ ApplicationWindow {
 
             Text {
                 text: qsTr("Destination directory:")
-                color: "#94a3b8"
+                color: p.textMuted
                 font.pixelSize: 11
             }
 
@@ -5731,7 +6649,7 @@ ApplicationWindow {
             Text {
                 visible: symlinkDialog.paths.length === 1
                 text: qsTr("Link name:")
-                color: "#94a3b8"
+                color: p.textMuted
                 font.pixelSize: 11
             }
 
@@ -5775,7 +6693,7 @@ ApplicationWindow {
 
             Text {
                 text: qsTr("Enter wildcard pattern (e.g. *.jpg; *.png):")
-                color: "#e2e8f0"
+                color: p.textSecondary
                 font.pixelSize: 12
             }
 
@@ -5790,16 +6708,16 @@ ApplicationWindow {
             // Quick preset chips
             RowLayout {
                 spacing: 6
-                Text { text: qsTr("Presets:"); font.pixelSize: 11; color: "#64748b" }
+                Text { text: qsTr("Presets:"); font.pixelSize: 11; color: p.textDim }
                 Repeater {
                     model: ["*.*", "*.txt; *.md", "*.png; *.jpg", "*.tar.gz; *.zip", "*.cpp; *.h"]
                     delegate: Rectangle {
                         implicitHeight: 20
                         implicitWidth: presetText.implicitWidth + 8
                         radius: win.smallRadius
-                        color: presetMouse.containsMouse ? "#1e293b" : "#131826"
+                        color: presetMouse.containsMouse ? p.chipHoverBg : p.chipBg
                         border.width: 1
-                        border.color: "#27324b"
+                        border.color: p.borderDefault
 
                         Text {
                             id: presetText
@@ -5807,7 +6725,7 @@ ApplicationWindow {
                             text: modelData
                             font.pixelSize: 10
                             font.family: "monospace"
-                            color: "#94a3b8"
+                            color: p.textMuted
                         }
 
                         MouseArea {
@@ -5858,7 +6776,7 @@ ApplicationWindow {
             RowLayout {
                 Layout.fillWidth: true
                 spacing: 8
-                VectorIcon { kind: "binary"; width: 20; height: 20; iconColor: theme.accent }
+                VectorIcon { kind: "binary"; width: 20; height: 20; iconColor: p.accent }
                 ColumnLayout {
                     Layout.fillWidth: true
                     spacing: 2
@@ -5866,7 +6784,7 @@ ApplicationWindow {
                         text: backend.fileName(checksumDialog.filePath)
                         font.bold: true
                         font.pixelSize: 13
-                        color: "#f8fafc"
+                        color: p.textPrimary
                         elide: Text.ElideMiddle
                         Layout.fillWidth: true
                     }
@@ -5874,14 +6792,14 @@ ApplicationWindow {
                         text: checksumDialog.filePath
                         font.pixelSize: 11
                         font.family: "monospace"
-                        color: "#64748b"
+                        color: p.textDim
                         elide: Text.ElideMiddle
                         Layout.fillWidth: true
                     }
                 }
             }
 
-            Rectangle { Layout.fillWidth: true; height: 1; color: "#1e293b" }
+            Rectangle { Layout.fillWidth: true; height: 1; color: p.borderSubtle }
 
             // Computed Hashes
             GridLayout {
@@ -5890,7 +6808,7 @@ ApplicationWindow {
                 columnSpacing: 8
                 rowSpacing: 6
 
-                Text { text: "MD5:"; font.bold: true; font.family: "monospace"; color: "#94a3b8" }
+                Text { text: "MD5:"; font.bold: true; font.family: "monospace"; color: p.textMuted }
                 CompactField {
                     Layout.fillWidth: true
                     text: checksumDialog.hashes.md5 || ""
@@ -5901,16 +6819,16 @@ ApplicationWindow {
                     implicitHeight: 28
                     implicitWidth: 64
                     radius: win.smallRadius
-                    color: copyMd5Mouse.containsMouse ? "#2a344d" : "#1c2336"
+                    color: copyMd5Mouse.containsMouse ? p.btnHoverBg : p.chipBg
                     border.width: 1
-                    border.color: "#2c3854"
+                    border.color: p.borderDefault
 
                     Text {
                         anchors.centerIn: parent
                         text: qsTr("Copy")
                         font.pixelSize: 11
                         font.bold: true
-                        color: "#e2e8f0"
+                        color: p.textPrimary
                     }
 
                     MouseArea {
@@ -5925,7 +6843,7 @@ ApplicationWindow {
                     }
                 }
 
-                Text { text: "SHA1:"; font.bold: true; font.family: "monospace"; color: "#94a3b8" }
+                Text { text: "SHA1:"; font.bold: true; font.family: "monospace"; color: p.textMuted }
                 CompactField {
                     Layout.fillWidth: true
                     text: checksumDialog.hashes.sha1 || ""
@@ -5936,16 +6854,16 @@ ApplicationWindow {
                     implicitHeight: 28
                     implicitWidth: 64
                     radius: win.smallRadius
-                    color: copySha1Mouse.containsMouse ? "#2a344d" : "#1c2336"
+                    color: copySha1Mouse.containsMouse ? p.btnHoverBg : p.chipBg
                     border.width: 1
-                    border.color: "#2c3854"
+                    border.color: p.borderDefault
 
                     Text {
                         anchors.centerIn: parent
                         text: qsTr("Copy")
                         font.pixelSize: 11
                         font.bold: true
-                        color: "#e2e8f0"
+                        color: p.textPrimary
                     }
 
                     MouseArea {
@@ -5960,7 +6878,7 @@ ApplicationWindow {
                     }
                 }
 
-                Text { text: "SHA256:"; font.bold: true; font.family: "monospace"; color: "#94a3b8" }
+                Text { text: "SHA256:"; font.bold: true; font.family: "monospace"; color: p.textMuted }
                 CompactField {
                     Layout.fillWidth: true
                     text: checksumDialog.hashes.sha256 || ""
@@ -5971,16 +6889,16 @@ ApplicationWindow {
                     implicitHeight: 28
                     implicitWidth: 64
                     radius: win.smallRadius
-                    color: copySha256Mouse.containsMouse ? "#2a344d" : "#1c2336"
+                    color: copySha256Mouse.containsMouse ? p.btnHoverBg : p.chipBg
                     border.width: 1
-                    border.color: "#2c3854"
+                    border.color: p.borderDefault
 
                     Text {
                         anchors.centerIn: parent
                         text: qsTr("Copy")
                         font.pixelSize: 11
                         font.bold: true
-                        color: "#e2e8f0"
+                        color: p.textPrimary
                     }
 
                     MouseArea {
@@ -5996,14 +6914,14 @@ ApplicationWindow {
                 }
             }
 
-            Rectangle { Layout.fillWidth: true; height: 1; color: "#1e293b" }
+            Rectangle { Layout.fillWidth: true; height: 1; color: p.borderSubtle }
 
             // Verify live against entered hash
             Text {
                 text: qsTr("Verify against hash:")
                 font.bold: true
                 font.pixelSize: 11
-                color: "#cbd5e1"
+                color: p.textSecondary
             }
 
             RowLayout {
@@ -6038,7 +6956,7 @@ ApplicationWindow {
                 text: checksumDialog.verificationResult
                 font.bold: true
                 font.pixelSize: 12
-                color: checksumDialog.verificationOk ? "#22c55e" : "#ef4444"
+                color: checksumDialog.verificationOk ? p.successText : p.dangerAccent
             }
 
             // Save .sha256 / .md5 button
@@ -6050,9 +6968,9 @@ ApplicationWindow {
                     implicitHeight: 30
                     implicitWidth: saveShaText.implicitWidth + 24
                     radius: win.smallRadius
-                    color: saveShaMouse.containsMouse ? theme.accent : "#1c2336"
+                    color: saveShaMouse.containsMouse ? p.accent : p.chipBg
                     border.width: 1
-                    border.color: saveShaMouse.containsMouse ? theme.accent : "#2c3854"
+                    border.color: saveShaMouse.containsMouse ? p.accent : p.borderDefault
 
                     Text {
                         id: saveShaText
@@ -6060,7 +6978,7 @@ ApplicationWindow {
                         text: qsTr("Save .sha256 File")
                         font.pixelSize: 11
                         font.bold: true
-                        color: saveShaMouse.containsMouse ? "#0f172a" : "#f1f5f9"
+                        color: saveShaMouse.containsMouse ? p.accentFg : p.textPrimary
                     }
 
                     MouseArea {
@@ -6082,9 +7000,9 @@ ApplicationWindow {
                     implicitHeight: 30
                     implicitWidth: saveMd5Text.implicitWidth + 24
                     radius: win.smallRadius
-                    color: saveMd5Mouse.containsMouse ? theme.accent : "#1c2336"
+                    color: saveMd5Mouse.containsMouse ? p.accent : p.chipBg
                     border.width: 1
-                    border.color: saveMd5Mouse.containsMouse ? theme.accent : "#2c3854"
+                    border.color: saveMd5Mouse.containsMouse ? p.accent : p.borderDefault
 
                     Text {
                         id: saveMd5Text
@@ -6092,7 +7010,7 @@ ApplicationWindow {
                         text: qsTr("Save .md5 File")
                         font.pixelSize: 11
                         font.bold: true
-                        color: saveMd5Mouse.containsMouse ? "#0f172a" : "#f1f5f9"
+                        color: saveMd5Mouse.containsMouse ? p.accentFg : p.textPrimary
                     }
 
                     MouseArea {
@@ -6115,9 +7033,9 @@ ApplicationWindow {
                     implicitHeight: 30
                     implicitWidth: verifyFileText.implicitWidth + 24
                     radius: win.smallRadius
-                    color: verifyFileMouse.containsMouse ? theme.accent : "#1c2336"
+                    color: verifyFileMouse.containsMouse ? p.accent : p.chipBg
                     border.width: 1
-                    border.color: verifyFileMouse.containsMouse ? theme.accent : "#2c3854"
+                    border.color: verifyFileMouse.containsMouse ? p.accent : p.borderDefault
 
                     Text {
                         id: verifyFileText
@@ -6125,7 +7043,7 @@ ApplicationWindow {
                         text: qsTr("Verify Checksum File")
                         font.pixelSize: 11
                         font.bold: true
-                        color: verifyFileMouse.containsMouse ? "#0f172a" : "#f1f5f9"
+                        color: verifyFileMouse.containsMouse ? p.accentFg : p.textPrimary
                     }
 
                     MouseArea {
@@ -6174,9 +7092,9 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 height: 38
                 radius: win.smallRadius
-                color: "#161b2b"
+                color: p.cardBg
                 border.width: 1
-                border.color: "#252e46"
+                border.color: p.borderDefault
 
                 RowLayout {
                     anchors.fill: parent
@@ -6190,17 +7108,17 @@ ApplicationWindow {
                               : qsTr("Differences: %1").arg(diffDialog.diffData.differences || 0)
                         font.bold: true
                         font.pixelSize: 12
-                        color: diffDialog.diffData.isIdentical ? "#22c55e" : "#f59e0b"
+                        color: diffDialog.diffData.isIdentical ? p.successText : p.warningText
                     }
 
-                    Rectangle { width: 1; height: 16; color: "#252e46" }
+                    Rectangle { width: 1; height: 16; color: p.borderDefault }
 
                     Text {
                         visible: !diffDialog.diffData.isIdentical
                         text: qsTr("+%1 added").arg(diffDialog.diffData.added || 0)
                         font.pixelSize: 11
                         font.family: "monospace"
-                        color: "#4ade80"
+                        color: p.diffAddedText
                     }
 
                     Text {
@@ -6208,7 +7126,7 @@ ApplicationWindow {
                         text: qsTr("-%1 deleted").arg(diffDialog.diffData.deleted || 0)
                         font.pixelSize: 11
                         font.family: "monospace"
-                        color: "#f87171"
+                        color: p.diffDeletedText
                     }
 
                     Text {
@@ -6216,7 +7134,7 @@ ApplicationWindow {
                         text: qsTr("~%1 modified").arg(diffDialog.diffData.modified || 0)
                         font.pixelSize: 11
                         font.family: "monospace"
-                        color: "#fbbf24"
+                        color: p.diffModifiedText
                     }
 
                     Item { Layout.fillWidth: true }
@@ -6225,7 +7143,7 @@ ApplicationWindow {
                         text: backend.fileName(diffDialog.path1) + "  ↔  " + backend.fileName(diffDialog.path2)
                         font.pixelSize: 11
                         font.family: "monospace"
-                        color: "#94a3b8"
+                        color: p.textMuted
                         elide: Text.ElideMiddle
                     }
                 }
@@ -6236,12 +7154,14 @@ ApplicationWindow {
                 visible: diffDialog.diffData.isBinary === true
                 Layout.fillWidth: true
                 height: 40
-                color: "#291b1f"
+                color: p.diffDeletedBg
+                border.width: 1
+                border.color: Qt.alpha(p.dangerAccent, 0.35)
                 radius: win.smallRadius
                 Text {
                     anchors.centerIn: parent
                     text: qsTr("Binary files differ (visual diff not supported for binaries).")
-                    color: "#fca5a5"
+                    color: p.diffDeletedText
                     font.bold: true
                 }
             }
@@ -6262,10 +7182,10 @@ ApplicationWindow {
                     height: 22
                     color: {
                         var t = modelData.type;
-                        if (t === "added") return "#13311f";
-                        if (t === "deleted") return "#361618";
-                        if (t === "modified") return "#32230b";
-                        return index % 2 === 0 ? "transparent" : "#0d1017";
+                        if (t === "added") return p.diffAddedBg;
+                        if (t === "deleted") return p.diffDeletedBg;
+                        if (t === "modified") return p.diffModifiedBg;
+                        return index % 2 === 0 ? "transparent" : p.rowAltBg;
                     }
 
                     RowLayout {
@@ -6281,7 +7201,7 @@ ApplicationWindow {
                             horizontalAlignment: Text.AlignRight
                             font.pixelSize: 10
                             font.family: "monospace"
-                            color: "#64748b"
+                            color: p.textDim
                         }
 
                         // Left text
@@ -6294,13 +7214,13 @@ ApplicationWindow {
                             elide: Text.ElideRight
                             color: {
                                 var t = modelData.type;
-                                if (t === "deleted") return "#fca5a5";
-                                if (t === "modified") return "#fde68a";
-                                return "#cbd5e1";
+                                if (t === "deleted") return p.diffDeletedText;
+                                if (t === "modified") return p.diffModifiedText;
+                                return p.textSecondary;
                             }
                         }
 
-                        Rectangle { width: 1; Layout.fillHeight: true; color: "#1f273b" }
+                        Rectangle { width: 1; Layout.fillHeight: true; color: p.borderSubtle }
 
                         // Right line number
                         Text {
@@ -6309,7 +7229,7 @@ ApplicationWindow {
                             horizontalAlignment: Text.AlignRight
                             font.pixelSize: 10
                             font.family: "monospace"
-                            color: "#64748b"
+                            color: p.textDim
                         }
 
                         // Right text
@@ -6322,9 +7242,9 @@ ApplicationWindow {
                             elide: Text.ElideRight
                             color: {
                                 var t = modelData.type;
-                                if (t === "added") return "#86efac";
-                                if (t === "modified") return "#fde68a";
-                                return "#cbd5e1";
+                                if (t === "added") return p.diffAddedText;
+                                if (t === "modified") return p.diffModifiedText;
+                                return p.textSecondary;
                             }
                         }
                     }
@@ -6361,7 +7281,15 @@ ApplicationWindow {
 
                 Repeater {
                     model: [
+                        { key: "Ctrl + Shift + P", desc: qsTr("Open Command Palette (fuzzy search actions)") },
+                        { key: "Ctrl + P", desc: qsTr("Quick Jump to Folder (bookmarks, recent, zoxide)") },
+                        { key: "Ctrl + Shift + B", desc: qsTr("Toggle Flat / Branch View (all subfolders in one list)") },
+                        { key: "Ctrl + Shift + D", desc: qsTr("Toggle Disk Usage Analyzer (proportional bars & sorted sizes)") },
+                        { key: "Ctrl + Shift + S", desc: qsTr("Synchronize Directories recursively between panels") },
+                        { key: "Ctrl + Shift + F7", desc: qsTr("Find Duplicate Files by size and SHA-256 hash") },
+                        { key: "Enter (on archive)", desc: qsTr("Browse inside .zip / .tar.* / .7z archive as virtual folder") },
                         { key: "Tab", desc: qsTr("Switch active panel (Left / Right)") },
+                        { key: "Ctrl + Shift + T", desc: qsTr("Toggle between Light and Dark theme") },
                         { key: "Ctrl + T / Ctrl + W", desc: qsTr("Open new tab / Close active tab in panel") },
                         { key: "Ctrl + Tab", desc: qsTr("Switch between open tabs in active panel") },
                         { key: "Ctrl + 1 / Ctrl + 2", desc: qsTr("Toggle List / Grid thumbnail view mode") },
@@ -6399,7 +7327,7 @@ ApplicationWindow {
                     delegate: Rectangle {
                         Layout.fillWidth: true
                         height: 28
-                        color: index % 2 === 0 ? "#141824" : "transparent"
+                        color: index % 2 === 0 ? p.rowAltBg : "transparent"
                         radius: win.smallRadius
 
                         RowLayout {
@@ -6409,26 +7337,29 @@ ApplicationWindow {
                             spacing: 10
 
                             Rectangle {
-                                color: "#1d2336"
+                                color: p.badgeBg
                                 border.width: 1
-                                border.color: "#29314a"
+                                border.color: p.borderDefault
                                 radius: win.smallRadius
                                 implicitWidth: 160
                                 implicitHeight: 22
 
                                 Text {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    anchors.left: parent.left
+                                    anchors.leftMargin: 8
                                     text: modelData.key
                                     font.bold: true
                                     font.family: "monospace"
                                     font.pixelSize: 11
-                                    color: theme.accent
+                                    color: p.accent
                                 }
                             }
 
                             Text {
                                 text: modelData.desc
                                 font.pixelSize: 12
-                                color: "#d0d4e2"
+                                color: p.textSecondary
                                 Layout.fillWidth: true
                                 elide: Text.ElideRight
                             }
@@ -6482,22 +7413,22 @@ ApplicationWindow {
                             text: "AeroCommander"
                             font.bold: true
                             font.pixelSize: 18
-                            color: "#f8fafc"
+                            color: p.textPrimary
                         }
                         Rectangle {
                             implicitHeight: 18
                             implicitWidth: vText.implicitWidth + 8
                             radius: 3
-                            color: Qt.alpha(theme.accent, 0.2)
+                            color: Qt.alpha(p.accent, 0.2)
                             border.width: 1
-                            border.color: Qt.alpha(theme.accent, 0.4)
+                            border.color: Qt.alpha(p.accent, 0.4)
                             Text {
                                 id: vText
                                 anchors.centerIn: parent
                                 text: "v1.0"
                                 font.pixelSize: 10
                                 font.bold: true
-                                color: theme.accent
+                                color: p.accent
                             }
                         }
                     }
@@ -6505,7 +7436,7 @@ ApplicationWindow {
                     Text {
                         text: qsTr("Total Commander for Linux & Omarchy")
                         font.pixelSize: 12
-                        color: "#94a3b8"
+                        color: p.textMuted
                     }
                 }
             }
@@ -6513,7 +7444,7 @@ ApplicationWindow {
             Rectangle {
                 Layout.fillWidth: true
                 height: 1
-                color: "#21283d"
+                color: p.borderSubtle
             }
 
             Text {
@@ -6521,7 +7452,7 @@ ApplicationWindow {
                 wrapMode: Text.WordWrap
                 font.pixelSize: 12
                 lineHeight: 1.4
-                color: "#cbd5e1"
+                color: p.textSecondary
                 text: qsTr("Dual-panel orthodox file manager featuring tabbed navigation, git status tracking, thumbnail grid, checksum calculation & verification, visual side-by-side diff, multi-file rename, and undoable operations.")
             }
         }
@@ -6533,6 +7464,1091 @@ ApplicationWindow {
                 text: qsTr("Close")
                 flat: true
                 onClicked: aboutDialog.reject()
+            }
+        }
+    }
+
+    // Command Palette (Ctrl+Shift+P) & Quick Folder Jump (Ctrl+P / zoxide)
+    AppDialog {
+        id: commandPaletteDialog
+        title: win.commandPaletteMode === "jump" ? qsTr("Quick Jump to Folder") : qsTr("Command Palette")
+        visible: win.commandPaletteOpen
+        width: Math.min(640, win.width - 40)
+        topPadding: 10
+        bottomPadding: 10
+
+        property var resultItems: []
+        property int selectedIndex: 0
+
+        function localizedSource(src) {
+            if (src === "Bookmark") return qsTr("Bookmark");
+            if (src === "Tab") return qsTr("Tab");
+            if (src === "Recent") return qsTr("Recent");
+            if (src === "Folder") return qsTr("Folder");
+            if (src === "Drive") return qsTr("Drive");
+            if (src === "Path") return qsTr("Path");
+            return src;
+        }
+
+        function refreshResults() {
+            var q = paletteInput.text;
+            if (win.commandPaletteMode === "jump") {
+                resultItems = backend.queryJumpDirectories(q, 50);
+            } else {
+                var cmds = win.getCommandList();
+                var scored = [];
+                for (var i = 0; i < cmds.length; i++) {
+                    var c = cmds[i];
+                    var s = win.fuzzyScoreCommand(q, c.title, c.category, c.shortcut);
+                    if (s >= 0)
+                        scored.push({ item: c, score: s, origIdx: i });
+                }
+                scored.sort(function(a, b) {
+                    if (b.score !== a.score)
+                        return b.score - a.score;
+                    return a.origIdx - b.origIdx;
+                });
+                var out = [];
+                for (var k = 0; k < scored.length; k++)
+                    out.push(scored[k].item);
+                resultItems = out;
+            }
+            selectedIndex = resultItems.length > 0 ? 0 : -1;
+        }
+
+        function switchMode(mode) {
+            var next = (mode === "jump") ? "jump" : "commands";
+            if (win.commandPaletteMode !== next) {
+                resultItems = [];
+                selectedIndex = -1;
+                win.commandPaletteMode = next;
+            }
+            refreshResults();
+            paletteSearchInput.forceActiveFocus();
+        }
+
+        function resetAndRefresh(mode) {
+            resultItems = [];
+            selectedIndex = -1;
+            paletteInput.text = "";
+            if (mode !== undefined)
+                win.commandPaletteMode = (mode === "jump") ? "jump" : "commands";
+            refreshResults();
+            paletteSearchInput.forceActiveFocus();
+        }
+
+        function activateItem(idx, modifiers) {
+            if (idx < 0 || idx >= resultItems.length)
+                return;
+            var item = resultItems[idx];
+            if (win.commandPaletteMode === "jump") {
+                var targetPath = item.path;
+                win.commandPaletteOpen = false;
+                if (modifiers & Qt.ControlModifier)
+                    currentModel().addTab(targetPath);
+                else if (modifiers & Qt.AltModifier)
+                    targetModel().setPath(targetPath);
+                else
+                    currentModel().setPath(targetPath);
+                currentListView().forceActiveFocus();
+            } else {
+                win.commandPaletteOpen = false;
+                if (typeof item.run === "function")
+                    item.run();
+                if (!win.commandPaletteOpen && !win.confirmCopyOpen && !win.confirmMoveOpen
+                        && !win.confirmDeleteOpen && !win.renameOpen && !win.newFolderOpen
+                        && !win.newFileOpen && !win.multiRenameOpen && !win.packArchiveOpen
+                        && !win.searchOpen && !win.bookmarksOpen && !win.propertiesOpen
+                        && !win.checksumOpen && !win.diffOpen && !win.symlinkOpen
+                        && !win.maskOpen && !win.helpOpen && !win.aboutOpen && !win.previewOpen
+                        && !win.syncDirsOpen && !win.duplicateFinderOpen)
+                    currentListView().forceActiveFocus();
+            }
+        }
+
+        onOpened: paletteSearchInput.forceActiveFocus()
+        onRejected: {
+            win.commandPaletteOpen = false;
+            currentListView().forceActiveFocus();
+        }
+
+        contentItem: ColumnLayout {
+            spacing: 10
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+
+                Rectangle {
+                    id: paletteInput
+                    property alias text: paletteSearchInput.text
+                    Layout.fillWidth: true
+                    implicitHeight: 34
+                    radius: win.smallRadius
+                    color: p.inputBg
+                    border.width: 1
+                    border.color: paletteSearchInput.activeFocus ? p.accent : p.borderDefault
+                    clip: true
+
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: 10
+                        anchors.rightMargin: 10
+                        spacing: 8
+
+                        VectorIcon {
+                            kind: win.commandPaletteMode === "jump" ? "folder" : "command"
+                            iconColor: p.accent
+                        }
+
+                        Item {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+
+                            Text {
+                                anchors.fill: parent
+                                verticalAlignment: Text.AlignVCenter
+                                visible: paletteSearchInput.text.length === 0 && !paletteSearchInput.preeditText
+                                text: win.commandPaletteMode === "jump"
+                                      ? qsTr("Type folder name, bookmark, zoxide query, or path (type > for commands)...")
+                                      : qsTr("Type a command or shortcut...")
+                                font.pixelSize: 12
+                                color: p.textDim
+                                elide: Text.ElideRight
+                            }
+
+                            TextInput {
+                                id: paletteSearchInput
+                                anchors.fill: parent
+                                verticalAlignment: TextInput.AlignVCenter
+                                font.pixelSize: 13
+                                color: p.textPrimary
+                                selectionColor: Qt.alpha(p.accent, 0.35)
+                                selectedTextColor: p.textOnHover
+                                selectByMouse: true
+                                clip: true
+
+                                onTextEdited: {
+                                    if (win.commandPaletteMode === "jump" && text.indexOf(">") === 0) {
+                                        text = text.slice(1).replace(/^\s+/, "");
+                                        commandPaletteDialog.switchMode("commands");
+                                        return;
+                                    }
+                                    commandPaletteDialog.refreshResults();
+                                }
+
+                                Keys.onPressed: function(event) {
+                                    var cnt = commandPaletteDialog.resultItems.length;
+                                    if (event.key === Qt.Key_Down) {
+                                        if (cnt > 0) {
+                                            commandPaletteDialog.selectedIndex = (commandPaletteDialog.selectedIndex + 1) % cnt;
+                                            paletteListView.positionViewAtIndex(commandPaletteDialog.selectedIndex, ListView.Contain);
+                                        }
+                                        event.accepted = true;
+                                    } else if (event.key === Qt.Key_Up) {
+                                        if (cnt > 0) {
+                                            commandPaletteDialog.selectedIndex = (commandPaletteDialog.selectedIndex - 1 + cnt) % cnt;
+                                            paletteListView.positionViewAtIndex(commandPaletteDialog.selectedIndex, ListView.Contain);
+                                        }
+                                        event.accepted = true;
+                                    } else if (event.key === Qt.Key_PageDown) {
+                                        if (cnt > 0) {
+                                            commandPaletteDialog.selectedIndex = Math.min(cnt - 1, commandPaletteDialog.selectedIndex + 8);
+                                            paletteListView.positionViewAtIndex(commandPaletteDialog.selectedIndex, ListView.Contain);
+                                        }
+                                        event.accepted = true;
+                                    } else if (event.key === Qt.Key_PageUp) {
+                                        if (cnt > 0) {
+                                            commandPaletteDialog.selectedIndex = Math.max(0, commandPaletteDialog.selectedIndex - 8);
+                                            paletteListView.positionViewAtIndex(commandPaletteDialog.selectedIndex, ListView.Contain);
+                                        }
+                                        event.accepted = true;
+                                    } else if (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) {
+                                        commandPaletteDialog.switchMode(win.commandPaletteMode === "commands" ? "jump" : "commands");
+                                        event.accepted = true;
+                                    } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                                        commandPaletteDialog.activateItem(commandPaletteDialog.selectedIndex, event.modifiers);
+                                        event.accepted = true;
+                                    } else if (event.key === Qt.Key_Escape) {
+                                        commandPaletteDialog.reject();
+                                        event.accepted = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    implicitHeight: 34
+                    implicitWidth: modePillRow.implicitWidth + 6
+                    radius: win.smallRadius
+                    color: p.cardBg
+                    border.width: 1
+                    border.color: p.borderDefault
+
+                    RowLayout {
+                        id: modePillRow
+                        anchors.centerIn: parent
+                        spacing: 2
+
+                        Rectangle {
+                            implicitHeight: 26
+                            implicitWidth: cmdModeTxt.implicitWidth + 14
+                            radius: win.smallRadius - 1
+                            color: win.commandPaletteMode === "commands" ? Qt.alpha(p.accent, 0.2) : "transparent"
+                            border.width: win.commandPaletteMode === "commands" ? 1 : 0
+                            border.color: Qt.alpha(p.accent, 0.5)
+                            Text {
+                                id: cmdModeTxt
+                                anchors.centerIn: parent
+                                text: qsTr("Commands")
+                                font.pixelSize: 11
+                                font.weight: win.commandPaletteMode === "commands" ? Font.DemiBold : Font.Normal
+                                color: win.commandPaletteMode === "commands" ? p.accent : p.textMuted
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: commandPaletteDialog.switchMode("commands")
+                            }
+                        }
+
+                        Rectangle {
+                            implicitHeight: 26
+                            implicitWidth: jumpModeTxt.implicitWidth + 14
+                            radius: win.smallRadius - 1
+                            color: win.commandPaletteMode === "jump" ? Qt.alpha(p.accent, 0.2) : "transparent"
+                            border.width: win.commandPaletteMode === "jump" ? 1 : 0
+                            border.color: Qt.alpha(p.accent, 0.5)
+                            Text {
+                                id: jumpModeTxt
+                                anchors.centerIn: parent
+                                text: qsTr("Quick Jump")
+                                font.pixelSize: 11
+                                font.weight: win.commandPaletteMode === "jump" ? Font.DemiBold : Font.Normal
+                                color: win.commandPaletteMode === "jump" ? p.accent : p.textMuted
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: commandPaletteDialog.switchMode("jump")
+                            }
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: Math.min(360, Math.max(120, Math.min(commandPaletteDialog.resultItems.length, 9) * 38 + 8))
+                radius: win.smallRadius
+                color: p.cardBg
+                border.width: 1
+                border.color: p.borderSubtle
+                clip: true
+
+                ListView {
+                    id: paletteListView
+                    anchors.fill: parent
+                    anchors.margins: 4
+                    model: commandPaletteDialog.resultItems
+                    currentIndex: commandPaletteDialog.selectedIndex
+                    boundsBehavior: Flickable.StopAtBounds
+                    clip: true
+
+                    ScrollBar.vertical: ScrollBar {
+                        policy: ScrollBar.AsNeeded
+                    }
+
+                    delegate: Rectangle {
+                        id: palRow
+                        width: paletteListView.width
+                        height: 36
+                        radius: win.smallRadius
+                        readonly property bool isSelected: index === commandPaletteDialog.selectedIndex
+                        color: isSelected
+                               ? Qt.alpha(p.accent, win.isDark ? 0.22 : 0.14)
+                               : (palRowMouse.containsMouse ? p.rowHoverBg : "transparent")
+                        border.width: isSelected ? 1 : 0
+                        border.color: Qt.alpha(p.accent, 0.45)
+
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: 10
+                            anchors.rightMargin: 10
+                            spacing: 10
+
+                            VectorIcon {
+                                kind: win.commandPaletteMode === "jump" ? "folder" : "command"
+                                iconColor: palRow.isSelected ? p.accent : p.textMuted
+                            }
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 1
+
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: modelData
+                                          ? (win.commandPaletteMode === "jump" ? (modelData.label || "") : (modelData.title || ""))
+                                          : ""
+                                    font.pixelSize: 12
+                                    font.weight: palRow.isSelected ? Font.DemiBold : Font.Normal
+                                    color: p.textPrimary
+                                    elide: Text.ElideRight
+                                }
+
+                                Text {
+                                    visible: Boolean(win.commandPaletteMode === "jump" && modelData && modelData.path && modelData.path !== modelData.label)
+                                    Layout.fillWidth: true
+                                    text: (win.commandPaletteMode === "jump" && modelData && modelData.path) ? modelData.path : ""
+                                    font.pixelSize: 10
+                                    font.family: "monospace"
+                                    color: p.textDim
+                                    elide: Text.ElideMiddle
+                                }
+                            }
+
+                            Rectangle {
+                                implicitHeight: 20
+                                implicitWidth: badgeTxt.implicitWidth + 10
+                                radius: 3
+                                color: Qt.alpha(p.accent, win.commandPaletteMode === "jump" ? 0.14 : 0.1)
+                                border.width: 1
+                                border.color: Qt.alpha(p.borderDefault, 0.8)
+
+                                Text {
+                                    id: badgeTxt
+                                    anchors.centerIn: parent
+                                    text: modelData
+                                          ? (win.commandPaletteMode === "jump"
+                                             ? commandPaletteDialog.localizedSource(modelData.source || "")
+                                             : (modelData.category || ""))
+                                          : ""
+                                    font.pixelSize: 10
+                                    color: p.textSecondary
+                                }
+                            }
+
+                            Rectangle {
+                                visible: Boolean(win.commandPaletteMode === "commands" && modelData && modelData.shortcut && modelData.shortcut.length > 0)
+                                implicitHeight: 20
+                                implicitWidth: scTxt.implicitWidth + 10
+                                radius: 3
+                                color: p.inputBg
+                                border.width: 1
+                                border.color: p.borderDefault
+
+                                Text {
+                                    id: scTxt
+                                    anchors.centerIn: parent
+                                    text: (win.commandPaletteMode === "commands" && modelData && modelData.shortcut) ? modelData.shortcut : ""
+                                    font.pixelSize: 10
+                                    font.family: "monospace"
+                                    color: palRow.isSelected ? p.accent : p.textMuted
+                                }
+                            }
+                        }
+
+                        MouseArea {
+                            id: palRowMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: function(mouse) {
+                                commandPaletteDialog.selectedIndex = index;
+                                commandPaletteDialog.activateItem(index, mouse.modifiers);
+                            }
+                        }
+                    }
+                }
+
+                Text {
+                    anchors.centerIn: parent
+                    visible: commandPaletteDialog.resultItems.length === 0
+                    text: win.commandPaletteMode === "jump"
+                          ? qsTr("No matching folders or zoxide entries found.")
+                          : qsTr("No matching commands found.")
+                    font.pixelSize: 12
+                    color: p.textDim
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 12
+
+                Text {
+                    Layout.fillWidth: true
+                    text: win.commandPaletteMode === "jump"
+                          ? qsTr("Enter: open  •  Ctrl+Enter: new tab  •  Alt+Enter: target panel  •  Tab: Commands")
+                          : qsTr("↑/↓: navigate  •  Enter: execute  •  Tab: Quick Jump  •  Esc: close")
+                    font.pixelSize: 10
+                    color: p.textDim
+                    elide: Text.ElideRight
+                }
+
+                Text {
+                    text: commandPaletteDialog.resultItems.length + " " + qsTr("results")
+                    font.pixelSize: 10
+                    color: p.textMuted
+                }
+            }
+        }
+    }
+
+    // Ctrl+Shift+S Recursive Directory Synchronization Dialog
+    AppDialog {
+        id: syncDirsDialog
+        visible: win.syncDirsOpen
+        title: qsTr("Synchronize Directories (Ctrl+Shift+S)")
+        width: Math.min(860, win.width - 40)
+        height: Math.min(620, win.height - 40)
+        standardButtons: Dialog.NoButton
+
+        property string compareMode: "date_size"
+        property bool includeHidden: false
+        property bool showLeftToRight: true
+        property bool showRightToLeft: true
+        property bool showEqual: false
+        property bool showConflicts: true
+        property var allItems: []
+        property var visibleItems: []
+        property int copyRightCount: 0
+        property int copyLeftCount: 0
+        property int equalCount: 0
+        property int conflictCount: 0
+
+        function refreshCompare() {
+            if (backend.leftPanel.isArchiveView || backend.rightPanel.isArchiveView) {
+                allItems = [];
+                rebuildVisible();
+                return;
+            }
+            var raw = backend.compareDirectoriesRecursive(
+                backend.leftPanel.path, backend.rightPanel.path, compareMode, includeHidden
+            );
+            var indexed = [];
+            for (var i = 0; i < raw.length; i++) {
+                var r = raw[i];
+                indexed.push({
+                    syncIdx: i,
+                    relPath: r.relPath,
+                    leftPath: r.leftPath,
+                    rightPath: r.rightPath,
+                    leftExists: r.leftExists,
+                    rightExists: r.rightExists,
+                    leftFormattedSize: r.leftFormattedSize,
+                    rightFormattedSize: r.rightFormattedSize,
+                    leftModified: r.leftModified,
+                    rightModified: r.rightModified,
+                    status: r.status,
+                    action: r.action
+                });
+            }
+            allItems = indexed;
+            rebuildVisible();
+        }
+
+        function rebuildVisible() {
+            var cr = 0, cl = 0, eq = 0, cf = 0;
+            var filtered = [];
+            for (var i = 0; i < allItems.length; i++) {
+                var it = allItems[i];
+                if (it.action === "copy_to_right") cr++;
+                else if (it.action === "copy_to_left") cl++;
+                if (it.status === "equal") eq++;
+                else if (it.status === "different" && it.action === "skip") cf++;
+
+                var show = false;
+                if (it.status === "equal")
+                    show = showEqual;
+                else if (it.action === "copy_to_right")
+                    show = showLeftToRight;
+                else if (it.action === "copy_to_left")
+                    show = showRightToLeft;
+                else
+                    show = showConflicts;
+
+                if (show)
+                    filtered.push(it);
+            }
+            copyRightCount = cr;
+            copyLeftCount = cl;
+            equalCount = eq;
+            conflictCount = cf;
+            visibleItems = filtered;
+        }
+
+        function cycleAction(syncIdx) {
+            if (syncIdx < 0 || syncIdx >= allItems.length)
+                return;
+            var next = allItems.slice();
+            var cur = next[syncIdx];
+            var updated = Object.assign({}, cur);
+            if (cur.status === "equal")
+                return;
+            if (cur.action === "copy_to_right")
+                updated.action = cur.rightExists ? "copy_to_left" : "skip";
+            else if (cur.action === "copy_to_left")
+                updated.action = "skip";
+            else
+                updated.action = cur.leftExists ? "copy_to_right" : "copy_to_left";
+            next[syncIdx] = updated;
+            allItems = next;
+            rebuildVisible();
+        }
+
+        function applySync() {
+            if (copyRightCount === 0 && copyLeftCount === 0)
+                return;
+            backend.executeDirectorySync(backend.leftPanel.path, backend.rightPanel.path, allItems);
+            refreshCompare();
+        }
+
+        onRejected: {
+            win.syncDirsOpen = false;
+            currentListView().forceActiveFocus();
+        }
+
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: 8
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+                Text {
+                    Layout.fillWidth: true
+                    text: qsTr("Left: %1").arg(backend.leftPanel.path)
+                    font.pixelSize: 11
+                    font.family: "monospace"
+                    color: p.textSecondary
+                    elide: Text.ElideMiddle
+                }
+                VectorIcon { kind: "sync"; iconColor: p.accent }
+                Text {
+                    Layout.fillWidth: true
+                    horizontalAlignment: Text.AlignRight
+                    text: qsTr("Right: %1").arg(backend.rightPanel.path)
+                    font.pixelSize: 11
+                    font.family: "monospace"
+                    color: p.textSecondary
+                    elide: Text.ElideMiddle
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 6
+
+                Text { text: qsTr("Compare:"); font.pixelSize: 11; color: p.textDim }
+                FilterPill { label: qsTr("Date & Size"); active: syncDirsDialog.compareMode === "date_size"; onClicked: { syncDirsDialog.compareMode = "date_size"; syncDirsDialog.refreshCompare(); } }
+                FilterPill { label: qsTr("Size Only"); active: syncDirsDialog.compareMode === "size"; onClicked: { syncDirsDialog.compareMode = "size"; syncDirsDialog.refreshCompare(); } }
+                FilterPill { label: qsTr("SHA-256"); active: syncDirsDialog.compareMode === "sha256"; onClicked: { syncDirsDialog.compareMode = "sha256"; syncDirsDialog.refreshCompare(); } }
+                FilterPill { label: qsTr("Hidden"); active: syncDirsDialog.includeHidden; onClicked: { syncDirsDialog.includeHidden = !syncDirsDialog.includeHidden; syncDirsDialog.refreshCompare(); } }
+
+                Item { Layout.fillWidth: true }
+
+                ToolbarBtn {
+                    label: qsTr("Compare")
+                    accentHighlight: true
+                    onClicked: syncDirsDialog.refreshCompare()
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 6
+
+                FilterPill { label: "→ " + syncDirsDialog.copyRightCount; active: syncDirsDialog.showLeftToRight; onClicked: { syncDirsDialog.showLeftToRight = !syncDirsDialog.showLeftToRight; syncDirsDialog.rebuildVisible(); } }
+                FilterPill { label: "← " + syncDirsDialog.copyLeftCount; active: syncDirsDialog.showRightToLeft; onClicked: { syncDirsDialog.showRightToLeft = !syncDirsDialog.showRightToLeft; syncDirsDialog.rebuildVisible(); } }
+                FilterPill { label: "≠ " + syncDirsDialog.conflictCount; active: syncDirsDialog.showConflicts; onClicked: { syncDirsDialog.showConflicts = !syncDirsDialog.showConflicts; syncDirsDialog.rebuildVisible(); } }
+                FilterPill { label: "= " + syncDirsDialog.equalCount; active: syncDirsDialog.showEqual; onClicked: { syncDirsDialog.showEqual = !syncDirsDialog.showEqual; syncDirsDialog.rebuildVisible(); } }
+
+                Item { Layout.fillWidth: true }
+                Text {
+                    text: qsTr("Click direction badge (→ / ← / Skip) to override per file")
+                    font.pixelSize: 10
+                    color: p.textDim
+                }
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                radius: win.smallRadius
+                color: p.cardBg
+                border.width: 1
+                border.color: p.borderSubtle
+                clip: true
+
+                ListView {
+                    anchors.fill: parent
+                    anchors.margins: 4
+                    clip: true
+                    boundsBehavior: Flickable.StopAtBounds
+                    model: syncDirsDialog.visibleItems
+
+                    ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+
+                    delegate: Rectangle {
+                        width: ListView.view.width
+                        height: 30
+                        radius: win.smallRadius
+                        color: index % 2 === 0 ? p.rowAltBg : "transparent"
+
+                        readonly property string act: modelData ? (modelData.action || "skip") : "skip"
+                        readonly property string st: modelData ? (modelData.status || "") : ""
+
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: 8
+                            anchors.rightMargin: 8
+                            spacing: 8
+
+                            Text {
+                                Layout.fillWidth: true
+                                text: modelData ? (modelData.relPath || "") : ""
+                                font.pixelSize: 12
+                                font.family: "monospace"
+                                color: st === "equal" ? p.textDim : p.textPrimary
+                                elide: Text.ElideMiddle
+                            }
+
+                            Text {
+                                Layout.preferredWidth: 118
+                                horizontalAlignment: Text.AlignRight
+                                text: (modelData && modelData.leftExists)
+                                      ? (modelData.leftFormattedSize + " • " + (modelData.leftModified || "").slice(5, 16))
+                                      : "—"
+                                font.pixelSize: 10
+                                font.family: "monospace"
+                                color: (modelData && modelData.leftExists) ? p.textSecondary : p.textDim
+                            }
+
+                            Rectangle {
+                                implicitHeight: 22
+                                implicitWidth: 54
+                                radius: 4
+                                color: act === "copy_to_right" || act === "copy_to_left"
+                                       ? Qt.alpha(p.accent, 0.2)
+                                       : (st === "different" ? Qt.alpha(p.warningText, 0.16) : p.inputBg)
+                                border.width: 1
+                                border.color: act !== "skip" ? Qt.alpha(p.accent, 0.5) : p.borderDefault
+
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: act === "copy_to_right" ? "→"
+                                        : act === "copy_to_left" ? "←"
+                                        : (st === "equal" ? "=" : (st === "different" ? "≠" : qsTr("Skip")))
+                                    font.pixelSize: 11
+                                    font.bold: true
+                                    color: act !== "skip" ? p.accent : p.textMuted
+                                }
+
+                                MouseArea {
+                                    anchors.fill: parent
+                                    cursorShape: st !== "equal" ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                    onClicked: {
+                                        if (modelData && modelData.syncIdx !== undefined)
+                                            syncDirsDialog.cycleAction(modelData.syncIdx);
+                                    }
+                                }
+                            }
+
+                            Text {
+                                Layout.preferredWidth: 118
+                                horizontalAlignment: Text.AlignLeft
+                                text: (modelData && modelData.rightExists)
+                                      ? (modelData.rightFormattedSize + " • " + (modelData.rightModified || "").slice(5, 16))
+                                      : "—"
+                                font.pixelSize: 10
+                                font.family: "monospace"
+                                color: (modelData && modelData.rightExists) ? p.textSecondary : p.textDim
+                            }
+                        }
+                    }
+                }
+
+                Text {
+                    anchors.centerIn: parent
+                    visible: syncDirsDialog.visibleItems.length === 0
+                    text: (backend.leftPanel.isArchiveView || backend.rightPanel.isArchiveView)
+                          ? qsTr("Directory synchronization is not supported inside archive views.")
+                          : qsTr("No differences match current filter.")
+                    font.pixelSize: 12
+                    color: p.textDim
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+
+                Text {
+                    Layout.fillWidth: true
+                    text: qsTr("%1 to sync (%2 → right, %3 ← left)")
+                          .arg(syncDirsDialog.copyRightCount + syncDirsDialog.copyLeftCount)
+                          .arg(syncDirsDialog.copyRightCount)
+                          .arg(syncDirsDialog.copyLeftCount)
+                    font.pixelSize: 11
+                    color: p.textMuted
+                }
+
+                ToolbarBtn {
+                    label: qsTr("Synchronize")
+                    accentHighlight: true
+                    btnEnabled: syncDirsDialog.copyRightCount + syncDirsDialog.copyLeftCount > 0
+                    onClicked: syncDirsDialog.applySync()
+                }
+
+                ToolbarBtn {
+                    label: qsTr("Close")
+                    onClicked: syncDirsDialog.reject()
+                }
+            }
+        }
+    }
+
+    // Ctrl+Shift+F7 Duplicate Files Finder Dialog
+    AppDialog {
+        id: duplicateFinderDialog
+        visible: win.duplicateFinderOpen
+        title: qsTr("Find Duplicate Files (Ctrl+Shift+F7)")
+        width: Math.min(820, win.width - 40)
+        height: Math.min(620, win.height - 40)
+        standardButtons: Dialog.NoButton
+
+        property bool bothPanels: false
+        property var minSizeBytes: 1024
+        property bool includeHidden: false
+        property var dupItems: []
+        property int groupCount: 0
+        property int selectedCount: 0
+        property string reclaimableFormatted: "0 B"
+
+        function formatBytes(b) {
+            if (b < 1024) return b + " B";
+            if (b < 1048576) return (b / 1024.0).toFixed(1) + " KB";
+            if (b < 1073741824) return (b / 1048576.0).toFixed(1) + " MB";
+            return (b / 1073741824.0).toFixed(2) + " GB";
+        }
+
+        function recalcSummary() {
+            var groups = {};
+            var sel = 0;
+            var reclaim = 0;
+            for (var i = 0; i < dupItems.length; i++) {
+                var it = dupItems[i];
+                groups[it.groupIndex] = true;
+                if (it.selected) {
+                    sel++;
+                    reclaim += (it.size || 0);
+                }
+            }
+            groupCount = Object.keys(groups).length;
+            selectedCount = sel;
+            reclaimableFormatted = formatBytes(reclaim);
+        }
+
+        function runScan() {
+            var r1 = currentModel().isArchiveView ? "" : currentModel().path;
+            var r2 = (bothPanels && !targetModel().isArchiveView) ? targetModel().path : "";
+            var raw = backend.findDuplicateFiles(r1, r2, minSizeBytes, includeHidden);
+            var out = [];
+            for (var i = 0; i < raw.length; i++) {
+                var r = raw[i];
+                out.push({
+                    idx: i,
+                    groupIndex: r.groupIndex,
+                    hash: r.hash,
+                    path: r.path,
+                    name: r.name,
+                    dirPath: r.dirPath,
+                    size: r.size,
+                    formattedSize: r.formattedSize,
+                    modified: r.modified,
+                    modifiedSecs: r.modifiedSecs,
+                    groupCount: r.groupCount,
+                    selected: Boolean(r.selected)
+                });
+            }
+            dupItems = out;
+            recalcSummary();
+        }
+
+        function toggleRowSelected(rowIdx) {
+            if (rowIdx < 0 || rowIdx >= dupItems.length)
+                return;
+            var next = dupItems.slice();
+            var upd = Object.assign({}, next[rowIdx]);
+            upd.selected = !upd.selected;
+            next[rowIdx] = upd;
+            dupItems = next;
+            recalcSummary();
+        }
+
+        function applyKeepStrategy(strategy) {
+            if (dupItems.length === 0)
+                return;
+            var keeperByGroup = {};
+            if (strategy !== "none") {
+                for (var i = 0; i < dupItems.length; i++) {
+                    var it = dupItems[i];
+                    var g = it.groupIndex;
+                    if (keeperByGroup[g] === undefined) {
+                        keeperByGroup[g] = i;
+                    } else if (strategy === "oldest") {
+                        if (it.modifiedSecs <= dupItems[keeperByGroup[g]].modifiedSecs)
+                            keeperByGroup[g] = i;
+                    } else {
+                        if (it.modifiedSecs > dupItems[keeperByGroup[g]].modifiedSecs)
+                            keeperByGroup[g] = i;
+                    }
+                }
+            }
+            var next = [];
+            for (var j = 0; j < dupItems.length; j++) {
+                var item = Object.assign({}, dupItems[j]);
+                item.selected = strategy === "none" ? false : (keeperByGroup[item.groupIndex] !== j);
+                next.push(item);
+            }
+            dupItems = next;
+            recalcSummary();
+        }
+
+        function selectedPaths() {
+            var paths = [];
+            for (var i = 0; i < dupItems.length; i++) {
+                if (dupItems[i].selected)
+                    paths.push(dupItems[i].path);
+            }
+            return paths;
+        }
+
+        onRejected: {
+            win.duplicateFinderOpen = false;
+            currentListView().forceActiveFocus();
+        }
+
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: 8
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 6
+
+                Text { text: qsTr("Scope:"); font.pixelSize: 11; color: p.textDim }
+                FilterPill { label: qsTr("Active Panel"); active: !duplicateFinderDialog.bothPanels; onClicked: { duplicateFinderDialog.bothPanels = false; duplicateFinderDialog.runScan(); } }
+                FilterPill { label: qsTr("Both Panels"); active: duplicateFinderDialog.bothPanels; onClicked: { duplicateFinderDialog.bothPanels = true; duplicateFinderDialog.runScan(); } }
+
+                Item { width: 8; height: 24 }
+                Text { text: qsTr("Min Size:"); font.pixelSize: 11; color: p.textDim }
+                FilterPill { label: "> 0 B"; active: duplicateFinderDialog.minSizeBytes === 1; onClicked: { duplicateFinderDialog.minSizeBytes = 1; duplicateFinderDialog.runScan(); } }
+                FilterPill { label: "> 1 KB"; active: duplicateFinderDialog.minSizeBytes === 1024; onClicked: { duplicateFinderDialog.minSizeBytes = 1024; duplicateFinderDialog.runScan(); } }
+                FilterPill { label: "> 1 MB"; active: duplicateFinderDialog.minSizeBytes === 1048576; onClicked: { duplicateFinderDialog.minSizeBytes = 1048576; duplicateFinderDialog.runScan(); } }
+                FilterPill { label: qsTr("Hidden"); active: duplicateFinderDialog.includeHidden; onClicked: { duplicateFinderDialog.includeHidden = !duplicateFinderDialog.includeHidden; duplicateFinderDialog.runScan(); } }
+
+                Item { Layout.fillWidth: true }
+                ToolbarBtn {
+                    label: qsTr("Scan Duplicates")
+                    accentHighlight: true
+                    onClicked: duplicateFinderDialog.runScan()
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 6
+
+                FilterPill { label: qsTr("Keep Newest"); onClicked: duplicateFinderDialog.applyKeepStrategy("newest") }
+                FilterPill { label: qsTr("Keep Oldest"); onClicked: duplicateFinderDialog.applyKeepStrategy("oldest") }
+                FilterPill { label: qsTr("Clear Selection"); onClicked: duplicateFinderDialog.applyKeepStrategy("none") }
+
+                Item { Layout.fillWidth: true }
+
+                Text {
+                    text: qsTr("%1 file(s) in %2 duplicate group(s)  •  %3 selected (%4 reclaimable)")
+                          .arg(duplicateFinderDialog.dupItems.length)
+                          .arg(duplicateFinderDialog.groupCount)
+                          .arg(duplicateFinderDialog.selectedCount)
+                          .arg(duplicateFinderDialog.reclaimableFormatted)
+                    font.pixelSize: 11
+                    color: p.textMuted
+                }
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                radius: win.smallRadius
+                color: p.cardBg
+                border.width: 1
+                border.color: p.borderSubtle
+                clip: true
+
+                ListView {
+                    anchors.fill: parent
+                    anchors.margins: 4
+                    clip: true
+                    boundsBehavior: Flickable.StopAtBounds
+                    model: duplicateFinderDialog.dupItems
+
+                    ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+
+                    delegate: Rectangle {
+                        width: ListView.view.width
+                        height: 36
+                        radius: win.smallRadius
+                        readonly property bool isSel: modelData ? Boolean(modelData.selected) : false
+                        readonly property int gIdx: modelData ? (modelData.groupIndex || 0) : 0
+                        color: isSel
+                               ? Qt.alpha(p.dangerAccent, win.isDark ? 0.14 : 0.09)
+                               : (gIdx % 2 === 0 ? p.rowAltBg : "transparent")
+
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: 8
+                            anchors.rightMargin: 8
+                            spacing: 8
+
+                            Rectangle {
+                                implicitWidth: 16
+                                implicitHeight: 16
+                                radius: 3
+                                color: isSel ? p.dangerAccent : "transparent"
+                                border.width: 1
+                                border.color: isSel ? p.dangerAccent : p.borderStrong
+                                Text {
+                                    anchors.centerIn: parent
+                                    visible: isSel
+                                    text: "✓"
+                                    font.pixelSize: 10
+                                    font.bold: true
+                                    color: p.accentFg
+                                }
+                            }
+
+                            Rectangle {
+                                implicitHeight: 18
+                                implicitWidth: grpTxt.implicitWidth + 8
+                                radius: 3
+                                color: Qt.alpha(p.accent, 0.14)
+                                Text {
+                                    id: grpTxt
+                                    anchors.centerIn: parent
+                                    text: "#" + (gIdx + 1)
+                                    font.pixelSize: 10
+                                    font.family: "monospace"
+                                    color: p.accent
+                                }
+                            }
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 0
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: modelData ? (modelData.name || "") : ""
+                                    font.pixelSize: 12
+                                    font.weight: isSel ? Font.Normal : Font.DemiBold
+                                    color: p.textPrimary
+                                    elide: Text.ElideMiddle
+                                }
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: modelData ? (modelData.dirPath || "") : ""
+                                    font.pixelSize: 10
+                                    font.family: "monospace"
+                                    color: p.textDim
+                                    elide: Text.ElideMiddle
+                                }
+                            }
+
+                            Text {
+                                text: modelData ? (modelData.formattedSize || "") : ""
+                                font.pixelSize: 11
+                                font.family: "monospace"
+                                color: p.textSecondary
+                            }
+
+                            Text {
+                                text: modelData ? (modelData.modified || "") : ""
+                                font.pixelSize: 10
+                                font.family: "monospace"
+                                color: p.textDim
+                            }
+
+                            Rectangle {
+                                implicitHeight: 18
+                                implicitWidth: statusPillTxt.implicitWidth + 10
+                                radius: 3
+                                color: isSel ? Qt.alpha(p.dangerAccent, 0.16) : Qt.alpha(p.successText, 0.16)
+                                Text {
+                                    id: statusPillTxt
+                                    anchors.centerIn: parent
+                                    text: isSel ? qsTr("Trash") : qsTr("Keep")
+                                    font.pixelSize: 10
+                                    font.bold: true
+                                    color: isSel ? p.dangerText : p.successText
+                                }
+                            }
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: duplicateFinderDialog.toggleRowSelected(index)
+                        }
+                    }
+                }
+
+                Text {
+                    anchors.centerIn: parent
+                    visible: duplicateFinderDialog.dupItems.length === 0
+                    text: qsTr("No duplicate files found for current filter.")
+                    font.pixelSize: 12
+                    color: p.textDim
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+
+                ToolbarBtn {
+                    label: qsTr("Feed Selected to Panel")
+                    btnEnabled: duplicateFinderDialog.selectedCount > 0
+                    onClicked: {
+                        var paths = duplicateFinderDialog.selectedPaths();
+                        if (paths.length > 0) {
+                            backend.feedPathsToPanel(paths, qsTr("Duplicates"), false);
+                            win.duplicateFinderOpen = false;
+                            currentListView().forceActiveFocus();
+                        }
+                    }
+                }
+
+                ToolbarBtn {
+                    label: qsTr("Move Selected to Trash")
+                    accentHighlight: true
+                    btnEnabled: duplicateFinderDialog.selectedCount > 0
+                    onClicked: {
+                        var paths = duplicateFinderDialog.selectedPaths();
+                        if (paths.length > 0 && backend.deleteItems(paths, false))
+                            duplicateFinderDialog.runScan();
+                    }
+                }
+
+                Item { Layout.fillWidth: true }
+
+                ToolbarBtn {
+                    label: qsTr("Close")
+                    onClicked: duplicateFinderDialog.reject()
+                }
             }
         }
     }

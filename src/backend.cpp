@@ -1,3 +1,6 @@
+#include <archive.h>
+#include <archive_entry.h>
+
 #include "backend.h"
 
 #include <QClipboard>
@@ -26,6 +29,7 @@
 #include <QSettings>
 #include <QStandardPaths>
 #include <QStorageInfo>
+#include <QTemporaryDir>
 #include <QThread>
 #include <QUrl>
 
@@ -49,6 +53,388 @@ QString trashInfoForTrashFile(const QString &pathInTrash)
     return QFileInfo::exists(candidate) ? candidate : QString();
 }
 
+bool isImageExtension(const QString &ext)
+{
+    const QString lower = ext.toLower();
+    return lower == QLatin1String("png") || lower == QLatin1String("jpg") ||
+           lower == QLatin1String("jpeg") || lower == QLatin1String("svg") ||
+           lower == QLatin1String("webp") || lower == QLatin1String("gif");
+}
+
+QString computeFileSha256Hex(const QString &filePath, bool quickPrehash = false)
+{
+    QFile f(filePath);
+    if (!f.open(QIODevice::ReadOnly))
+        return {};
+
+    QCryptographicHash hasher(QCryptographicHash::Sha256);
+    if (quickPrehash && f.size() > 32768) {
+        hasher.addData(f.read(16384));
+        if (f.seek(f.size() - 16384))
+            hasher.addData(f.read(16384));
+        return QString::fromLatin1(hasher.result().toHex());
+    }
+
+    char buf[65536];
+    qint64 bytesRead = 0;
+    while ((bytesRead = f.read(buf, sizeof(buf))) > 0)
+        hasher.addData(QByteArrayView(buf, bytesRead));
+    return QString::fromLatin1(hasher.result().toHex());
+}
+
+struct SearchSpec {
+    QString nameQuery;
+    QString contentQuery;
+    bool caseSensitive = false;
+    bool useRegex = false;
+    bool includeHidden = true;
+    QString typeFilter = QStringLiteral("all"); // "all", "files", "dirs"
+    qint64 minSizeBytes = 0;
+    qint64 maxSizeBytes = -1;
+    int modifiedWithinDays = 0;
+    int maxResults = 1000;
+};
+
+SearchSpec parseSearchOptions(const QVariantMap &options)
+{
+    SearchSpec spec;
+    spec.nameQuery = options.value(QStringLiteral("nameQuery")).toString().trimmed();
+    spec.contentQuery = options.value(QStringLiteral("contentQuery")).toString();
+    spec.caseSensitive = options.value(QStringLiteral("caseSensitive"), false).toBool();
+    spec.useRegex = options.value(QStringLiteral("useRegex"), false).toBool();
+    spec.includeHidden = options.value(QStringLiteral("includeHidden"), true).toBool();
+    spec.typeFilter = options.value(QStringLiteral("typeFilter"), QStringLiteral("all")).toString();
+    spec.minSizeBytes = options.value(QStringLiteral("minSizeBytes"), 0).toLongLong();
+    spec.maxSizeBytes = options.value(QStringLiteral("maxSizeBytes"), -1).toLongLong();
+    spec.modifiedWithinDays = options.value(QStringLiteral("modifiedWithinDays"), 0).toInt();
+    spec.maxResults = std::max(1, options.value(QStringLiteral("maxResults"), 1000).toInt());
+    return spec;
+}
+
+bool searchFileContent(const QString &filePath, const SearchSpec &spec, const QRegularExpression &contentRe,
+                       std::atomic<bool> *cancelFlag, int *outLine, QString *outPreview)
+{
+    QFile f(filePath);
+    if (!f.open(QIODevice::ReadOnly))
+        return false;
+
+    const QByteArray head = f.peek(4096);
+    if (head.contains('\0'))
+        return false;
+
+    const Qt::CaseSensitivity cs = spec.caseSensitive ? Qt::CaseSensitive : Qt::CaseInsensitive;
+    const bool useRe = contentRe.isValid() && spec.useRegex;
+    int lineNum = 0;
+
+    while (!f.atEnd()) {
+        if (cancelFlag && (lineNum & 127) == 0 && cancelFlag->load(std::memory_order_relaxed))
+            return false;
+
+        QByteArray raw = f.readLine(65536);
+        ++lineNum;
+        if (raw.contains('\0'))
+            return false;
+
+        while (raw.endsWith('\n') || raw.endsWith('\r'))
+            raw.chop(1);
+
+        const QString line = QString::fromUtf8(raw);
+        const bool hit = useRe ? contentRe.match(line).hasMatch() : line.contains(spec.contentQuery, cs);
+        if (hit) {
+            if (outLine)
+                *outLine = lineNum;
+            if (outPreview) {
+                QString preview = line.trimmed();
+                if (preview.size() > 140)
+                    preview = preview.left(139) + QStringLiteral("…");
+                *outPreview = preview;
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+template <typename ProgressFn>
+QVariantList runSearchImpl(const QString &rootPath, const SearchSpec &spec,
+                           std::atomic<bool> *cancelFlag, ProgressFn onProgress,
+                           int *outScanned = nullptr)
+{
+    QVariantList allResults;
+    if (rootPath.isEmpty() || !QFileInfo(rootPath).isDir())
+        return allResults;
+
+    const Qt::CaseSensitivity cs = spec.caseSensitive ? Qt::CaseSensitive : Qt::CaseInsensitive;
+    const QRegularExpression::PatternOptions reOpts =
+        spec.caseSensitive ? QRegularExpression::NoPatternOption : QRegularExpression::CaseInsensitiveOption;
+
+    QRegularExpression nameRe;
+    bool useNameRe = false;
+    if (!spec.nameQuery.isEmpty()) {
+        if (spec.useRegex) {
+            nameRe = QRegularExpression(spec.nameQuery, reOpts);
+            useNameRe = nameRe.isValid();
+        } else if (spec.nameQuery.contains('*') || spec.nameQuery.contains('?')) {
+            nameRe = QRegularExpression(QRegularExpression::wildcardToRegularExpression(spec.nameQuery), reOpts);
+            useNameRe = nameRe.isValid();
+        }
+    }
+
+    QRegularExpression contentRe;
+    if (!spec.contentQuery.isEmpty() && spec.useRegex)
+        contentRe = QRegularExpression(spec.contentQuery, reOpts);
+
+    const bool hasContentQuery = !spec.contentQuery.isEmpty();
+    const bool onlyFiles = hasContentQuery || spec.typeFilter == QLatin1String("files")
+                           || spec.minSizeBytes > 0 || spec.maxSizeBytes >= 0;
+    const bool onlyDirs = !hasContentQuery && spec.typeFilter == QLatin1String("dirs");
+    const QDateTime mtimeCutoff = (spec.modifiedWithinDays > 0)
+                                      ? QDateTime::currentDateTime().addDays(-spec.modifiedWithinDays)
+                                      : QDateTime();
+
+    QDir::Filters entryFilters = QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot | QDir::System;
+    if (spec.includeHidden)
+        entryFilters |= QDir::Hidden;
+
+    const QDir rootDir(rootPath);
+    QStringList queue{rootDir.absolutePath()};
+    QVariantList pendingBatch;
+    int scanned = 0;
+
+    while (!queue.isEmpty() && allResults.size() < spec.maxResults) {
+        if (cancelFlag && cancelFlag->load(std::memory_order_relaxed))
+            break;
+
+        const QString dirPath = queue.takeFirst();
+        const QFileInfoList entries = QDir(dirPath).entryInfoList(entryFilters);
+        for (const QFileInfo &fi : entries) {
+            if (cancelFlag && cancelFlag->load(std::memory_order_relaxed))
+                break;
+
+            const bool isDir = fi.isDir();
+            if (isDir && !fi.isSymLink())
+                queue.append(fi.absoluteFilePath());
+
+            ++scanned;
+            if ((scanned % 60) == 0 && (!pendingBatch.isEmpty() || (scanned % 240) == 0)) {
+                onProgress(scanned, pendingBatch);
+                pendingBatch.clear();
+            }
+
+            if (onlyFiles && isDir)
+                continue;
+            if (onlyDirs && !isDir)
+                continue;
+
+            const QString fileName = fi.fileName();
+            if (!spec.nameQuery.isEmpty()) {
+                const bool nameMatched = useNameRe ? nameRe.match(fileName).hasMatch()
+                                                   : fileName.contains(spec.nameQuery, cs);
+                if (!nameMatched)
+                    continue;
+            }
+
+            const qint64 sz = isDir ? 0 : fi.size();
+            if (spec.minSizeBytes > 0 && sz < spec.minSizeBytes)
+                continue;
+            if (spec.maxSizeBytes >= 0 && sz > spec.maxSizeBytes)
+                continue;
+            if (mtimeCutoff.isValid() && fi.lastModified() < mtimeCutoff)
+                continue;
+
+            int matchLine = 0;
+            QString matchPreview;
+            if (hasContentQuery) {
+                constexpr qint64 kMaxSearchFileBytes = 64LL * 1024 * 1024;
+                if (isDir || sz > kMaxSearchFileBytes)
+                    continue;
+                if (!searchFileContent(fi.absoluteFilePath(), spec, contentRe, cancelFlag, &matchLine, &matchPreview))
+                    continue;
+            }
+
+            QVariantMap row;
+            row[QStringLiteral("path")] = fi.absoluteFilePath();
+            row[QStringLiteral("name")] = fileName;
+            row[QStringLiteral("relPath")] = rootDir.relativeFilePath(fi.absoluteFilePath());
+            row[QStringLiteral("isDir")] = isDir;
+            row[QStringLiteral("size")] = sz;
+            row[QStringLiteral("formattedSize")] = PanelModel::formatSize(sz, isDir);
+            row[QStringLiteral("modified")] = fi.lastModified().toString(QStringLiteral("yyyy-MM-dd hh:mm"));
+            row[QStringLiteral("matchLine")] = matchLine;
+            row[QStringLiteral("matchPreview")] = matchPreview;
+            allResults.append(row);
+            pendingBatch.append(row);
+
+            if (pendingBatch.size() >= 15) {
+                onProgress(scanned, pendingBatch);
+                pendingBatch.clear();
+            }
+            if (allResults.size() >= spec.maxResults)
+                break;
+        }
+    }
+
+    if (!pendingBatch.isEmpty())
+        onProgress(scanned, pendingBatch);
+    if (outScanned)
+        *outScanned = scanned;
+    return allResults;
+}
+
+QHash<QString, QFileInfo> collectFilesRecursive(const QString &rootPath, bool includeHidden)
+{
+    QHash<QString, QFileInfo> files;
+    const QDir rootDir(rootPath);
+    if (rootPath.isEmpty() || !rootDir.exists())
+        return files;
+
+    QDir::Filters filters = QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot;
+    if (includeHidden)
+        filters |= QDir::Hidden;
+
+    QStringList queue{rootDir.absolutePath()};
+    while (!queue.isEmpty()) {
+        const QString cur = queue.takeFirst();
+        const QFileInfoList entries = QDir(cur).entryInfoList(filters);
+        for (const QFileInfo &fi : entries) {
+            if (fi.isDir()) {
+                if (!fi.isSymLink())
+                    queue.append(fi.absoluteFilePath());
+            } else if (fi.isFile()) {
+                const QString rel = rootDir.relativeFilePath(fi.absoluteFilePath());
+                if (!includeHidden && rel.startsWith('.'))
+                    continue;
+                files.insert(rel, fi);
+            }
+        }
+    }
+    return files;
+}
+
+QString formatHexDumpText(const QByteArray &chunk, const QString &formattedSize, qint64 totalSize)
+{
+    const QByteArray sample = chunk.left(512);
+    QString hexDump = QObject::tr("[Binary file — %1 (%2 bytes)]\n\n").arg(formattedSize).arg(totalSize);
+    for (int offset = 0; offset < sample.size(); offset += 16) {
+        QString hexPart;
+        QString asciiPart;
+        for (int j = 0; j < 16; ++j) {
+            if (offset + j < sample.size()) {
+                unsigned char c = static_cast<unsigned char>(sample.at(offset + j));
+                hexPart += QString("%1 ").arg(c, 2, 16, QLatin1Char('0')).toUpper();
+                asciiPart += (c >= 32 && c < 127) ? QChar(c) : QChar('.');
+            } else {
+                hexPart += "   ";
+            }
+            if (j == 7)
+                hexPart += " ";
+        }
+        hexDump += QString("%1  %2 |%3|\n")
+                       .arg(offset, 6, 16, QLatin1Char('0')).toUpper()
+                       .arg(hexPart, asciiPart);
+    }
+    return hexDump;
+}
+
+QString normalizeArchiveEntryPath(struct archive_entry *entry, bool *outEndsWithSlash = nullptr)
+{
+    const char *utf8Name = archive_entry_pathname_utf8(entry);
+    QString rawName = utf8Name ? QString::fromUtf8(utf8Name)
+                               : QString::fromLocal8Bit(archive_entry_pathname(entry));
+    if (outEndsWithSlash)
+        *outEndsWithSlash = rawName.endsWith('/') || rawName.endsWith('\\');
+    rawName.replace('\\', '/');
+
+    const QStringList rawParts = rawName.split('/', Qt::SkipEmptyParts);
+    QStringList safeParts;
+    for (const QString &part : rawParts) {
+        if (part == QLatin1String("."))
+            continue;
+        if (part == QLatin1String("..")) {
+            if (!safeParts.isEmpty())
+                safeParts.removeLast();
+            continue;
+        }
+        safeParts.append(part);
+    }
+    return safeParts.join('/');
+}
+
+bool streamArchiveToFile(struct archive *a, const QString &destPath, int perm)
+{
+    QFileInfo destFi(destPath);
+    if (!QDir().mkpath(destFi.absolutePath()))
+        return false;
+
+    QFile out(destPath);
+    if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate))
+        return false;
+
+    const void *buff = nullptr;
+    size_t size = 0;
+    la_int64_t offset = 0;
+    bool ok = true;
+
+    while (true) {
+        const int r = archive_read_data_block(a, &buff, &size, &offset);
+        if (r == ARCHIVE_EOF)
+            break;
+        if (r < ARCHIVE_OK) {
+            ok = false;
+            break;
+        }
+        if (offset > out.pos()) {
+            const qint64 gap = offset - out.pos();
+            static const QByteArray zeros(4096, '\0');
+            qint64 remaining = gap;
+            while (remaining > 0) {
+                const qint64 chunk = std::min<qint64>(remaining, zeros.size());
+                if (out.write(zeros.constData(), chunk) != chunk) {
+                    ok = false;
+                    break;
+                }
+                remaining -= chunk;
+            }
+            if (!ok)
+                break;
+        }
+        if (size > 0 && out.write(static_cast<const char *>(buff), static_cast<qint64>(size)) != static_cast<qint64>(size)) {
+            ok = false;
+            break;
+        }
+    }
+
+    out.close();
+    if (ok && perm > 0) {
+        QFile::Permissions qp = QFile::ReadOwner | QFile::WriteOwner;
+        if (perm & 0100) qp |= QFile::ExeOwner;
+        if (perm & 0040) qp |= QFile::ReadGroup;
+        if (perm & 0020) qp |= QFile::WriteGroup;
+        if (perm & 0010) qp |= QFile::ExeGroup;
+        if (perm & 0004) qp |= QFile::ReadOther;
+        if (perm & 0002) qp |= QFile::WriteOther;
+        if (perm & 0001) qp |= QFile::ExeOther;
+        QFile::setPermissions(destPath, qp);
+    }
+    return ok;
+}
+
+bool anyPathInsideArchive(const QStringList &paths)
+{
+    QString arc, inner;
+    for (const QString &p : paths) {
+        if (PanelModel::splitArchivePath(p, &arc, &inner) && !inner.isEmpty())
+            return true;
+    }
+    return false;
+}
+
+bool isArchiveTargetPath(const QString &targetDir)
+{
+    QString arc, inner;
+    return PanelModel::splitArchivePath(targetDir, &arc, &inner);
+}
+
 } // namespace
 
 Backend::Backend(const QString &bookmarksFile, QObject *parent)
@@ -65,8 +451,21 @@ Backend::Backend(const QString &bookmarksFile, QObject *parent)
     loadSession();
     refreshDrives();
 
+    if (m_recentDirs.isEmpty()) {
+        m_loadingSession = true;
+        if (!m_leftPanel.isArchiveView())
+            recordRecentDirectory(m_leftPanel.path());
+        if (!m_rightPanel.isArchiveView())
+            recordRecentDirectory(m_rightPanel.path());
+        m_loadingSession = false;
+    }
+
     auto connectPanelSession = [this](PanelModel *panel) {
-        connect(panel, &PanelModel::pathChanged, this, &Backend::saveSession);
+        connect(panel, &PanelModel::pathChanged, this, [this, panel] {
+            if (!panel->isArchiveView())
+                recordRecentDirectory(panel->path());
+            saveSession();
+        });
         connect(panel, &PanelModel::tabsChanged, this, &Backend::saveSession);
         connect(panel, &PanelModel::sortChanged, this, &Backend::saveSession);
         connect(panel, &PanelModel::showHiddenChanged, this, &Backend::saveSession);
@@ -82,7 +481,10 @@ Backend::Backend(const QString &bookmarksFile, QObject *parent)
 
 Backend::~Backend()
 {
+    cancelSearch();
     saveSession();
+    delete m_archiveTempDir;
+    m_archiveTempDir = nullptr;
     if (m_fileOp) {
         m_fileOp->cancel();
         m_fileOpThread->wait();
@@ -120,6 +522,24 @@ void Backend::setWindowHeight(int height)
         emit windowSizeChanged();
         saveSession();
     }
+}
+
+void Backend::setThemeMode(const QString &mode)
+{
+    const QString normalized = (mode.trimmed().compare(QLatin1String("light"), Qt::CaseInsensitive) == 0)
+                                   ? QStringLiteral("light")
+                                   : QStringLiteral("dark");
+    if (m_themeMode != normalized) {
+        m_themeMode = normalized;
+        emit themeModeChanged();
+        saveSession();
+    }
+}
+
+void Backend::toggleThemeMode()
+{
+    setThemeMode(isDarkTheme() ? QStringLiteral("light") : QStringLiteral("dark"));
+    showStatus(isDarkTheme() ? tr("Theme switched to Dark.") : tr("Theme switched to Light."));
 }
 
 PanelModel* Backend::activeModel()
@@ -163,12 +583,38 @@ void Backend::compareDirectories()
 
 void Backend::openItem(const QString &path)
 {
+    QString archiveFile;
+    QString internalPath;
+    if (PanelModel::splitArchivePath(path, &archiveFile, &internalPath)) {
+        if (internalPath.isEmpty()) {
+            activeModel()->setPath(archiveFile);
+            showStatus(tr("Opened archive: %1").arg(QFileInfo(archiveFile).fileName()));
+            return;
+        }
+        const QList<ArchiveEntryInfo> entries = PanelModel::readArchiveEntries(archiveFile);
+        const QString childPrefix = internalPath + '/';
+        for (const ArchiveEntryInfo &entry : entries) {
+            if ((entry.internalPath == internalPath && entry.isDir) || entry.internalPath.startsWith(childPrefix)) {
+                activeModel()->setPath(archiveFile + "/" + internalPath);
+                return;
+            }
+        }
+        const QString tempFile = extractArchiveEntryToTemp(archiveFile, internalPath);
+        if (!tempFile.isEmpty()) {
+            QDesktopServices::openUrl(QUrl::fromLocalFile(tempFile));
+        }
+        return;
+    }
+
     QFileInfo info(path);
     if (!info.exists())
         return;
 
     if (info.isDir()) {
         activeModel()->cd(info.absoluteFilePath());
+    } else if (isArchive(info.fileName())) {
+        activeModel()->setPath(info.absoluteFilePath());
+        showStatus(tr("Opened archive: %1").arg(info.fileName()));
     } else {
         QDesktopServices::openUrl(QUrl::fromLocalFile(info.absoluteFilePath()));
     }
@@ -176,7 +622,15 @@ void Backend::openItem(const QString &path)
 
 void Backend::openWithEditor(const QString &path)
 {
-    QFileInfo info(path);
+    QString targetPath = path;
+    QString arc, inner;
+    if (PanelModel::splitArchivePath(path, &arc, &inner) && !inner.isEmpty()) {
+        targetPath = extractArchiveEntryToTemp(arc, inner);
+        if (targetPath.isEmpty())
+            return;
+    }
+
+    QFileInfo info(targetPath);
     if (!info.exists())
         return;
 
@@ -191,18 +645,24 @@ void Backend::openWithEditor(const QString &path)
             terminal = QStandardPaths::findExecutable("kitty");
 
         if (!terminal.isEmpty()) {
-            QProcess::startDetached(terminal, {"-e", editor, path});
+            QProcess::startDetached(terminal, {"-e", editor, targetPath});
             return;
         }
     }
 
-    QDesktopServices::openUrl(QUrl::fromLocalFile(path));
+    QDesktopServices::openUrl(QUrl::fromLocalFile(targetPath));
 }
 
 void Backend::openInTerminal(const QString &path)
 {
-    QFileInfo info(path);
-    QString dirPath = info.isDir() ? info.absoluteFilePath() : info.absolutePath();
+    QString dirPath;
+    QString arc, inner;
+    if (PanelModel::splitArchivePath(path, &arc, &inner)) {
+        dirPath = QFileInfo(arc).absolutePath();
+    } else {
+        QFileInfo info(path);
+        dirPath = info.isDir() ? info.absoluteFilePath() : info.absolutePath();
+    }
 
     QString terminal = QStandardPaths::findExecutable("xdg-terminal-exec");
     if (terminal.isEmpty())
@@ -314,11 +774,26 @@ void Backend::onFileOperationFinished()
 
 bool Backend::copyItems(const QStringList &sourcePaths, const QString &targetDir)
 {
+    if (!sourcePaths.isEmpty()) {
+        QString archiveFile;
+        QString internalPath;
+        if (PanelModel::splitArchivePath(sourcePaths.first(), &archiveFile, &internalPath) && !internalPath.isEmpty()) {
+            return extractArchiveItems(archiveFile, sourcePaths, targetDir);
+        }
+    }
+    if (isArchiveTargetPath(targetDir)) {
+        showStatus(tr("Archive view is read-only. Use F5 to extract files to the other panel."));
+        return false;
+    }
     return startFileOperation(FileOperation::Copy, sourcePaths, targetDir);
 }
 
 bool Backend::moveItems(const QStringList &sourcePaths, const QString &targetDir)
 {
+    if (anyPathInsideArchive(sourcePaths) || isArchiveTargetPath(targetDir)) {
+        showStatus(tr("Archive view is read-only. Use F5 to extract files to the other panel."));
+        return false;
+    }
     return startFileOperation(FileOperation::Move, sourcePaths, targetDir);
 }
 
@@ -348,6 +823,11 @@ bool Backend::deleteItems(const QStringList &paths, bool permanent)
 {
     if (paths.isEmpty())
         return false;
+
+    if (anyPathInsideArchive(paths)) {
+        showStatus(tr("Archive view is read-only. Use F5 to extract files to the other panel."));
+        return false;
+    }
 
     if (m_fileOp) {
         showStatus(tr("Another file operation is still running."));
@@ -415,6 +895,11 @@ bool Backend::createDirectory(const QString &name)
     if (name.trimmed().isEmpty())
         return false;
 
+    if (activeModel()->isArchiveView()) {
+        showStatus(tr("Archive view is read-only. Use F5 to extract files to the other panel."));
+        return false;
+    }
+
     if (name.contains(','))
         return createDirectories(name) > 0;
 
@@ -436,6 +921,11 @@ bool Backend::createDirectory(const QString &name)
 
 int Backend::createDirectories(const QString &namesCsv)
 {
+    if (activeModel()->isArchiveView()) {
+        showStatus(tr("Archive view is read-only. Use F5 to extract files to the other panel."));
+        return 0;
+    }
+
     const QStringList parts = namesCsv.split(',', Qt::SkipEmptyParts);
     if (parts.isEmpty())
         return 0;
@@ -490,6 +980,11 @@ bool Backend::createNewFile(const QString &fileName)
     if (fileName.trimmed().isEmpty())
         return false;
 
+    if (activeModel()->isArchiveView()) {
+        showStatus(tr("Archive view is read-only. Use F5 to extract files to the other panel."));
+        return false;
+    }
+
     if (fileName.contains(','))
         return createFiles(fileName) > 0;
 
@@ -525,6 +1020,11 @@ bool Backend::createNewFile(const QString &fileName)
 
 int Backend::createFiles(const QString &namesCsv)
 {
+    if (activeModel()->isArchiveView()) {
+        showStatus(tr("Archive view is read-only. Use F5 to extract files to the other panel."));
+        return 0;
+    }
+
     const QStringList parts = namesCsv.split(',', Qt::SkipEmptyParts);
     if (parts.isEmpty())
         return 0;
@@ -744,6 +1244,11 @@ bool Backend::renameItem(const QString &oldPath, const QString &newName)
     if (oldPath.isEmpty() || newName.trimmed().isEmpty())
         return false;
 
+    if (anyPathInsideArchive({oldPath})) {
+        showStatus(tr("Archive view is read-only. Use F5 to extract files to the other panel."));
+        return false;
+    }
+
     QFileInfo oldFi(oldPath);
     if (!itemExistsOrLink(oldFi))
         return false;
@@ -944,6 +1449,10 @@ bool Backend::pasteFromClipboard(const QString &targetDir)
     }
 
     const QString dest = targetDir.isEmpty() ? activeModel()->path() : targetDir;
+    if (isArchiveTargetPath(dest)) {
+        showStatus(tr("Archive view is read-only. Use F5 to extract files to the other panel."));
+        return false;
+    }
     if (isCut) {
         const bool started = moveItems(paths, dest);
         if (started) {
@@ -1003,6 +1512,11 @@ bool Backend::handleDrop(const QVariantList &urls, const QString &targetDir, boo
 {
     if (urls.isEmpty() || targetDir.isEmpty())
         return false;
+
+    if (isArchiveTargetPath(targetDir)) {
+        showStatus(tr("Archive view is read-only. Use F5 to extract files to the other panel."));
+        return false;
+    }
 
     const QFileInfo targetInfo(targetDir);
     if (!targetInfo.isDir())
@@ -1532,6 +2046,10 @@ void Backend::loadSession()
     m_windowHeight = std::max(540, settings.value("window/height", 800).toInt());
     const int savedActive = settings.value("window/activePanel", 0).toInt();
     m_activePanel = (savedActive == 1) ? 1 : 0;
+    const QString savedTheme = settings.value("window/themeMode", "dark").toString();
+    m_themeMode = (savedTheme.compare(QLatin1String("light"), Qt::CaseInsensitive) == 0)
+                      ? QStringLiteral("light")
+                      : QStringLiteral("dark");
 
     auto restorePanel = [&settings](const QString &group, PanelModel &panel) {
         settings.beginGroup(group);
@@ -1554,7 +2072,22 @@ void Backend::loadSession()
 
     restorePanel("leftPanel", m_leftPanel);
     restorePanel("rightPanel", m_rightPanel);
+
+    m_recentDirs.clear();
+    const QStringList savedRecent = settings.value("history/recentDirs").toStringList();
+    for (const QString &rawDir : savedRecent) {
+        const QFileInfo fi(rawDir);
+        if (fi.isDir()) {
+            const QString canon = fi.canonicalFilePath().isEmpty() ? fi.absoluteFilePath() : fi.canonicalFilePath();
+            if (!m_recentDirs.contains(canon))
+                m_recentDirs.append(canon);
+        }
+        if (m_recentDirs.size() >= 50)
+            break;
+    }
+
     m_loadingSession = false;
+    emit recentDirectoriesChanged();
 }
 
 void Backend::saveSession() const
@@ -1568,6 +2101,8 @@ void Backend::saveSession() const
     settings.setValue("window/width", m_windowWidth);
     settings.setValue("window/height", m_windowHeight);
     settings.setValue("window/activePanel", m_activePanel);
+    settings.setValue("window/themeMode", m_themeMode);
+    settings.setValue("history/recentDirs", m_recentDirs);
 
     auto savePanel = [&settings](const QString &group, const PanelModel &panel) {
         settings.beginGroup(group);
@@ -1654,6 +2189,11 @@ bool Backend::executeMultiRename(const QStringList &paths, const QString &findTe
     if (paths.isEmpty())
         return false;
 
+    if (anyPathInsideArchive(paths)) {
+        showStatus(tr("Archive view is read-only. Use F5 to extract files to the other panel."));
+        return false;
+    }
+
     int renamedCount = 0;
     QList<UndoPair> renamedPairs;
 
@@ -1692,11 +2232,7 @@ bool Backend::executeMultiRename(const QStringList &paths, const QString &findTe
 
 bool Backend::isArchive(const QString &path) const
 {
-    const QString lower = path.toLower();
-    return lower.endsWith(".zip") || lower.endsWith(".tar") || lower.endsWith(".tar.gz") ||
-           lower.endsWith(".tgz") || lower.endsWith(".tar.xz") || lower.endsWith(".txz") ||
-           lower.endsWith(".tar.bz2") || lower.endsWith(".tbz2") || lower.endsWith(".tar.zst") ||
-           lower.endsWith(".7z");
+    return PanelModel::isArchiveFileName(path);
 }
 
 bool Backend::packArchive(const QStringList &sourcePaths, const QString &archivePath)
@@ -1776,6 +2312,464 @@ bool Backend::extractArchive(const QString &archivePath, const QString &targetDi
     showStatus(ok ? tr("Extracted %1 to %2").arg(fi.fileName(), targetDir)
                   : tr("Failed to extract archive."));
     return ok;
+}
+
+bool Backend::extractArchiveItems(const QString &archivePath, const QStringList &sourcePaths, const QString &targetDir)
+{
+    QFileInfo arcFi(archivePath);
+    if (!arcFi.isFile() || sourcePaths.isEmpty() || targetDir.trimmed().isEmpty())
+        return false;
+
+    const QString cleanArchive = arcFi.canonicalFilePath().isEmpty()
+                                     ? arcFi.absoluteFilePath()
+                                     : arcFi.canonicalFilePath();
+
+    QDir().mkpath(targetDir);
+    const QFileInfo targetFi(targetDir);
+    if (!targetFi.isDir()) {
+        showStatus(tr("Target folder does not exist: %1").arg(targetDir));
+        return false;
+    }
+    const QString targetRoot = targetFi.canonicalFilePath().isEmpty()
+                                   ? QDir::cleanPath(targetFi.absoluteFilePath())
+                                   : targetFi.canonicalFilePath();
+    const QString safePrefix = targetRoot.endsWith('/') ? targetRoot : (targetRoot + '/');
+
+    struct ExtractTarget {
+        QString internalPath;
+        QString stripPrefix;
+    };
+    QList<ExtractTarget> targets;
+    for (const QString &rawSource : sourcePaths) {
+        QString selArchive;
+        QString selInternal;
+        if (PanelModel::splitArchivePath(rawSource, &selArchive, &selInternal)) {
+            if (selArchive != cleanArchive || selInternal.isEmpty())
+                continue;
+        } else {
+            selInternal = rawSource;
+            selInternal.replace('\\', '/');
+            while (selInternal.startsWith('/'))
+                selInternal.remove(0, 1);
+            while (selInternal.endsWith('/'))
+                selInternal.chop(1);
+            if (selInternal.isEmpty())
+                continue;
+        }
+        const int lastSlash = selInternal.lastIndexOf('/');
+        const QString strip = (lastSlash > 0) ? selInternal.left(lastSlash + 1) : QString();
+        targets.append(ExtractTarget{selInternal, strip});
+    }
+
+    if (targets.isEmpty())
+        return false;
+
+    struct archive *a = archive_read_new();
+    if (!a)
+        return false;
+    archive_read_support_filter_all(a);
+    archive_read_support_format_all(a);
+
+    const QByteArray encodedArchive = QFile::encodeName(cleanArchive);
+    if (archive_read_open_filename(a, encodedArchive.constData(), 65536) != ARCHIVE_OK) {
+        archive_read_free(a);
+        showStatus(tr("Failed to open archive: %1").arg(arcFi.fileName()));
+        return false;
+    }
+
+    int extractedCount = 0;
+    struct archive_entry *entry = nullptr;
+    while (archive_read_next_header(a, &entry) == ARCHIVE_OK) {
+        bool endsWithSlash = false;
+        const QString entryPath = normalizeArchiveEntryPath(entry, &endsWithSlash);
+        if (entryPath.isEmpty()) {
+            archive_read_data_skip(a);
+            continue;
+        }
+
+        const ExtractTarget *matched = nullptr;
+        for (const ExtractTarget &t : targets) {
+            if (entryPath == t.internalPath || entryPath.startsWith(t.internalPath + '/')) {
+                matched = &t;
+                break;
+            }
+        }
+        if (!matched) {
+            archive_read_data_skip(a);
+            continue;
+        }
+
+        const QString relOut = entryPath.mid(matched->stripPrefix.size());
+        if (relOut.isEmpty() || relOut.contains(QLatin1String(".."))) {
+            archive_read_data_skip(a);
+            continue;
+        }
+
+        const QString cleanDest = QDir::cleanPath(safePrefix + relOut);
+        if (!cleanDest.startsWith(safePrefix)) {
+            archive_read_data_skip(a);
+            continue;
+        }
+
+        const auto ftype = archive_entry_filetype(entry);
+        if (ftype == AE_IFDIR || endsWithSlash) {
+            if (QDir().mkpath(cleanDest))
+                ++extractedCount;
+            archive_read_data_skip(a);
+        } else if (ftype == AE_IFLNK) {
+            const char *symTarget = archive_entry_symlink(entry);
+            if (symTarget && *symTarget) {
+                QDir().mkpath(QFileInfo(cleanDest).absolutePath());
+                QFile::remove(cleanDest);
+                if (QFile::link(QString::fromUtf8(symTarget), cleanDest))
+                    ++extractedCount;
+            }
+            archive_read_data_skip(a);
+        } else {
+            const int perm = static_cast<int>(archive_entry_perm(entry)) & 0777;
+            if (streamArchiveToFile(a, cleanDest, perm > 0 ? perm : 0644))
+                ++extractedCount;
+        }
+    }
+
+    archive_read_free(a);
+    m_leftPanel.refresh();
+    m_rightPanel.refresh();
+
+    const bool ok = extractedCount > 0;
+    const QString msg = ok
+                            ? tr("Extracted %1 item(s) from %2 to %3").arg(extractedCount).arg(arcFi.fileName(), targetRoot)
+                            : tr("No matching items extracted from %1.").arg(arcFi.fileName());
+    showStatus(msg);
+    emit operationFinished(ok, msg);
+    return ok;
+}
+
+QString Backend::extractArchiveEntryToTemp(const QString &archivePath, const QString &internalPath)
+{
+    if (archivePath.isEmpty() || internalPath.isEmpty())
+        return {};
+
+    if (!m_archiveTempDir) {
+        m_archiveTempDir = new QTemporaryDir();
+    }
+    if (!m_archiveTempDir->isValid())
+        return {};
+
+    const QString key = QString::fromLatin1(
+        QCryptographicHash::hash((archivePath + QLatin1Char('|') + internalPath).toUtf8(), QCryptographicHash::Sha1)
+            .toHex()
+            .left(12));
+    const QString fileName = QFileInfo(internalPath).fileName();
+    if (fileName.isEmpty() || fileName == QLatin1String(".") || fileName == QLatin1String(".."))
+        return {};
+
+    const QString destPath = m_archiveTempDir->filePath(key + QLatin1Char('/') + fileName);
+
+    struct archive *a = archive_read_new();
+    if (!a)
+        return {};
+    archive_read_support_filter_all(a);
+    archive_read_support_format_all(a);
+
+    const QByteArray encodedArchive = QFile::encodeName(archivePath);
+    if (archive_read_open_filename(a, encodedArchive.constData(), 65536) != ARCHIVE_OK) {
+        archive_read_free(a);
+        return {};
+    }
+
+    QString outPath;
+    struct archive_entry *entry = nullptr;
+    while (archive_read_next_header(a, &entry) == ARCHIVE_OK) {
+        bool endsWithSlash = false;
+        const QString entryPath = normalizeArchiveEntryPath(entry, &endsWithSlash);
+        if (entryPath == internalPath && archive_entry_filetype(entry) != AE_IFDIR && !endsWithSlash) {
+            const int perm = static_cast<int>(archive_entry_perm(entry)) & 0777;
+            if (streamArchiveToFile(a, destPath, perm > 0 ? perm : 0644))
+                outPath = destPath;
+            break;
+        }
+        archive_read_data_skip(a);
+    }
+
+    archive_read_free(a);
+    return outPath;
+}
+
+void Backend::recordRecentDirectory(const QString &path)
+{
+    if (path.trimmed().isEmpty())
+        return;
+
+    QString arc, inner;
+    if (PanelModel::splitArchivePath(path, &arc, &inner))
+        return;
+
+    QFileInfo fi(path);
+    if (!fi.isDir())
+        return;
+
+    const QString clean = fi.canonicalFilePath().isEmpty()
+                              ? QDir::cleanPath(fi.absoluteFilePath())
+                              : fi.canonicalFilePath();
+    if (clean.isEmpty())
+        return;
+
+    if (!m_recentDirs.isEmpty() && m_recentDirs.first() == clean)
+        return;
+
+    m_recentDirs.removeAll(clean);
+    m_recentDirs.prepend(clean);
+    while (m_recentDirs.size() > 50)
+        m_recentDirs.removeLast();
+
+    emit recentDirectoriesChanged();
+
+    const QString tmpRoot = QDir::tempPath();
+    if (!m_loadingSession && !clean.startsWith(tmpRoot + '/') && !m_bookmarksFile.startsWith(tmpRoot + '/')) {
+        const QString zoxide = QStandardPaths::findExecutable(QStringLiteral("zoxide"));
+        if (!zoxide.isEmpty())
+            QProcess::startDetached(zoxide, {QStringLiteral("add"), clean});
+    }
+}
+
+int Backend::fuzzyScore(const QString &pattern, const QString &candidate)
+{
+    const QString pat = pattern.trimmed().toLower();
+    if (pat.isEmpty())
+        return 0;
+
+    const QString cand = candidate.toLower();
+    if (cand.isEmpty())
+        return -1;
+
+    int score = 0;
+    int patIdx = 0;
+    int prevMatch = -2;
+    for (int i = 0; i < cand.size() && patIdx < pat.size(); ++i) {
+        if (cand.at(i) == pat.at(patIdx)) {
+            int bonus = 10;
+            if (i == 0) {
+                bonus += 25;
+            } else {
+                const QChar prev = cand.at(i - 1);
+                if (prev == '/' || prev == '-' || prev == '_' || prev == '.' || prev == ' ')
+                    bonus += 18;
+            }
+            if (i == prevMatch + 1)
+                bonus += 15;
+            score += bonus;
+            prevMatch = i;
+            ++patIdx;
+        }
+    }
+
+    if (patIdx < pat.size())
+        return -1;
+
+    const int exactPos = cand.indexOf(pat);
+    if (exactPos == 0)
+        score += 80;
+    else if (exactPos > 0)
+        score += 40;
+
+    score -= std::min(50, static_cast<int>(cand.size()) / 4);
+    return std::max(1, score);
+}
+
+QVariantList Backend::queryJumpDirectories(const QString &query, int maxResults) const
+{
+    struct Candidate {
+        QString path;
+        QString name;
+        QString source;
+        QString badge;
+        int priorityBonus = 0;
+        bool forceInclude = false;
+    };
+
+    QList<Candidate> candidates;
+    QHash<QString, int> indexByPath;
+
+    auto addCandidate = [&](const QString &rawPath, const QString &source, const QString &badge,
+                            int priorityBonus, bool forceInclude = false) {
+        QFileInfo fi(rawPath);
+        if (!fi.isDir())
+            return;
+        const QString clean = fi.canonicalFilePath().isEmpty()
+                                  ? QDir::cleanPath(fi.absoluteFilePath())
+                                  : fi.canonicalFilePath();
+        if (clean.isEmpty())
+            return;
+
+        if (indexByPath.contains(clean)) {
+            Candidate &existing = candidates[indexByPath.value(clean)];
+            if (priorityBonus > existing.priorityBonus) {
+                existing.source = source;
+                existing.badge = badge;
+                existing.priorityBonus = priorityBonus;
+            }
+            if (forceInclude)
+                existing.forceInclude = true;
+            return;
+        }
+
+        Candidate c;
+        c.path = clean;
+        c.name = clean == QLatin1String("/") ? QStringLiteral("/") : QFileInfo(clean).fileName();
+        if (c.name.isEmpty())
+            c.name = clean;
+        c.source = source;
+        c.badge = badge;
+        c.priorityBonus = priorityBonus;
+        c.forceInclude = forceInclude;
+        indexByPath.insert(clean, candidates.size());
+        candidates.append(c);
+    };
+
+    const PanelModel *active = (m_activePanel == 0) ? &m_leftPanel : &m_rightPanel;
+    const QString activeRealDir = active->isArchiveView()
+                                      ? QFileInfo(active->archiveFilePath()).absolutePath()
+                                      : active->path();
+    const QString trimmed = query.trimmed();
+
+    // 1. Direct path completion if user typed an explicit path (/..., ~/..., ./..., ../...)
+    if (trimmed.startsWith('/') || trimmed.startsWith('~') || trimmed.startsWith('.')) {
+        QString expanded = trimmed;
+        if (expanded == QLatin1String("~"))
+            expanded = QDir::homePath();
+        else if (expanded.startsWith(QLatin1String("~/")))
+            expanded = QDir::homePath() + expanded.mid(1);
+        else if (expanded.startsWith('.'))
+            expanded = QDir::cleanPath(activeRealDir + '/' + expanded);
+
+        if (QFileInfo(expanded).isDir())
+            addCandidate(expanded, QStringLiteral("path"), tr("Path"), 220, true);
+
+        const int lastSlash = expanded.lastIndexOf('/');
+        const QString parentDir = (lastSlash == 0) ? QStringLiteral("/")
+                                  : (lastSlash > 0) ? expanded.left(lastSlash)
+                                                    : QString();
+        const QString leafPrefix = (lastSlash >= 0) ? expanded.mid(lastSlash + 1).toLower() : QString();
+        if (!parentDir.isEmpty() && QFileInfo(parentDir).isDir()) {
+            const QDir pDir(parentDir);
+            const QFileInfoList subDirs = pDir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot |
+                                                                 (leafPrefix.startsWith('.') ? QDir::Hidden : QDir::Filter(0)));
+            int added = 0;
+            for (const QFileInfo &sd : subDirs) {
+                if (leafPrefix.isEmpty() || sd.fileName().toLower().startsWith(leafPrefix) ||
+                    fuzzyScore(leafPrefix, sd.fileName()) > 0) {
+                    addCandidate(sd.absoluteFilePath(), QStringLiteral("path"), tr("Path"), 190, true);
+                    if (++added >= 40)
+                        break;
+                }
+            }
+        }
+    }
+
+    // 2. Bookmarks
+    for (const QString &b : m_bookmarks)
+        addCandidate(b, QStringLiteral("bookmark"), tr("Bookmark"), 95);
+
+    // 3. Open tabs (both panels)
+    for (const QString &tp : m_leftPanel.tabPaths())
+        addCandidate(tp, QStringLiteral("tab"), tr("Open Tab"), 85);
+    for (const QString &tp : m_rightPanel.tabPaths())
+        addCandidate(tp, QStringLiteral("tab"), tr("Open Tab"), 85);
+
+    // 4. Recent directories (newer entries get slightly higher bonus)
+    for (int i = 0; i < m_recentDirs.size(); ++i)
+        addCandidate(m_recentDirs.at(i), QStringLiteral("recent"), tr("Recent"), std::max(40, 80 - i));
+
+    // 5. Direct subdirectories of active panel (when not in archive view)
+    if (!active->isArchiveView() && QFileInfo(active->path()).isDir()) {
+        const QDir activeDir(active->path());
+        const QFileInfoList children = activeDir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
+        int childCount = 0;
+        for (const QFileInfo &ch : children) {
+            addCandidate(ch.absoluteFilePath(), QStringLiteral("subfolder"), tr("Subfolder"), 65);
+            if (++childCount >= 120)
+                break;
+        }
+    }
+
+    // 6. Mounted drives
+    for (const QVariant &dv : m_drives) {
+        const QVariantMap d = dv.toMap();
+        if (d.value(QStringLiteral("isMounted")).toBool())
+            addCandidate(d.value(QStringLiteral("path")).toString(), QStringLiteral("drive"), tr("Drive"), 55);
+    }
+
+    // 7. zoxide frecency database (when installed)
+    const QString tmpRoot = QDir::tempPath();
+    if (!m_bookmarksFile.startsWith(tmpRoot + '/')) {
+        const QString zoxide = QStandardPaths::findExecutable(QStringLiteral("zoxide"));
+        if (!zoxide.isEmpty()) {
+            QProcess proc;
+            QStringList args{QStringLiteral("query"), QStringLiteral("-l")};
+            if (!trimmed.isEmpty() && !trimmed.startsWith('/') && !trimmed.startsWith('~') && !trimmed.startsWith('.')) {
+                args.append(trimmed.split(QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts));
+            }
+            proc.start(zoxide, args);
+            if (proc.waitForFinished(500) && proc.exitCode() == 0) {
+                const QString out = QString::fromUtf8(proc.readAllStandardOutput());
+                const QStringList lines = out.split('\n', Qt::SkipEmptyParts);
+                int count = 0;
+                for (const QString &line : lines) {
+                    addCandidate(line.trimmed(), QStringLiteral("zoxide"), QStringLiteral("zoxide"),
+                                 std::max(35, 78 - count));
+                    if (++count >= 80)
+                        break;
+                }
+            }
+        }
+    }
+
+    struct ScoredCandidate {
+        Candidate cand;
+        int score = 0;
+    };
+    QList<ScoredCandidate> scored;
+    const QString activePath = active->path();
+
+    for (const Candidate &c : candidates) {
+        int totalScore = 0;
+        if (trimmed.isEmpty()) {
+            totalScore = c.priorityBonus + (c.path == activePath ? -15 : 0);
+        } else if (c.forceInclude) {
+            const int ps = fuzzyScore(trimmed, c.path);
+            totalScore = c.priorityBonus + std::max(0, ps);
+        } else {
+            const int nameScore = fuzzyScore(trimmed, c.name);
+            const int pathScore = fuzzyScore(trimmed, c.path);
+            if (nameScore < 0 && pathScore < 0)
+                continue;
+            totalScore = std::max(0, nameScore) * 2 + std::max(0, pathScore) + c.priorityBonus;
+        }
+        scored.append(ScoredCandidate{c, totalScore});
+    }
+
+    std::sort(scored.begin(), scored.end(), [](const ScoredCandidate &a, const ScoredCandidate &b) {
+        if (a.score != b.score)
+            return a.score > b.score;
+        if (a.cand.path.size() != b.cand.path.size())
+            return a.cand.path.size() < b.cand.path.size();
+        return a.cand.path.compare(b.cand.path, Qt::CaseInsensitive) < 0;
+    });
+
+    const int limit = std::clamp(maxResults, 1, 200);
+    QVariantList result;
+    result.reserve(std::min(limit, static_cast<int>(scored.size())));
+    for (int i = 0; i < scored.size() && i < limit; ++i) {
+        QVariantMap row;
+        row["path"] = scored.at(i).cand.path;
+        row["name"] = scored.at(i).cand.name;
+        row["source"] = scored.at(i).cand.source;
+        row["badge"] = scored.at(i).cand.badge;
+        row["score"] = scored.at(i).score;
+        result.append(row);
+    }
+    return result;
 }
 
 void Backend::refreshDrives()
@@ -2003,7 +2997,10 @@ QVariantMap Backend::runCommand(const QString &command)
         return res;
 
     QProcess proc;
-    proc.setWorkingDirectory(activeModel()->path());
+    const QString workDir = activeModel()->isArchiveView()
+                                ? QFileInfo(activeModel()->archiveFilePath()).absolutePath()
+                                : activeModel()->path();
+    proc.setWorkingDirectory(workDir);
     proc.setProcessChannelMode(QProcess::MergedChannels);
     proc.start("/bin/sh", {"-c", command});
     proc.waitForFinished(10000);
@@ -2029,6 +3026,155 @@ QVariantMap Backend::runCommand(const QString &command)
 QVariantMap Backend::getPreview(const QString &path)
 {
     QVariantMap map;
+
+    QString archiveFile;
+    QString internalPath;
+    if (PanelModel::splitArchivePath(path, &archiveFile, &internalPath) && !internalPath.isEmpty()) {
+        struct archive *a = archive_read_new();
+        if (!a) {
+            map["exists"] = false;
+            return map;
+        }
+        archive_read_support_filter_all(a);
+        archive_read_support_format_all(a);
+
+        const QByteArray encodedArchive = QFile::encodeName(archiveFile);
+        if (archive_read_open_filename(a, encodedArchive.constData(), 65536) != ARCHIVE_OK) {
+            archive_read_free(a);
+            map["exists"] = false;
+            return map;
+        }
+
+        const QString childPrefix = internalPath + '/';
+        bool matchedDir = false;
+        QString dirModified;
+        int subDirs = 0;
+        int files = 0;
+        qint64 directBytes = 0;
+        QStringList sampleNames;
+        QSet<QString> seenChildren;
+
+        struct archive_entry *entry = nullptr;
+        while (archive_read_next_header(a, &entry) == ARCHIVE_OK) {
+            bool endsWithSlash = false;
+            const QString entryPath = normalizeArchiveEntryPath(entry, &endsWithSlash);
+            if (entryPath.isEmpty()) {
+                archive_read_data_skip(a);
+                continue;
+            }
+
+            const bool entryIsDir = (archive_entry_filetype(entry) == AE_IFDIR) || endsWithSlash;
+            const qint64 entrySize = std::max<qint64>(0, static_cast<qint64>(archive_entry_size(entry)));
+            const QString modifiedStr = archive_entry_mtime_is_set(entry)
+                                            ? QDateTime::fromSecsSinceEpoch(archive_entry_mtime(entry))
+                                                  .toString("yyyy-MM-dd hh:mm:ss")
+                                            : QString();
+
+            if (entryPath == internalPath && !entryIsDir) {
+                const QFileInfo entryFi(internalPath);
+                const QString ext = entryFi.suffix().toLower();
+                map["exists"] = true;
+                map["name"] = entryFi.fileName();
+                map["path"] = archiveFile + "/" + internalPath;
+                map["isDir"] = false;
+                map["size"] = entrySize;
+                map["formattedSize"] = PanelModel::formatSize(entrySize, false);
+                map["modified"] = modifiedStr;
+
+                if (isImageExtension(ext)) {
+                    archive_read_free(a);
+                    const QString tempImg = extractArchiveEntryToTemp(archiveFile, internalPath);
+                    if (!tempImg.isEmpty()) {
+                        map["isImage"] = true;
+                        map["imagePath"] = QUrl::fromLocalFile(tempImg).toString();
+                        QImageReader reader(tempImg);
+                        const QSize sz = reader.size();
+                        if (sz.isValid())
+                            map["imageDimensions"] = QString("%1 × %2 px").arg(sz.width()).arg(sz.height());
+                        const QString fmt = QString::fromLatin1(reader.format()).toUpper();
+                        map["imageFormat"] = fmt.isEmpty() ? ext.toUpper() : fmt;
+                    }
+                    return map;
+                }
+
+                constexpr qint64 kMaxPreviewBytes = 128 * 1024;
+                QByteArray chunk;
+                char buf[8192];
+                bool truncated = false;
+                while (chunk.size() <= kMaxPreviewBytes) {
+                    const la_ssize_t n = archive_read_data(a, buf, sizeof(buf));
+                    if (n <= 0)
+                        break;
+                    chunk.append(buf, static_cast<qsizetype>(n));
+                    if (chunk.size() > kMaxPreviewBytes) {
+                        chunk.truncate(kMaxPreviewBytes);
+                        truncated = true;
+                        break;
+                    }
+                }
+                archive_read_free(a);
+
+                const bool isBinary = chunk.contains('\0');
+                map["isImage"] = false;
+                map["isBinary"] = isBinary;
+                map["isText"] = true;
+                if (!isBinary) {
+                    map["text"] = QString::fromUtf8(chunk);
+                    map["truncated"] = truncated;
+                } else {
+                    map["text"] = formatHexDumpText(chunk, map["formattedSize"].toString(), entrySize);
+                }
+                return map;
+            }
+
+            if (entryPath == internalPath && entryIsDir) {
+                matchedDir = true;
+                dirModified = modifiedStr;
+            } else if (entryPath.startsWith(childPrefix)) {
+                matchedDir = true;
+                const QString rel = entryPath.mid(childPrefix.size());
+                const int slash = rel.indexOf('/');
+                const QString childName = (slash >= 0) ? rel.left(slash) : rel;
+                const bool childIsDir = (slash >= 0) || entryIsDir;
+                if (!childName.isEmpty() && !seenChildren.contains(childName)) {
+                    seenChildren.insert(childName);
+                    if (childIsDir)
+                        ++subDirs;
+                    else {
+                        ++files;
+                        directBytes += entrySize;
+                    }
+                    if (sampleNames.size() < 25)
+                        sampleNames.append((childIsDir ? "📁 " : "🗎 ") + childName);
+                }
+            }
+            archive_read_data_skip(a);
+        }
+
+        archive_read_free(a);
+        if (matchedDir) {
+            map["exists"] = true;
+            map["name"] = QFileInfo(internalPath).fileName();
+            map["path"] = archiveFile + "/" + internalPath;
+            map["isDir"] = true;
+            map["size"] = 0;
+            map["formattedSize"] = PanelModel::formatSize(0, true);
+            map["modified"] = dirModified;
+            map["isText"] = true;
+            map["text"] = tr("Archive Folder: %1\nPath: %2\n\nContents: %3 folder(s), %4 file(s)\nDirect files size: %5\n\nItems:\n%6")
+                              .arg(map["name"].toString(),
+                                   map["path"].toString())
+                              .arg(subDirs)
+                              .arg(files)
+                              .arg(PanelModel::formatSize(directBytes, false),
+                                   sampleNames.isEmpty() ? tr("(empty directory)") : sampleNames.join("\n"));
+            return map;
+        }
+
+        map["exists"] = false;
+        return map;
+    }
+
     QFileInfo fi(path);
     if (!fi.exists()) {
         map["exists"] = false;
@@ -2073,7 +3219,7 @@ QVariantMap Backend::getPreview(const QString &path)
     }
 
     const QString ext = fi.suffix().toLower();
-    bool isImage = (ext == "png" || ext == "jpg" || ext == "jpeg" || ext == "svg" || ext == "webp" || ext == "gif");
+    bool isImage = isImageExtension(ext);
     map["isImage"] = isImage;
 
     if (isImage) {
@@ -2109,13 +3255,7 @@ QVariantMap Backend::getPreview(const QString &path)
     QFile file(path);
     if (file.open(QIODevice::ReadOnly)) {
         QByteArray chunk = file.read(128 * 1024);
-        bool isBinary = false;
-        for (char b : chunk) {
-            if (b == '\0') {
-                isBinary = true;
-                break;
-            }
-        }
+        const bool isBinary = chunk.contains('\0');
         map["isBinary"] = isBinary;
         if (!isBinary) {
             map["isText"] = true;
@@ -2123,28 +3263,7 @@ QVariantMap Backend::getPreview(const QString &path)
             map["truncated"] = (file.size() > chunk.size());
         } else {
             map["isText"] = true;
-            // Format first 512 bytes as a clean Hex + ASCII dump
-            const QByteArray sample = chunk.left(512);
-            QString hexDump = tr("[Binary file — %1 (%2 bytes)]\n\n").arg(map["formattedSize"].toString()).arg(fi.size());
-            for (int offset = 0; offset < sample.size(); offset += 16) {
-                QString hexPart;
-                QString asciiPart;
-                for (int j = 0; j < 16; ++j) {
-                    if (offset + j < sample.size()) {
-                        unsigned char c = static_cast<unsigned char>(sample.at(offset + j));
-                        hexPart += QString("%1 ").arg(c, 2, 16, QLatin1Char('0')).toUpper();
-                        asciiPart += (c >= 32 && c < 127) ? QChar(c) : QChar('.');
-                    } else {
-                        hexPart += "   ";
-                    }
-                    if (j == 7)
-                        hexPart += " ";
-                }
-                hexDump += QString("%1  %2 |%3|\n")
-                               .arg(offset, 6, 16, QLatin1Char('0')).toUpper()
-                               .arg(hexPart, asciiPart);
-            }
-            map["text"] = hexDump;
+            map["text"] = formatHexDumpText(chunk, map["formattedSize"].toString(), fi.size());
         }
     }
 
@@ -2169,6 +3288,434 @@ QStringList Backend::searchFiles(const QString &rootPath, const QString &query, 
     }
 
     return results;
+}
+
+QVariantList Backend::runAdvancedSearchSync(const QString &rootPath, const QVariantMap &options)
+{
+    const SearchSpec spec = parseSearchOptions(options);
+    return runSearchImpl(rootPath, spec, nullptr, [](int, const QVariantList &) {});
+}
+
+void Backend::cancelSearch()
+{
+    if (!m_searchThread && !m_searchRunning)
+        return;
+
+    m_searchCancelRequested.store(true, std::memory_order_relaxed);
+    ++m_searchGeneration;
+
+    if (m_searchThread) {
+        m_searchThread->wait();
+        delete m_searchThread;
+        m_searchThread = nullptr;
+    }
+
+    if (m_searchRunning) {
+        m_searchRunning = false;
+        emit searchStateChanged();
+        showStatus(tr("Search cancelled."));
+    }
+}
+
+void Backend::startAdvancedSearch(const QString &rootPath, const QVariantMap &options)
+{
+    cancelSearch();
+
+    const QFileInfo rootFi(rootPath);
+    if (!rootFi.exists() || !rootFi.isDir()) {
+        showStatus(tr("Search folder does not exist: %1").arg(rootPath));
+        return;
+    }
+
+    const QString cleanRoot = rootFi.absoluteFilePath();
+    const SearchSpec spec = parseSearchOptions(options);
+
+    m_searchCancelRequested.store(false, std::memory_order_relaxed);
+    const quint64 gen = ++m_searchGeneration;
+    m_searchRunning = true;
+    m_searchScannedCount = 0;
+    m_searchResultItems.clear();
+    emit searchResultsChanged();
+    emit searchProgressChanged();
+    emit searchStateChanged();
+
+    QThread *worker = QThread::create([this, gen, cleanRoot, spec]() {
+        int totalScanned = 0;
+        runSearchImpl(cleanRoot, spec, &m_searchCancelRequested,
+                      [this, gen](int scanned, const QVariantList &batch) {
+                          QMetaObject::invokeMethod(this, [this, gen, scanned, batch]() {
+                              if (gen != m_searchGeneration)
+                                  return;
+                              m_searchScannedCount = scanned;
+                              emit searchProgressChanged();
+                              if (!batch.isEmpty()) {
+                                  m_searchResultItems.append(batch);
+                                  emit searchResultsChanged();
+                              }
+                          }, Qt::QueuedConnection);
+                      },
+                      &totalScanned);
+
+        const bool cancelled = m_searchCancelRequested.load(std::memory_order_relaxed);
+        QMetaObject::invokeMethod(this, [this, gen, totalScanned, cancelled]() {
+            if (gen != m_searchGeneration)
+                return;
+            m_searchScannedCount = totalScanned;
+            m_searchRunning = false;
+            if (m_searchThread) {
+                m_searchThread->wait();
+                delete m_searchThread;
+                m_searchThread = nullptr;
+            }
+            emit searchProgressChanged();
+            emit searchStateChanged();
+            showStatus(cancelled
+                           ? tr("Search stopped (%1 results found).").arg(m_searchResultItems.size())
+                           : tr("Search finished: %1 result(s) across %2 item(s).")
+                                 .arg(m_searchResultItems.size())
+                                 .arg(totalScanned));
+        }, Qt::QueuedConnection);
+    });
+
+    m_searchThread = worker;
+    worker->start();
+}
+
+void Backend::feedPathsToPanel(const QStringList &paths, const QString &title, bool newTab)
+{
+    PanelModel *panel = activeModel();
+    const QString basePath = panel->isArchiveView() ? QFileInfo(panel->archiveFilePath()).absolutePath() : panel->path();
+    const QString cleanTitle = title.trimmed().isEmpty() ? tr("Search Results") : title.trimmed();
+    if (newTab)
+        panel->addTab(basePath);
+    panel->feedItems(paths, cleanTitle, basePath);
+    showStatus(tr("Fed %1 item(s) to panel \"%2\".").arg(paths.size()).arg(cleanTitle));
+}
+
+QVariantList Backend::compareDirectoriesRecursive(const QString &leftRoot, const QString &rightRoot,
+                                                  const QString &compareMode, bool includeHidden)
+{
+    QVariantList out;
+    if (leftRoot.isEmpty() || rightRoot.isEmpty())
+        return out;
+
+    const QDir leftDir(leftRoot);
+    const QDir rightDir(rightRoot);
+    if (!leftDir.exists() || !rightDir.exists())
+        return out;
+
+    const QHash<QString, QFileInfo> leftMap = collectFilesRecursive(leftRoot, includeHidden);
+    const QHash<QString, QFileInfo> rightMap = collectFilesRecursive(rightRoot, includeHidden);
+
+    QSet<QString> keySet;
+    for (auto it = leftMap.constBegin(); it != leftMap.constEnd(); ++it)
+        keySet.insert(it.key());
+    for (auto it = rightMap.constBegin(); it != rightMap.constEnd(); ++it)
+        keySet.insert(it.key());
+
+    QStringList sortedKeys = keySet.values();
+    std::sort(sortedKeys.begin(), sortedKeys.end(), [](const QString &a, const QString &b) {
+        return QString::localeAwareCompare(a.toLower(), b.toLower()) < 0;
+    });
+
+    const QString mode = compareMode.trimmed().toLower();
+    out.reserve(sortedKeys.size());
+
+    for (const QString &rel : std::as_const(sortedKeys)) {
+        const bool inL = leftMap.contains(rel);
+        const bool inR = rightMap.contains(rel);
+        const QFileInfo lFi = leftMap.value(rel);
+        const QFileInfo rFi = rightMap.value(rel);
+
+        QString status;
+        QString action;
+
+        if (inL && !inR) {
+            status = QStringLiteral("left_only");
+            action = QStringLiteral("copy_to_right");
+        } else if (!inL && inR) {
+            status = QStringLiteral("right_only");
+            action = QStringLiteral("copy_to_left");
+        } else {
+            const qint64 lSz = lFi.size();
+            const qint64 rSz = rFi.size();
+            const QDateTime lTm = lFi.lastModified();
+            const QDateTime rTm = rFi.lastModified();
+            const qint64 deltaSecs = lTm.secsTo(rTm); // > 0 means right is newer
+
+            if (mode == QLatin1String("size")) {
+                if (lSz == rSz) {
+                    status = QStringLiteral("equal");
+                    action = QStringLiteral("skip");
+                } else {
+                    status = QStringLiteral("different");
+                    action = (deltaSecs < -2) ? QStringLiteral("copy_to_right")
+                                              : ((deltaSecs > 2) ? QStringLiteral("copy_to_left") : QStringLiteral("skip"));
+                }
+            } else if (mode == QLatin1String("sha256")) {
+                bool contentSame = (lSz == rSz);
+                if (contentSame)
+                    contentSame = (computeFileSha256Hex(lFi.absoluteFilePath()) == computeFileSha256Hex(rFi.absoluteFilePath()));
+
+                if (contentSame) {
+                    status = QStringLiteral("equal");
+                    action = QStringLiteral("skip");
+                } else if (deltaSecs < -2) {
+                    status = QStringLiteral("left_newer");
+                    action = QStringLiteral("copy_to_right");
+                } else if (deltaSecs > 2) {
+                    status = QStringLiteral("right_newer");
+                    action = QStringLiteral("copy_to_left");
+                } else {
+                    status = QStringLiteral("different");
+                    action = QStringLiteral("skip");
+                }
+            } else {
+                // Default: "date_size"
+                if (lSz == rSz && qAbs(deltaSecs) <= 2) {
+                    status = QStringLiteral("equal");
+                    action = QStringLiteral("skip");
+                } else if (deltaSecs < -2) {
+                    status = QStringLiteral("left_newer");
+                    action = QStringLiteral("copy_to_right");
+                } else if (deltaSecs > 2) {
+                    status = QStringLiteral("right_newer");
+                    action = QStringLiteral("copy_to_left");
+                } else {
+                    status = QStringLiteral("different");
+                    action = QStringLiteral("skip");
+                }
+            }
+        }
+
+        QVariantMap row;
+        row[QStringLiteral("relPath")] = rel;
+        row[QStringLiteral("leftPath")] = inL ? lFi.absoluteFilePath() : leftDir.filePath(rel);
+        row[QStringLiteral("rightPath")] = inR ? rFi.absoluteFilePath() : rightDir.filePath(rel);
+        row[QStringLiteral("leftExists")] = inL;
+        row[QStringLiteral("rightExists")] = inR;
+        row[QStringLiteral("leftSize")] = inL ? lFi.size() : qint64(-1);
+        row[QStringLiteral("rightSize")] = inR ? rFi.size() : qint64(-1);
+        row[QStringLiteral("leftFormattedSize")] = inL ? PanelModel::formatSize(lFi.size(), false) : QString();
+        row[QStringLiteral("rightFormattedSize")] = inR ? PanelModel::formatSize(rFi.size(), false) : QString();
+        row[QStringLiteral("leftModified")] = inL ? lFi.lastModified().toString(QStringLiteral("yyyy-MM-dd hh:mm")) : QString();
+        row[QStringLiteral("rightModified")] = inR ? rFi.lastModified().toString(QStringLiteral("yyyy-MM-dd hh:mm")) : QString();
+        row[QStringLiteral("status")] = status;
+        row[QStringLiteral("action")] = action;
+        out.append(row);
+    }
+
+    return out;
+}
+
+QVariantMap Backend::executeDirectorySync(const QString &leftRoot, const QString &rightRoot, const QVariantList &syncItems)
+{
+    int copiedToRight = 0;
+    int copiedToLeft = 0;
+    int failed = 0;
+
+    const QDir leftDir(leftRoot);
+    const QDir rightDir(rightRoot);
+
+    for (const QVariant &v : syncItems) {
+        const QVariantMap item = v.toMap();
+        const QString action = item.value(QStringLiteral("action")).toString();
+        if (action != QLatin1String("copy_to_right") && action != QLatin1String("copy_to_left"))
+            continue;
+
+        const QString relPath = item.value(QStringLiteral("relPath")).toString();
+        if (relPath.isEmpty() || QDir::isAbsolutePath(relPath) || relPath.contains(QLatin1String(".."))) {
+            ++failed;
+            continue;
+        }
+
+        const bool toRight = (action == QLatin1String("copy_to_right"));
+        const QString srcPath = toRight ? leftDir.filePath(relPath) : rightDir.filePath(relPath);
+        const QString dstPath = toRight ? rightDir.filePath(relPath) : leftDir.filePath(relPath);
+
+        const QFileInfo srcFi(srcPath);
+        if (!srcFi.exists() || !srcFi.isFile()) {
+            ++failed;
+            continue;
+        }
+
+        if (!QDir().mkpath(QFileInfo(dstPath).absolutePath())) {
+            ++failed;
+            continue;
+        }
+
+        const QString tmpDst = dstPath + QStringLiteral(".omapanel_sync_tmp");
+        QFile::remove(tmpDst);
+        if (!QFile::copy(srcPath, tmpDst)) {
+            QFile::remove(tmpDst);
+            ++failed;
+            continue;
+        }
+
+        if (QFileInfo::exists(dstPath) && !QFile::remove(dstPath)) {
+            QFile::remove(tmpDst);
+            ++failed;
+            continue;
+        }
+
+        if (!QFile::rename(tmpDst, dstPath)) {
+            QFile::remove(tmpDst);
+            ++failed;
+            continue;
+        }
+
+        const QDateTime srcMtime = srcFi.lastModified();
+        if (srcMtime.isValid()) {
+            QFile dstFile(dstPath);
+            if (dstFile.open(QIODevice::ReadWrite)) {
+                dstFile.setFileTime(srcMtime, QFileDevice::FileModificationTime);
+                dstFile.close();
+            }
+        }
+
+        if (toRight)
+            ++copiedToRight;
+        else
+            ++copiedToLeft;
+    }
+
+    m_leftPanel.refresh();
+    m_rightPanel.refresh();
+
+    const int totalApplied = copiedToRight + copiedToLeft;
+    showStatus(tr("Synchronized %1 file(s): %2 → right, %3 ← left (%4 failed).")
+                   .arg(totalApplied)
+                   .arg(copiedToRight)
+                   .arg(copiedToLeft)
+                   .arg(failed));
+
+    QVariantMap summary;
+    summary[QStringLiteral("copiedToRight")] = copiedToRight;
+    summary[QStringLiteral("copiedToLeft")] = copiedToLeft;
+    summary[QStringLiteral("failed")] = failed;
+    summary[QStringLiteral("totalApplied")] = totalApplied;
+    return summary;
+}
+
+QVariantList Backend::findDuplicateFiles(const QString &rootPath, const QString &secondaryRootPath,
+                                         qint64 minSizeBytes, bool includeHidden)
+{
+    QVariantList result;
+    const qint64 minSz = std::max<qint64>(1, minSizeBytes);
+
+    QStringList scanRoots;
+    if (!rootPath.isEmpty() && QFileInfo(rootPath).isDir())
+        scanRoots.append(rootPath);
+    if (!secondaryRootPath.isEmpty() && QFileInfo(secondaryRootPath).isDir())
+        scanRoots.append(secondaryRootPath);
+    if (scanRoots.isEmpty())
+        return result;
+
+    QHash<qint64, QList<QFileInfo>> bySize;
+    QSet<QString> visitedCanonical;
+
+    for (const QString &root : std::as_const(scanRoots)) {
+        const QHash<QString, QFileInfo> files = collectFilesRecursive(root, includeHidden);
+        for (auto it = files.constBegin(); it != files.constEnd(); ++it) {
+            const QFileInfo &fi = it.value();
+            if (fi.size() < minSz)
+                continue;
+            QString canon = fi.canonicalFilePath();
+            if (canon.isEmpty())
+                canon = fi.absoluteFilePath();
+            if (visitedCanonical.contains(canon))
+                continue;
+            visitedCanonical.insert(canon);
+            bySize[fi.size()].append(fi);
+        }
+    }
+
+    struct DupGroup {
+        qint64 size = 0;
+        QString hash;
+        QList<QFileInfo> files;
+    };
+    QList<DupGroup> groups;
+
+    for (auto sizeIt = bySize.constBegin(); sizeIt != bySize.constEnd(); ++sizeIt) {
+        const qint64 sz = sizeIt.key();
+        const QList<QFileInfo> &candidates = sizeIt.value();
+        if (candidates.size() < 2)
+            continue;
+
+        QList<QFileInfo> filtered = candidates;
+        if (sz > 128 * 1024) {
+            QHash<QString, QList<QFileInfo>> preBuckets;
+            for (const QFileInfo &fi : candidates) {
+                const QString pre = computeFileSha256Hex(fi.absoluteFilePath(), true);
+                if (!pre.isEmpty())
+                    preBuckets[pre].append(fi);
+            }
+            filtered.clear();
+            for (auto pbIt = preBuckets.constBegin(); pbIt != preBuckets.constEnd(); ++pbIt) {
+                if (pbIt.value().size() >= 2)
+                    filtered.append(pbIt.value());
+            }
+        }
+
+        if (filtered.size() < 2)
+            continue;
+
+        QHash<QString, QList<QFileInfo>> fullBuckets;
+        for (const QFileInfo &fi : filtered) {
+            const QString sha = computeFileSha256Hex(fi.absoluteFilePath(), false);
+            if (!sha.isEmpty())
+                fullBuckets[sha].append(fi);
+        }
+
+        for (auto fbIt = fullBuckets.constBegin(); fbIt != fullBuckets.constEnd(); ++fbIt) {
+            if (fbIt.value().size() < 2)
+                continue;
+            QList<QFileInfo> sortedFiles = fbIt.value();
+            std::sort(sortedFiles.begin(), sortedFiles.end(), [](const QFileInfo &a, const QFileInfo &b) {
+                if (a.lastModified() != b.lastModified())
+                    return a.lastModified() > b.lastModified(); // newest first
+                return a.absoluteFilePath() < b.absoluteFilePath();
+            });
+            groups.append(DupGroup{sz, fbIt.key(), sortedFiles});
+        }
+    }
+
+    std::sort(groups.begin(), groups.end(), [](const DupGroup &a, const DupGroup &b) {
+        const qint64 wasteA = a.size * (a.files.size() - 1);
+        const qint64 wasteB = b.size * (b.files.size() - 1);
+        if (wasteA != wasteB)
+            return wasteA > wasteB;
+        if (a.size != b.size)
+            return a.size > b.size;
+        return a.hash < b.hash;
+    });
+
+    for (int g = 0; g < groups.size(); ++g) {
+        const DupGroup &grp = groups.at(g);
+        const int count = grp.files.size();
+        for (int i = 0; i < count; ++i) {
+            const QFileInfo &fi = grp.files.at(i);
+            const bool isFirst = (i == 0);
+            QVariantMap row;
+            row[QStringLiteral("groupIndex")] = g;
+            row[QStringLiteral("hash")] = grp.hash;
+            row[QStringLiteral("path")] = fi.absoluteFilePath();
+            row[QStringLiteral("name")] = fi.fileName();
+            row[QStringLiteral("dirPath")] = fi.absolutePath();
+            row[QStringLiteral("size")] = grp.size;
+            row[QStringLiteral("formattedSize")] = PanelModel::formatSize(grp.size, false);
+            row[QStringLiteral("modified")] = fi.lastModified().toString(QStringLiteral("yyyy-MM-dd hh:mm"));
+            row[QStringLiteral("modifiedSecs")] = fi.lastModified().toSecsSinceEpoch();
+            row[QStringLiteral("isFirstInGroup")] = isFirst;
+            row[QStringLiteral("groupCount")] = count;
+            row[QStringLiteral("wastedBytes")] = isFirst ? qint64(0) : grp.size;
+            row[QStringLiteral("selected")] = !isFirst;
+            result.append(row);
+        }
+    }
+
+    return result;
 }
 
 void Backend::showStatus(const QString &message)

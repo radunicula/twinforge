@@ -21,3 +21,5 @@ SOURCES += \
     ../src/translator.cpp
 
 RESOURCES += ../src/resources.qrc
+
+LIBS += -larchive

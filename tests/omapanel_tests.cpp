@@ -948,6 +948,561 @@ private slots:
         QVERIFY(folderPathsCsv.contains(dir.filePath("banana.md")));
     }
 
+    void themeAdaptiveAccents()
+    {
+        QTemporaryDir fallbackDir;
+        Theme fallbackTheme(fallbackDir.path());
+        QCOMPARE(fallbackTheme.darkAccent(), QString("#38bdf8"));
+        QCOMPARE(fallbackTheme.darkAccentForeground(), QString("black"));
+        QCOMPARE(fallbackTheme.lightAccent(), QString("#2563eb"));
+        QCOMPARE(fallbackTheme.lightAccentForeground(), QString("white"));
+
+        QTemporaryDir darkColorDir;
+        QDir(darkColorDir.path()).mkpath("theme");
+        writeFile(darkColorDir.path() + "/theme/colors.toml", "accent = \"#112233\"\n");
+        Theme darkAccentTheme(darkColorDir.path());
+        QCOMPARE(darkAccentTheme.lightAccent(), QString("#112233"));
+        QCOMPARE(darkAccentTheme.lightAccentForeground(), QString("white"));
+        QVERIFY(darkAccentTheme.darkAccent() != QString("#112233"));
+        QVERIFY(QColor(darkAccentTheme.darkAccent()).lightnessF() > QColor("#112233").lightnessF());
+
+        QTemporaryDir brightColorDir;
+        QDir(brightColorDir.path()).mkpath("theme");
+        writeFile(brightColorDir.path() + "/theme/colors.toml", "accent = \"#facc15\"\n");
+        Theme brightAccentTheme(brightColorDir.path());
+        QCOMPARE(brightAccentTheme.darkAccent(), QString("#facc15"));
+        QCOMPARE(brightAccentTheme.darkAccentForeground(), QString("black"));
+        QVERIFY(brightAccentTheme.lightAccent() != QString("#facc15"));
+        QVERIFY(QColor(brightAccentTheme.lightAccent()).lightnessF() < QColor("#facc15").lightnessF());
+    }
+
+    void themeModeSwitchAndPersistence()
+    {
+        QTemporaryDir cfg;
+        const QString bookmarksPath = cfg.filePath("bookmarks.json");
+
+        {
+            Backend backend(bookmarksPath);
+            QCOMPARE(backend.themeMode(), QStringLiteral("dark"));
+            QVERIFY(backend.isDarkTheme());
+
+            QSignalSpy spy(&backend, &Backend::themeModeChanged);
+            backend.setThemeMode(QStringLiteral("light"));
+            QCOMPARE(spy.count(), 1);
+            QCOMPARE(backend.themeMode(), QStringLiteral("light"));
+            QVERIFY(!backend.isDarkTheme());
+
+            // Setting the same mode should be a no-op.
+            backend.setThemeMode(QStringLiteral("light"));
+            QCOMPARE(spy.count(), 1);
+
+            backend.toggleThemeMode();
+            QCOMPARE(spy.count(), 2);
+            QCOMPARE(backend.themeMode(), QStringLiteral("dark"));
+            QVERIFY(backend.isDarkTheme());
+
+            backend.toggleThemeMode();
+            QCOMPARE(spy.count(), 3);
+            QCOMPARE(backend.themeMode(), QStringLiteral("light"));
+        }
+
+        // Verify persisted themeMode reloads across Backend instances.
+        {
+            Backend reloaded(bookmarksPath);
+            QCOMPARE(reloaded.themeMode(), QStringLiteral("light"));
+            QVERIFY(!reloaded.isDarkTheme());
+        }
+    }
+
+    void flatViewListsNestedFilesAndSupportsOperations()
+    {
+        QTemporaryDir dir;
+        QTemporaryDir cfg;
+        QVERIFY(QDir(dir.path()).mkpath("sub/deep"));
+        QVERIFY(QDir(dir.path()).mkpath(".hidden_dir"));
+
+        writeFile(dir.filePath("rootFile.txt"), "root");
+        writeFile(dir.filePath("sub/nested.txt"), "hello nested");
+        writeFile(dir.filePath("sub/deep/leaf.md"), "# leaf");
+        writeFile(dir.filePath(".hidden_root.txt"), "hr");
+        writeFile(dir.filePath("sub/.hidden_nested"), "hn");
+        writeFile(dir.filePath(".hidden_dir/secret.txt"), "sec");
+
+        Backend backend(cfg.filePath("bookmarks.json"));
+        PanelModel *model = backend.leftPanel();
+        model->setShowHidden(false);
+        model->setPath(dir.path());
+        QCOMPARE(model->flatView(), false);
+        QCOMPARE(model->itemCount(), 3); // "..", "sub", "rootFile.txt"
+
+        model->toggleFlatView();
+        QCOMPARE(model->flatView(), true);
+
+        QStringList names;
+        QString nestedPath;
+        for (int i = 0; i < model->itemCount(); ++i) {
+            names << model->itemName(i);
+            if (model->itemName(i) == QStringLiteral("sub/nested.txt"))
+                nestedPath = model->itemPath(i);
+        }
+
+        QVERIFY(names.contains(QStringLiteral("..")));
+        QVERIFY(names.contains(QStringLiteral("rootFile.txt")));
+        QVERIFY(names.contains(QStringLiteral("sub/nested.txt")));
+        QVERIFY(names.contains(QStringLiteral("sub/deep/leaf.md")));
+        QVERIFY(!names.contains(QStringLiteral("sub")));
+        QVERIFY(!names.contains(QStringLiteral("sub/deep")));
+        QVERIFY(!names.contains(QStringLiteral(".hidden_root.txt")));
+        QVERIFY(!names.contains(QStringLiteral("sub/.hidden_nested")));
+        QVERIFY(!names.contains(QStringLiteral(".hidden_dir/secret.txt")));
+        QCOMPARE(nestedPath, dir.filePath("sub/nested.txt"));
+
+        // Hidden files in nested folders appear when showHidden is enabled
+        model->setShowHidden(true);
+        QStringList hiddenNames;
+        for (int i = 0; i < model->itemCount(); ++i)
+            hiddenNames << model->itemName(i);
+        QVERIFY(hiddenNames.contains(QStringLiteral(".hidden_root.txt")));
+        QVERIFY(hiddenNames.contains(QStringLiteral("sub/.hidden_nested")));
+        QVERIFY(hiddenNames.contains(QStringLiteral(".hidden_dir/secret.txt")));
+
+        // Renaming a flattened nested file keeps it inside sub/
+        QVERIFY(backend.renameItem(nestedPath, QStringLiteral("renamed_nested.txt")));
+        QVERIFY(QFile::exists(dir.filePath("sub/renamed_nested.txt")));
+        QVERIFY(!QFile::exists(nestedPath));
+
+        // Navigating to a different folder resets flatView
+        model->setPath(dir.filePath("sub"));
+        QCOMPARE(model->flatView(), false);
+    }
+
+    void virtualArchiveBrowsingAndSelectiveExtraction()
+    {
+        QTemporaryDir src;
+        QTemporaryDir archDir;
+        QTemporaryDir extractDst;
+        QTemporaryDir cfg;
+
+        QVERIFY(QDir(src.path()).mkpath("docs/sub"));
+        writeFile(src.filePath("readme.txt"), "top level archive note\nsecond line\n");
+        writeFile(src.filePath("docs/guide.md"), "# Guide\nSelective extraction test\n");
+        QByteArray binData("\x00\x01\x02\x03\xFF\x41", 6);
+        writeFile(src.filePath("docs/sub/data.bin"), binData);
+
+        Backend backend(cfg.filePath("bookmarks.json"));
+        const QString zipPath = archDir.filePath("bundle.zip");
+        QVERIFY(backend.packArchive({src.filePath("readme.txt"), src.filePath("docs")}, zipPath));
+        QVERIFY(QFile::exists(zipPath));
+
+        // Also test .tar.zst archive support via bsdtar
+        const QString tzstPath = archDir.filePath("bundle.tar.zst");
+        const int tzstRc = QProcess::execute(QStringLiteral("bsdtar"),
+                                             {QStringLiteral("-a"), QStringLiteral("-cf"), tzstPath,
+                                              QStringLiteral("-C"), src.path(),
+                                              QStringLiteral("readme.txt"), QStringLiteral("docs")});
+        QCOMPARE(tzstRc, 0);
+
+        PanelModel *left = backend.leftPanel();
+        left->setPath(archDir.path());
+        QCOMPARE(left->isArchiveView(), false);
+
+        // Open zip archive virtually
+        backend.openItem(zipPath);
+        QCOMPARE(left->isArchiveView(), true);
+        QCOMPARE(left->archiveFilePath(), zipPath);
+        QCOMPARE(left->archiveInternalPath(), QString());
+        QCOMPARE(left->isWritable(), false);
+
+        QStringList rootItems;
+        for (int i = 0; i < left->itemCount(); ++i)
+            rootItems << left->itemName(i);
+        QVERIFY(rootItems.contains(QStringLiteral("..")));
+        QVERIFY(rootItems.contains(QStringLiteral("docs")));
+        QVERIFY(rootItems.contains(QStringLiteral("readme.txt")));
+
+        // Enter subfolder inside archive
+        left->cd(QStringLiteral("docs"));
+        QCOMPARE(left->isArchiveView(), true);
+        QCOMPARE(left->archiveInternalPath(), QStringLiteral("docs"));
+
+        // Preview text file inside archive
+        const QVariantMap guidePreview = backend.getPreview(zipPath + QStringLiteral("::docs/guide.md"));
+        QCOMPARE(guidePreview.value(QStringLiteral("exists")).toBool(), true);
+        QCOMPARE(guidePreview.value(QStringLiteral("isText")).toBool(), true);
+        QCOMPARE(guidePreview.value(QStringLiteral("isBinary")).toBool(), false);
+        QVERIFY(guidePreview.value(QStringLiteral("text")).toString().contains(QStringLiteral("# Guide")));
+
+        // Preview directory inside archive
+        const QVariantMap dirPreview = backend.getPreview(zipPath + QStringLiteral("::docs"));
+        QCOMPARE(dirPreview.value(QStringLiteral("exists")).toBool(), true);
+        QCOMPARE(dirPreview.value(QStringLiteral("isDir")).toBool(), true);
+        QVERIFY(dirPreview.value(QStringLiteral("text")).toString().contains(QStringLiteral("guide.md")));
+
+        // Preview binary file inside archive
+        const QVariantMap binPreview = backend.getPreview(zipPath + QStringLiteral("::docs/sub/data.bin"));
+        QCOMPARE(binPreview.value(QStringLiteral("exists")).toBool(), true);
+        QCOMPARE(binPreview.value(QStringLiteral("isText")).toBool(), true);
+        QCOMPARE(binPreview.value(QStringLiteral("isBinary")).toBool(), true);
+        QVERIFY(binPreview.value(QStringLiteral("text")).toString().contains(QStringLiteral("Binary")));
+
+        // Flat View inside archive root lists nested files
+        left->cdUp();
+        QCOMPARE(left->archiveInternalPath(), QString());
+        left->toggleFlatView();
+        QCOMPARE(left->flatView(), true);
+        QStringList flatArchiveItems;
+        for (int i = 0; i < left->itemCount(); ++i)
+            flatArchiveItems << left->itemName(i);
+        QVERIFY(flatArchiveItems.contains(QStringLiteral("readme.txt")));
+        QVERIFY(flatArchiveItems.contains(QStringLiteral("docs/guide.md")));
+        QVERIFY(flatArchiveItems.contains(QStringLiteral("docs/sub/data.bin")));
+
+        // Selective extraction via copyItems of a single file inside docs/
+        QVERIFY(backend.copyItems({zipPath + QStringLiteral("::docs/guide.md")}, extractDst.path()));
+        QCOMPARE(readFile(extractDst.filePath("guide.md")), QByteArray("# Guide\nSelective extraction test\n"));
+        QVERIFY(!QFile::exists(extractDst.filePath("readme.txt")));
+
+        // Selective extraction of a folder preserves binary payload
+        QVERIFY(backend.copyItems({zipPath + QStringLiteral("::docs")}, extractDst.path()));
+        QCOMPARE(readFile(extractDst.filePath("docs/sub/data.bin")), binData);
+
+        // Read-only guards reject mutations inside archive
+        QVERIFY(!backend.createDirectory(QStringLiteral("should_fail")));
+        QVERIFY(!backend.createNewFile(QStringLiteral("should_fail.txt")));
+        QVERIFY(!backend.renameItem(zipPath + QStringLiteral("::readme.txt"), QStringLiteral("x.txt")));
+        QVERIFY(!backend.deleteItems({zipPath + QStringLiteral("::readme.txt")}, true));
+
+        // cdUp from archive root exits back to host directory
+        left->cdUp();
+        QCOMPARE(left->isArchiveView(), false);
+        QCOMPARE(left->path(), archDir.path());
+
+        // Open .tar.zst archive virtually too
+        backend.openItem(tzstPath);
+        QCOMPARE(left->isArchiveView(), true);
+        QCOMPARE(left->archiveFilePath(), tzstPath);
+        const QVariantMap tzstPreview = backend.getPreview(tzstPath + QStringLiteral("::docs/guide.md"));
+        QCOMPARE(tzstPreview.value(QStringLiteral("exists")).toBool(), true);
+        QVERIFY(tzstPreview.value(QStringLiteral("text")).toString().contains(QStringLiteral("Selective extraction test")));
+    }
+
+    void recentDirectoriesAndQuickJumpQuery()
+    {
+        QTemporaryDir work;
+        QTemporaryDir cfg;
+        QVERIFY(QDir(work.path()).mkpath("alpha_project"));
+        QVERIFY(QDir(work.path()).mkpath("beta_tools"));
+        QVERIFY(QDir(work.path()).mkpath("gamma_docs"));
+
+        QVERIFY(Backend::fuzzyScore(QStringLiteral("alproj"), QStringLiteral("alpha_project")) > 0);
+        QVERIFY(Backend::fuzzyScore(QStringLiteral("xyz"), QStringLiteral("alpha_project")) < 0);
+
+        Backend backend(cfg.filePath("bookmarks.json"));
+        const QString alphaPath = work.filePath("alpha_project");
+        const QString betaPath = work.filePath("beta_tools");
+        const QString gammaPath = work.filePath("gamma_docs");
+
+        backend.toggleBookmark(alphaPath);
+        backend.recordRecentDirectory(betaPath);
+        backend.leftPanel()->setPath(work.path());
+
+        QVERIFY(backend.recentDirectories().contains(betaPath));
+
+        const QVariantList allResults = backend.queryJumpDirectories(QString(), 50);
+        QStringList returnedPaths;
+        for (const QVariant &v : allResults)
+            returnedPaths << v.toMap().value(QStringLiteral("path")).toString();
+        QVERIFY(returnedPaths.contains(alphaPath));
+        QVERIFY(returnedPaths.contains(betaPath));
+        QVERIFY(returnedPaths.contains(gammaPath));
+
+        // Fuzzy query matches alpha_project first
+        const QVariantList fuzzy = backend.queryJumpDirectories(QStringLiteral("alproj"), 20);
+        QVERIFY(!fuzzy.isEmpty());
+        QCOMPARE(fuzzy.first().toMap().value(QStringLiteral("path")).toString(), alphaPath);
+
+        // Path prefix query completes gamma_docs
+        const QVariantList pathComp = backend.queryJumpDirectories(work.path() + QStringLiteral("/gam"), 20);
+        bool foundGamma = false;
+        for (const QVariant &v : pathComp) {
+            if (v.toMap().value(QStringLiteral("path")).toString() == gammaPath)
+                foundGamma = true;
+        }
+        QVERIFY(foundGamma);
+    }
+
+    void advancedSearchContentFiltersAndFeedToPanel()
+    {
+        QTemporaryDir rootDir;
+        QTemporaryDir cfg;
+        QVERIFY(QDir().mkpath(rootDir.filePath("sub/target_folder")));
+
+        {
+            QFile f(rootDir.filePath("sub/alpha.txt"));
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write("first line\ncontains MAGIC_TOKEN here\nthird line\n");
+        }
+        {
+            QFile f(rootDir.filePath("sub/regex_hit.log"));
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write("boot ok\nerror code 40477 detected\nshutdown\n");
+        }
+        {
+            QFile f(rootDir.filePath("large.bin"));
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            QByteArray payload(1500, 'X');
+            payload.replace(0, 11, "MAGIC_TOKEN");
+            f.write(payload);
+        }
+
+        Backend backend(cfg.filePath("bookmarks.json"));
+
+        QVariantMap tokenOpts;
+        tokenOpts.insert(QStringLiteral("contentQuery"), QStringLiteral("MAGIC_TOKEN"));
+        tokenOpts.insert(QStringLiteral("typeFilter"), QStringLiteral("files"));
+        const QVariantList tokenMatches = backend.runAdvancedSearchSync(rootDir.path(), tokenOpts);
+        QCOMPARE(tokenMatches.size(), 2);
+
+        QVariantMap largeOpts = tokenOpts;
+        largeOpts.insert(QStringLiteral("minSizeBytes"), 1000);
+        const QVariantList largeMatches = backend.runAdvancedSearchSync(rootDir.path(), largeOpts);
+        QCOMPARE(largeMatches.size(), 1);
+        QCOMPARE(largeMatches.first().toMap().value(QStringLiteral("name")).toString(), QStringLiteral("large.bin"));
+
+        QVariantMap regexOpts;
+        regexOpts.insert(QStringLiteral("contentQuery"), QStringLiteral("error code \\d{5}"));
+        regexOpts.insert(QStringLiteral("useRegex"), true);
+        regexOpts.insert(QStringLiteral("typeFilter"), QStringLiteral("files"));
+        const QVariantList regexMatches = backend.runAdvancedSearchSync(rootDir.path(), regexOpts);
+        QCOMPARE(regexMatches.size(), 1);
+        const QVariantMap regexHit = regexMatches.first().toMap();
+        QCOMPARE(regexHit.value(QStringLiteral("name")).toString(), QStringLiteral("regex_hit.log"));
+        QCOMPARE(regexHit.value(QStringLiteral("matchLine")).toInt(), 2);
+        QVERIFY(regexHit.value(QStringLiteral("matchPreview")).toString().contains(QStringLiteral("40477")));
+
+        QVariantMap dirOpts;
+        dirOpts.insert(QStringLiteral("nameQuery"), QStringLiteral("*folder*"));
+        dirOpts.insert(QStringLiteral("typeFilter"), QStringLiteral("dirs"));
+        const QVariantList dirMatches = backend.runAdvancedSearchSync(rootDir.path(), dirOpts);
+        QCOMPARE(dirMatches.size(), 1);
+        QCOMPARE(dirMatches.first().toMap().value(QStringLiteral("isDir")).toBool(), true);
+
+        backend.startAdvancedSearch(rootDir.path(), tokenOpts);
+        QTRY_VERIFY(!backend.searchRunning());
+        QVERIFY(backend.searchScannedCount() >= 3);
+        const QVariantList asyncResults = backend.searchResultItems();
+        QCOMPARE(asyncResults.size(), 2);
+
+        QStringList feedPaths;
+        bool sawAlphaPreview = false;
+        for (const QVariant &v : asyncResults) {
+            const QVariantMap row = v.toMap();
+            feedPaths.append(row.value(QStringLiteral("path")).toString());
+            if (row.value(QStringLiteral("name")).toString() == QStringLiteral("alpha.txt")) {
+                QCOMPARE(row.value(QStringLiteral("matchLine")).toInt(), 2);
+                sawAlphaPreview = row.value(QStringLiteral("matchPreview")).toString().contains(QStringLiteral("MAGIC_TOKEN"));
+            }
+        }
+        QVERIFY(sawAlphaPreview);
+
+        backend.leftPanel()->setPath(rootDir.path());
+        const QString expectedBase = backend.leftPanel()->path();
+        backend.feedPathsToPanel(feedPaths, QStringLiteral("Search: MAGIC_TOKEN"), false);
+        QCOMPARE(backend.leftPanel()->isCollectionView(), true);
+        QCOMPARE(backend.leftPanel()->collectionTitle(), QStringLiteral("Search: MAGIC_TOKEN"));
+        QCOMPARE(backend.leftPanel()->rowCount(), 3); // ".." parent entry + 2 matched files
+        QCOMPARE(backend.leftPanel()->index(0, 0).data(PanelModel::NameRole).toString(), QStringLiteral(".."));
+
+        backend.leftPanel()->exitCollectionView();
+        QCOMPARE(backend.leftPanel()->isCollectionView(), false);
+        QCOMPARE(backend.leftPanel()->path(), expectedBase);
+
+        const int initialTabs = backend.leftPanel()->tabCount();
+        backend.feedPathsToPanel(feedPaths, QStringLiteral("Search Tab"), true);
+        QCOMPARE(backend.leftPanel()->tabCount(), initialTabs + 1);
+        QCOMPARE(backend.leftPanel()->isCollectionView(), true);
+        QCOMPARE(backend.leftPanel()->rowCount(), 3);
+    }
+
+    void diskUsageMetricsAndAnalyzerMode()
+    {
+        QTemporaryDir rootDir;
+        QTemporaryDir cfg;
+        QVERIFY(QDir().mkpath(rootDir.filePath("big_dir")));
+        QVERIFY(QDir().mkpath(rootDir.filePath("empty_dir")));
+
+        {
+            QFile f(rootDir.filePath("big_dir/payload.bin"));
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write(QByteArray(4096, 'A'));
+        }
+        {
+            QFile f(rootDir.filePath("small.txt"));
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write(QByteArray(512, 'B'));
+        }
+
+        Backend backend(cfg.filePath("bookmarks.json"));
+        PanelModel *panel = backend.leftPanel();
+        panel->setPath(rootDir.path());
+        QCOMPARE(panel->diskUsageMode(), false);
+
+        panel->toggleDiskUsageMode();
+        QCOMPARE(panel->diskUsageMode(), true);
+        QCOMPARE(panel->sortField(), static_cast<int>(PanelModel::SortBySize));
+        QCOMPARE(panel->sortAscending(), false);
+
+        QTRY_COMPARE(panel->maxItemSize(), static_cast<qint64>(4096));
+        QCOMPARE(panel->totalItemsSize(), static_cast<qint64>(4608));
+        QCOMPARE(panel->index(0, 0).data(PanelModel::NameRole).toString(), QStringLiteral(".."));
+        QTRY_COMPARE(panel->index(1, 0).data(PanelModel::NameRole).toString(), QStringLiteral("big_dir"));
+
+        const double ratio1 = panel->index(1, 0).data(PanelModel::SizeRatioRole).toDouble();
+        const double percent1 = panel->index(1, 0).data(PanelModel::SizePercentRole).toDouble();
+        QVERIFY(ratio1 > 0.99 && ratio1 <= 1.01);
+        QVERIFY(percent1 > 88.0 && percent1 < 90.0);
+
+        QCOMPARE(panel->index(2, 0).data(PanelModel::NameRole).toString(), QStringLiteral("small.txt"));
+        const double ratio2 = panel->index(2, 0).data(PanelModel::SizeRatioRole).toDouble();
+        const double percent2 = panel->index(2, 0).data(PanelModel::SizePercentRole).toDouble();
+        QVERIFY(ratio2 > 0.12 && ratio2 < 0.13);
+        QVERIFY(percent2 > 11.0 && percent2 < 12.0);
+        QCOMPARE(panel->index(3, 0).data(PanelModel::NameRole).toString(), QStringLiteral("empty_dir"));
+
+        panel->toggleDiskUsageMode();
+        QCOMPARE(panel->diskUsageMode(), false);
+    }
+
+    void directorySynchronizationAndDuplicateFinder()
+    {
+        QTemporaryDir leftDir;
+        QTemporaryDir rightDir;
+        QTemporaryDir dupDir;
+        QTemporaryDir cfg;
+        QVERIFY(QDir().mkpath(leftDir.filePath("sub")));
+        QVERIFY(QDir().mkpath(rightDir.filePath("sub")));
+        QVERIFY(QDir().mkpath(dupDir.filePath("a")));
+        QVERIFY(QDir().mkpath(dupDir.filePath("b/nested")));
+
+        {
+            QFile f(leftDir.filePath("only_left.txt"));
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write("left-only-data");
+        }
+        {
+            QFile f(rightDir.filePath("only_right.txt"));
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write("right-only-data");
+        }
+        {
+            QFile f(leftDir.filePath("sub/diff.txt"));
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write("12345");
+        }
+        {
+            QFile f(rightDir.filePath("sub/diff.txt"));
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write("abcde");
+        }
+
+        Backend backend(cfg.filePath("bookmarks.json"));
+
+        // Same size, different contents: SHA-256 comparison must detect sub/diff.txt mismatch
+        const QVariantList shaDiff = backend.compareDirectoriesRecursive(leftDir.path(), rightDir.path(), QStringLiteral("sha256"), false);
+        bool sawLeftOnly = false;
+        bool sawRightOnly = false;
+        bool sawShaDiff = false;
+        QVariantList syncPlan;
+        for (const QVariant &v : shaDiff) {
+            QVariantMap row = v.toMap();
+            const QString rel = row.value(QStringLiteral("relPath")).toString();
+            if (rel == QStringLiteral("only_left.txt")) {
+                sawLeftOnly = true;
+                QCOMPARE(row.value(QStringLiteral("action")).toString(), QStringLiteral("copy_to_right"));
+                syncPlan.append(row);
+            } else if (rel == QStringLiteral("only_right.txt")) {
+                sawRightOnly = true;
+                QCOMPARE(row.value(QStringLiteral("action")).toString(), QStringLiteral("copy_to_left"));
+                syncPlan.append(row);
+            } else if (rel == QStringLiteral("sub/diff.txt")) {
+                sawShaDiff = true;
+                row.insert(QStringLiteral("action"), QStringLiteral("copy_to_right"));
+                syncPlan.append(row);
+            }
+        }
+        QVERIFY(sawLeftOnly);
+        QVERIFY(sawRightOnly);
+        QVERIFY(sawShaDiff);
+
+        const QVariantMap summary = backend.executeDirectorySync(leftDir.path(), rightDir.path(), syncPlan);
+        QCOMPARE(summary.value(QStringLiteral("copiedToRight")).toInt(), 2);
+        QCOMPARE(summary.value(QStringLiteral("copiedToLeft")).toInt(), 1);
+        QCOMPARE(summary.value(QStringLiteral("failed")).toInt(), 0);
+        QCOMPARE(summary.value(QStringLiteral("totalApplied")).toInt(), 3);
+
+        QVERIFY(QFile::exists(rightDir.filePath("only_left.txt")));
+        QVERIFY(QFile::exists(leftDir.filePath("only_right.txt")));
+
+        const QVariantList postSyncSha = backend.compareDirectoriesRecursive(leftDir.path(), rightDir.path(), QStringLiteral("sha256"), false);
+        int pendingAfterSync = 0;
+        for (const QVariant &v : postSyncSha) {
+            if (v.toMap().value(QStringLiteral("action")).toString() != QStringLiteral("skip"))
+                ++pendingAfterSync;
+        }
+        QCOMPARE(pendingAfterSync, 0);
+
+        // Duplicate Finder: 3 identical 256B files + 1 unique 256B file + 1 tiny below threshold
+        const QByteArray dupPayload(256, 'D');
+        const QStringList dupPaths = {
+            dupDir.filePath("dup1.bin"),
+            dupDir.filePath("a/dup2.bin"),
+            dupDir.filePath("b/nested/dup3.bin")
+        };
+        for (const QString &p : dupPaths) {
+            QFile f(p);
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write(dupPayload);
+        }
+        {
+            QFile f(dupDir.filePath("unique.bin"));
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write(QByteArray(256, 'U'));
+        }
+        {
+            QFile f(dupDir.filePath("tiny.bin"));
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write("hi");
+        }
+
+        const QVariantList dups = backend.findDuplicateFiles(dupDir.path(), QString(), 10, false);
+        QCOMPARE(dups.size(), 3);
+
+        int firstCount = 0;
+        int selectedCount = 0;
+        qint64 totalWasted = 0;
+        QString sharedHash;
+        for (const QVariant &v : dups) {
+            const QVariantMap row = v.toMap();
+            const bool isFirst = row.value(QStringLiteral("isFirstInGroup")).toBool();
+            QCOMPARE(row.value(QStringLiteral("groupIndex")).toInt(), 0);
+            QCOMPARE(row.value(QStringLiteral("groupCount")).toInt(), 3);
+            QCOMPARE(row.value(QStringLiteral("wastedBytes")).toLongLong(), isFirst ? static_cast<qint64>(0) : static_cast<qint64>(256));
+            totalWasted += row.value(QStringLiteral("wastedBytes")).toLongLong();
+            if (sharedHash.isEmpty())
+                sharedHash = row.value(QStringLiteral("hash")).toString();
+            else
+                QCOMPARE(row.value(QStringLiteral("hash")).toString(), sharedHash);
+            if (isFirst)
+                ++firstCount;
+            if (row.value(QStringLiteral("selected")).toBool())
+                ++selectedCount;
+        }
+        QVERIFY(!sharedHash.isEmpty());
+        QCOMPARE(firstCount, 1);
+        QCOMPARE(selectedCount, 2);
+        QCOMPARE(totalWasted, static_cast<qint64>(512));
+    }
+
     void qmlMainLoadsWithoutErrors()
     {
         QTemporaryDir cfg;
@@ -961,6 +1516,66 @@ private slots:
         engine.rootContext()->setContextProperty("i18n", &translator);
         engine.load(QUrl(QStringLiteral("qrc:/Main.qml")));
         QVERIFY(!engine.rootObjects().isEmpty());
+
+        QObject *root = engine.rootObjects().first();
+        QObject *palette = root->property("themePalette").value<QObject *>();
+        QVERIFY(palette != nullptr);
+        QCOMPARE(root->property("isDark").toBool(), true);
+        QCOMPARE(palette->property("windowBg").value<QColor>(), QColor("#09090b"));
+
+        backend.toggleThemeMode();
+        QCOMPARE(backend.themeMode(), QStringLiteral("light"));
+        QCOMPARE(root->property("isDark").toBool(), false);
+        QCOMPARE(palette->property("windowBg").value<QColor>(), QColor("#eef0f5"));
+
+        backend.toggleThemeMode();
+        QCOMPARE(backend.themeMode(), QStringLiteral("dark"));
+        QCOMPARE(root->property("isDark").toBool(), true);
+        QCOMPARE(palette->property("windowBg").value<QColor>(), QColor("#09090b"));
+
+        // Exercise Command Palette & Quick Jump modes and Flat View QML bindings
+        QCOMPARE(root->property("commandPaletteOpen").toBool(), false);
+        QVERIFY(QMetaObject::invokeMethod(root, "openCommandPalette", Q_ARG(QVariant, QStringLiteral("commands"))));
+        QCOMPARE(root->property("commandPaletteOpen").toBool(), true);
+        QCOMPARE(root->property("commandPaletteMode").toString(), QStringLiteral("commands"));
+
+        QVERIFY(QMetaObject::invokeMethod(root, "openCommandPalette", Q_ARG(QVariant, QStringLiteral("jump"))));
+        QCOMPARE(root->property("commandPaletteOpen").toBool(), true);
+        QCOMPARE(root->property("commandPaletteMode").toString(), QStringLiteral("jump"));
+
+        root->setProperty("commandPaletteOpen", false);
+        QCOMPARE(root->property("commandPaletteOpen").toBool(), false);
+
+        backend.leftPanel()->toggleFlatView();
+        QCOMPARE(backend.leftPanel()->flatView(), true);
+        backend.leftPanel()->toggleFlatView();
+        QCOMPARE(backend.leftPanel()->flatView(), false);
+
+        // Exercise Productivity Suite #2 dialogs, Disk Usage mode, and Feed to Panel QML bindings
+        QVERIFY(QMetaObject::invokeMethod(root, "openAdvancedSearchDialog"));
+        QCOMPARE(root->property("searchOpen").toBool(), true);
+        root->setProperty("searchOpen", false);
+        QCOMPARE(root->property("searchOpen").toBool(), false);
+
+        QVERIFY(QMetaObject::invokeMethod(root, "openSyncDirsDialog"));
+        QCOMPARE(root->property("syncDirsOpen").toBool(), true);
+        root->setProperty("syncDirsOpen", false);
+        QCOMPARE(root->property("syncDirsOpen").toBool(), false);
+
+        QVERIFY(QMetaObject::invokeMethod(root, "openDuplicateFinderDialog"));
+        QCOMPARE(root->property("duplicateFinderOpen").toBool(), true);
+        root->setProperty("duplicateFinderOpen", false);
+        QCOMPARE(root->property("duplicateFinderOpen").toBool(), false);
+
+        backend.leftPanel()->toggleDiskUsageMode();
+        QCOMPARE(backend.leftPanel()->diskUsageMode(), true);
+        backend.leftPanel()->toggleDiskUsageMode();
+        QCOMPARE(backend.leftPanel()->diskUsageMode(), false);
+
+        backend.feedPathsToPanel(QStringList() << cfg.path(), QStringLiteral("QML Collection"), false);
+        QCOMPARE(backend.leftPanel()->isCollectionView(), true);
+        backend.leftPanel()->exitCollectionView();
+        QCOMPARE(backend.leftPanel()->isCollectionView(), false);
     }
 };
 

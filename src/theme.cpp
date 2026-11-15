@@ -9,6 +9,7 @@
 #include <QJsonObject>
 #include <QRegularExpression>
 #include <QStandardPaths>
+#include <algorithm>
 #include <cmath>
 
 Theme::Theme(const QString &directory, QObject *parent, const QString &hyprctl)
@@ -70,11 +71,53 @@ QString Theme::readAccent(const QString &path) {
     return "#FFD60A";
 }
 
-QString Theme::accentForeground() const {
-    const QColor c(m_accent);
+namespace {
+
+double relativeLuminance(const QColor &c) {
     auto linear = [](double v) { return v <= .04045 ? v / 12.92 : std::pow((v + .055) / 1.055, 2.4); };
-    const double luminance = .2126 * linear(c.redF()) + .7152 * linear(c.greenF()) + .0722 * linear(c.blueF());
-    return luminance > .179 ? "black" : "white";
+    return .2126 * linear(c.redF()) + .7152 * linear(c.greenF()) + .0722 * linear(c.blueF());
+}
+
+QString foregroundFor(const QColor &c) {
+    return relativeLuminance(c) > .179 ? QStringLiteral("black") : QStringLiteral("white");
+}
+
+} // namespace
+
+QString Theme::accentForeground() const {
+    return foregroundFor(QColor(m_accent));
+}
+
+QString Theme::darkAccent() const {
+    const QColor c(m_accent);
+    if (!c.isValid() || m_accent.compare(QLatin1String("#FFD60A"), Qt::CaseInsensitive) == 0)
+        return QStringLiteral("#38bdf8");
+    if (relativeLuminance(c) < 0.14) {
+        float h = 0.0f, s = 0.0f, l = 0.0f;
+        c.getHslF(&h, &s, &l);
+        return QColor::fromHslF(h < 0.0f ? 0.0f : h, s, 0.66f).name();
+    }
+    return c.name();
+}
+
+QString Theme::lightAccent() const {
+    const QColor c(m_accent);
+    if (!c.isValid() || m_accent.compare(QLatin1String("#FFD60A"), Qt::CaseInsensitive) == 0)
+        return QStringLiteral("#2563eb");
+    if (relativeLuminance(c) > 0.32) {
+        float h = 0.0f, s = 0.0f, l = 0.0f;
+        c.getHslF(&h, &s, &l);
+        return QColor::fromHslF(h < 0.0f ? 0.0f : h, std::max(0.55f, s), 0.38f).name();
+    }
+    return c.name();
+}
+
+QString Theme::darkAccentForeground() const {
+    return foregroundFor(QColor(darkAccent()));
+}
+
+QString Theme::lightAccentForeground() const {
+    return foregroundFor(QColor(lightAccent()));
 }
 
 void Theme::reload() {

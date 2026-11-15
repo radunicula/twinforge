@@ -1,9 +1,13 @@
+#include <archive.h>
+#include <archive_entry.h>
+
 #include "panelmodel.h"
 
 #include <algorithm>
 #include <QDateTime>
 #include <QDir>
 #include <QDirIterator>
+#include <QFile>
 #include <QFileInfo>
 #include <QLocale>
 #include <QProcess>
@@ -11,10 +15,61 @@
 #include <QUrl>
 #include <QVariantMap>
 
+namespace {
+
+QString formatPosixPermissions(int mode)
+{
+    QString perm;
+    perm.reserve(9);
+    const int flags[9] = {0400, 0200, 0100, 0040, 0020, 0010, 0004, 0002, 0001};
+    const char chars[3] = {'r', 'w', 'x'};
+    for (int i = 0; i < 9; ++i)
+        perm += (mode & flags[i]) ? chars[i % 3] : '-';
+    return perm;
+}
+
+int toPosixMode(QFile::Permissions p)
+{
+    int mode = 0;
+    if (p & QFile::ReadOwner) mode |= 0400;
+    if (p & QFile::WriteOwner) mode |= 0200;
+    if (p & QFile::ExeOwner) mode |= 0100;
+    if (p & QFile::ReadGroup) mode |= 0040;
+    if (p & QFile::WriteGroup) mode |= 0020;
+    if (p & QFile::ExeGroup) mode |= 0010;
+    if (p & QFile::ReadOther) mode |= 0004;
+    if (p & QFile::WriteOther) mode |= 0002;
+    if (p & QFile::ExeOther) mode |= 0001;
+    return mode;
+}
+
+QString expandUserTilde(const QString &rawPath)
+{
+    QString expanded = rawPath.trimmed();
+    if (expanded == QLatin1String("~"))
+        return QDir::homePath();
+    if (expanded.startsWith(QLatin1String("~/")))
+        return QDir::homePath() + expanded.mid(1);
+    return expanded;
+}
+
+bool hasHiddenSegment(const QString &relPath)
+{
+    const QStringList parts = relPath.split('/', Qt::SkipEmptyParts);
+    for (const QString &part : parts) {
+        if (part.startsWith('.'))
+            return true;
+    }
+    return false;
+}
+
+} // namespace
+
 PanelModel::PanelModel(const QString &initialPath, QObject *parent)
     : QAbstractListModel(parent)
 {
     connect(&m_dirWatcher, &QFileSystemWatcher::directoryChanged, this, &PanelModel::refresh);
+    connect(&m_dirWatcher, &QFileSystemWatcher::fileChanged, this, &PanelModel::refresh);
 
     QString target = initialPath;
     if (target.isEmpty() || !QDir(target).exists()) {
@@ -65,6 +120,14 @@ QVariant PanelModel::data(const QModelIndex &index, int role) const
                    : QString();
     case IsSelectedRole:
         return item.isSelected;
+    case SizeRatioRole:
+        return (!item.isParent && (!item.isDir || item.dirSizeCalculated) && m_maxItemSize > 0)
+                   ? (static_cast<double>(item.size) / static_cast<double>(m_maxItemSize))
+                   : 0.0;
+    case SizePercentRole:
+        return (!item.isParent && (!item.isDir || item.dirSizeCalculated) && m_totalItemsSize > 0)
+                   ? (static_cast<double>(item.size) * 100.0 / static_cast<double>(m_totalItemsSize))
+                   : 0.0;
     default:
         return {};
     }
@@ -86,26 +149,158 @@ QHash<int, QByteArray> PanelModel::roleNames() const
     roles[GitStatusRole] = "gitStatus";
     roles[ThumbnailUrlRole] = "thumbnailUrl";
     roles[IsSelectedRole] = "isSelected";
+    roles[SizeRatioRole] = "sizeRatio";
+    roles[SizePercentRole] = "sizePercent";
     return roles;
+}
+
+bool PanelModel::isArchiveFileName(const QString &path)
+{
+    const QString lower = path.toLower();
+    return lower.endsWith(".zip") || lower.endsWith(".tar") || lower.endsWith(".tar.gz") ||
+           lower.endsWith(".tgz") || lower.endsWith(".tar.xz") || lower.endsWith(".txz") ||
+           lower.endsWith(".tar.bz2") || lower.endsWith(".tbz2") || lower.endsWith(".tar.zst") ||
+           lower.endsWith(".tzst") || lower.endsWith(".7z");
+}
+
+bool PanelModel::splitArchivePath(const QString &rawPath, QString *outArchiveFile, QString *outInternalPath)
+{
+    if (outArchiveFile)
+        outArchiveFile->clear();
+    if (outInternalPath)
+        outInternalPath->clear();
+
+    const QString expanded = expandUserTilde(rawPath);
+    if (expanded.isEmpty())
+        return false;
+
+    const int dblColon = expanded.indexOf(QLatin1String("::"));
+    if (dblColon > 0) {
+        const QString archiveCandidate = QDir::cleanPath(expanded.left(dblColon));
+        QFileInfo fi(archiveCandidate);
+        if (fi.isFile() && isArchiveFileName(fi.fileName())) {
+            const QString canon = fi.canonicalFilePath();
+            if (outArchiveFile)
+                *outArchiveFile = canon.isEmpty() ? fi.absoluteFilePath() : canon;
+            if (outInternalPath) {
+                QString inner = expanded.mid(dblColon + 2);
+                inner.replace('\\', '/');
+                while (inner.startsWith('/'))
+                    inner.remove(0, 1);
+                while (inner.endsWith('/'))
+                    inner.chop(1);
+                *outInternalPath = inner;
+            }
+            return true;
+        }
+        return false;
+    }
+
+    QString clean = QDir::cleanPath(expanded);
+    if (!clean.startsWith('/'))
+        clean = QDir::cleanPath(QFileInfo(clean).absoluteFilePath());
+
+    const QStringList parts = clean.split('/', Qt::SkipEmptyParts);
+    QString accum;
+    for (int i = 0; i < parts.size(); ++i) {
+        accum += '/' + parts.at(i);
+        if (isArchiveFileName(parts.at(i))) {
+            QFileInfo fi(accum);
+            if (fi.isFile()) {
+                const QString canon = fi.canonicalFilePath();
+                if (outArchiveFile)
+                    *outArchiveFile = canon.isEmpty() ? fi.absoluteFilePath() : canon;
+                if (outInternalPath && i + 1 < parts.size())
+                    *outInternalPath = parts.mid(i + 1).join('/');
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+QList<ArchiveEntryInfo> PanelModel::readArchiveEntries(const QString &archivePath)
+{
+    QList<ArchiveEntryInfo> result;
+    struct archive *a = archive_read_new();
+    if (!a)
+        return result;
+
+    archive_read_support_filter_all(a);
+    archive_read_support_format_all(a);
+
+    const QByteArray encodedPath = QFile::encodeName(archivePath);
+    if (archive_read_open_filename(a, encodedPath.constData(), 65536) != ARCHIVE_OK) {
+        archive_read_free(a);
+        return result;
+    }
+
+    struct archive_entry *entry = nullptr;
+    while (archive_read_next_header(a, &entry) == ARCHIVE_OK) {
+        const char *utf8Name = archive_entry_pathname_utf8(entry);
+        QString rawName = utf8Name ? QString::fromUtf8(utf8Name)
+                                   : QString::fromLocal8Bit(archive_entry_pathname(entry));
+        const bool endsWithSlash = rawName.endsWith('/') || rawName.endsWith('\\');
+        rawName.replace('\\', '/');
+
+        const QStringList rawParts = rawName.split('/', Qt::SkipEmptyParts);
+        QStringList safeParts;
+        for (const QString &part : rawParts) {
+            if (part == QLatin1String("."))
+                continue;
+            if (part == QLatin1String("..")) {
+                if (!safeParts.isEmpty())
+                    safeParts.removeLast();
+                continue;
+            }
+            safeParts.append(part);
+        }
+
+        if (safeParts.isEmpty()) {
+            archive_read_data_skip(a);
+            continue;
+        }
+
+        ArchiveEntryInfo info;
+        info.internalPath = safeParts.join('/');
+        info.isDir = (archive_entry_filetype(entry) == AE_IFDIR) || endsWithSlash;
+        info.size = std::max<qint64>(0, static_cast<qint64>(archive_entry_size(entry)));
+        if (archive_entry_mtime_is_set(entry))
+            info.modified = QDateTime::fromSecsSinceEpoch(archive_entry_mtime(entry));
+
+        int perm = static_cast<int>(archive_entry_perm(entry)) & 0777;
+        if (perm == 0)
+            perm = info.isDir ? 0755 : 0644;
+        info.permissions = formatPosixPermissions(perm);
+        info.isExecutable = !info.isDir && ((perm & 0111) != 0);
+
+        result.append(info);
+        archive_read_data_skip(a);
+    }
+
+    archive_read_free(a);
+    return result;
 }
 
 QString PanelModel::resolveDirectoryPath(const QString &rawPath)
 {
-    QString expanded = rawPath.trimmed();
-    if (expanded == "~") {
-        expanded = QDir::homePath();
-    } else if (expanded.startsWith("~/")) {
-        expanded = QDir::homePath() + expanded.mid(1);
-    }
+    const QString expanded = expandUserTilde(rawPath);
     if (expanded.isEmpty())
         return {};
 
-    QDir dir(expanded);
-    if (!dir.exists())
-        return {};
+    QFileInfo dirInfo(expanded);
+    if (dirInfo.exists() && dirInfo.isDir()) {
+        const QString canonical = dirInfo.canonicalFilePath();
+        return canonical.isEmpty() ? dirInfo.absoluteFilePath() : canonical;
+    }
 
-    const QString canonical = dir.canonicalPath();
-    return canonical.isEmpty() ? dir.absolutePath() : canonical;
+    QString archiveFile;
+    QString internalPath;
+    if (splitArchivePath(expanded, &archiveFile, &internalPath)) {
+        return internalPath.isEmpty() ? archiveFile : (archiveFile + "/" + internalPath);
+    }
+
+    return {};
 }
 
 QString PanelModel::tabTitleForPath(const QString &path)
@@ -122,6 +317,10 @@ void PanelModel::syncActiveTabState()
         m_tabs[m_activeTab].path = m_path;
         m_tabs[m_activeTab].backStack = m_backStack;
         m_tabs[m_activeTab].forwardStack = m_forwardStack;
+        m_tabs[m_activeTab].isCollection = m_isCollectionView;
+        m_tabs[m_activeTab].collectionTitle = m_collectionTitle;
+        m_tabs[m_activeTab].collectionBasePath = m_collectionBasePath;
+        m_tabs[m_activeTab].collectionPaths = m_collectionPaths;
     }
 }
 
@@ -131,9 +330,11 @@ QVariantList PanelModel::tabs() const
     out.reserve(m_tabs.size());
     for (int i = 0; i < m_tabs.size(); ++i) {
         const QString p = (i == m_activeTab && !m_path.isEmpty()) ? m_path : m_tabs.at(i).path;
+        const bool isCol = (i == m_activeTab) ? m_isCollectionView : m_tabs.at(i).isCollection;
+        const QString colTitle = (i == m_activeTab) ? m_collectionTitle : m_tabs.at(i).collectionTitle;
         QVariantMap entry;
         entry["path"] = p;
-        entry["title"] = tabTitleForPath(p);
+        entry["title"] = (isCol && !colTitle.isEmpty()) ? colTitle : tabTitleForPath(p);
         out.append(entry);
     }
     return out;
@@ -146,12 +347,28 @@ void PanelModel::setActiveTab(int index)
 
     syncActiveTabState();
     m_activeTab = index;
-    m_backStack = m_tabs.at(m_activeTab).backStack;
-    m_forwardStack = m_tabs.at(m_activeTab).forwardStack;
+    const PanelTab &tab = m_tabs.at(m_activeTab);
+    m_backStack = tab.backStack;
+    m_forwardStack = tab.forwardStack;
+    m_isCollectionView = tab.isCollection;
+    m_collectionTitle = tab.collectionTitle;
+    m_collectionBasePath = tab.collectionBasePath;
+    m_collectionPaths = tab.collectionPaths;
 
-    const QString targetPath = m_tabs.at(m_activeTab).path;
+    const QString targetPath = tab.path;
     m_switchingTab = true;
-    if (m_path != targetPath) {
+    if (m_isCollectionView) {
+        m_path = targetPath;
+        m_selectedPaths.clear();
+        if (!m_filter.isEmpty()) {
+            m_filter.clear();
+            emit filterChanged();
+        }
+        loadDirectory();
+        emit pathChanged();
+        emit freeSpaceChanged();
+        emit selectionChanged();
+    } else if (m_path != targetPath) {
         setPath(targetPath);
     } else {
         m_selectedPaths.clear();
@@ -160,6 +377,7 @@ void PanelModel::setActiveTab(int index)
             emit filterChanged();
         }
         loadDirectory();
+        emit pathChanged();
         emit selectionChanged();
     }
     m_switchingTab = false;
@@ -175,10 +393,14 @@ int PanelModel::addTab(const QString &path)
     if (target.isEmpty())
         target = m_path.isEmpty() ? QDir::homePath() : m_path;
 
-    m_tabs.append(PanelTab{target, {}, {}});
+    m_tabs.append(PanelTab{target, {}, {}, false, {}, {}, {}});
     m_activeTab = m_tabs.size() - 1;
     m_backStack.clear();
     m_forwardStack.clear();
+    m_isCollectionView = false;
+    m_collectionTitle.clear();
+    m_collectionBasePath.clear();
+    m_collectionPaths.clear();
 
     m_switchingTab = true;
     if (m_path != target) {
@@ -190,6 +412,7 @@ int PanelModel::addTab(const QString &path)
             emit filterChanged();
         }
         loadDirectory();
+        emit pathChanged();
         emit selectionChanged();
     }
     m_switchingTab = false;
@@ -218,16 +441,29 @@ void PanelModel::closeTab(int index)
 
     if (targetIdx == m_activeTab) {
         m_activeTab = std::min(targetIdx, static_cast<int>(m_tabs.size()) - 1);
-        m_backStack = m_tabs.at(m_activeTab).backStack;
-        m_forwardStack = m_tabs.at(m_activeTab).forwardStack;
+        const PanelTab &tab = m_tabs.at(m_activeTab);
+        m_backStack = tab.backStack;
+        m_forwardStack = tab.forwardStack;
+        m_isCollectionView = tab.isCollection;
+        m_collectionTitle = tab.collectionTitle;
+        m_collectionBasePath = tab.collectionBasePath;
+        m_collectionPaths = tab.collectionPaths;
 
-        const QString nextPath = m_tabs.at(m_activeTab).path;
+        const QString nextPath = tab.path;
         m_switchingTab = true;
-        if (m_path != nextPath) {
+        if (m_isCollectionView) {
+            m_path = nextPath;
+            m_selectedPaths.clear();
+            loadDirectory();
+            emit pathChanged();
+            emit freeSpaceChanged();
+            emit selectionChanged();
+        } else if (m_path != nextPath) {
             setPath(nextPath);
         } else {
             m_selectedPaths.clear();
             loadDirectory();
+            emit pathChanged();
             emit selectionChanged();
         }
         m_switchingTab = false;
@@ -262,7 +498,7 @@ void PanelModel::restoreTabs(const QStringList &paths, int activeIndex)
     for (const QString &raw : paths) {
         const QString resolved = resolveDirectoryPath(raw);
         if (!resolved.isEmpty())
-            validTabs.append(PanelTab{resolved, {}, {}});
+            validTabs.append(PanelTab{resolved, {}, {}, false, {}, {}, {}});
     }
     if (validTabs.isEmpty())
         return;
@@ -289,10 +525,10 @@ void PanelModel::setPath(const QString &newPath)
     if (cleanPath.isEmpty())
         return;
 
-    if (m_path == cleanPath)
+    if (m_path == cleanPath && !m_isCollectionView)
         return;
 
-    if (!m_path.isEmpty() && !m_navigatingHistory && !m_switchingTab) {
+    if (!m_path.isEmpty() && !m_navigatingHistory && !m_switchingTab && !m_isCollectionView) {
         m_backStack.append(m_path);
         if (m_backStack.size() > 50)
             m_backStack.removeFirst();
@@ -302,13 +538,42 @@ void PanelModel::setPath(const QString &newPath)
 
     if (!m_dirWatcher.directories().isEmpty())
         m_dirWatcher.removePaths(m_dirWatcher.directories());
+    if (!m_dirWatcher.files().isEmpty())
+        m_dirWatcher.removePaths(m_dirWatcher.files());
 
     m_path = cleanPath;
-    if (QFileInfo::exists(m_path))
-        m_dirWatcher.addPath(m_path);
+    m_isCollectionView = false;
+    m_collectionTitle.clear();
+    m_collectionBasePath.clear();
+    m_collectionPaths.clear();
+    if (m_flatView) {
+        m_flatView = false;
+        emit flatViewChanged();
+    }
+    if (m_diskUsageMode) {
+        m_diskUsageMode = false;
+        emit diskUsageModeChanged();
+    }
+
+    QString archiveFile;
+    QString archiveInternal;
+    if (QFileInfo(m_path).isDir()) {
+        m_archiveFile.clear();
+        m_archiveInternalPath.clear();
+    } else if (splitArchivePath(m_path, &archiveFile, &archiveInternal)) {
+        m_archiveFile = archiveFile;
+        m_archiveInternalPath = archiveInternal;
+    } else {
+        m_archiveFile.clear();
+        m_archiveInternalPath.clear();
+    }
+
+    const QString watchTarget = isArchiveView() ? m_archiveFile : m_path;
+    if (!watchTarget.isEmpty() && QFileInfo::exists(watchTarget))
+        m_dirWatcher.addPath(watchTarget);
 
     if (m_tabs.isEmpty()) {
-        m_tabs.append(PanelTab{m_path, m_backStack, m_forwardStack});
+        m_tabs.append(PanelTab{m_path, m_backStack, m_forwardStack, false, {}, {}, {}});
         m_activeTab = 0;
     } else if (m_activeTab >= 0 && m_activeTab < m_tabs.size()) {
         m_tabs[m_activeTab].path = m_path;
@@ -347,6 +612,7 @@ void PanelModel::setFilter(const QString &filter)
             }
         }
     }
+    recalculateSizeMetrics();
     endResetModel();
     emit filterChanged();
     emit countChanged();
@@ -382,6 +648,97 @@ void PanelModel::setSortAscending(bool asc)
     sortItems();
 }
 
+void PanelModel::setFlatView(bool flat)
+{
+    if (m_flatView == flat)
+        return;
+
+    m_flatView = flat;
+    m_selectedPaths.clear();
+    loadDirectory();
+    emit flatViewChanged();
+    emit selectionChanged();
+}
+
+void PanelModel::toggleFlatView()
+{
+    setFlatView(!m_flatView);
+}
+
+void PanelModel::feedItems(const QStringList &paths, const QString &title, const QString &basePath)
+{
+    const QString resolvedBase = resolveDirectoryPath(basePath.isEmpty() ? m_path : basePath);
+    if (!resolvedBase.isEmpty())
+        m_path = resolvedBase;
+
+    m_isCollectionView = true;
+    m_collectionBasePath = m_path;
+    m_collectionTitle = title.trimmed().isEmpty() ? tr("Search Results") : title.trimmed();
+    m_collectionPaths = paths;
+    m_archiveFile.clear();
+    m_archiveInternalPath.clear();
+    m_selectedPaths.clear();
+
+    if (m_flatView) {
+        m_flatView = false;
+        emit flatViewChanged();
+    }
+    if (!m_filter.isEmpty()) {
+        m_filter.clear();
+        emit filterChanged();
+    }
+
+    syncActiveTabState();
+    loadDirectory();
+    emit pathChanged();
+    emit tabsChanged();
+    emit selectionChanged();
+}
+
+void PanelModel::exitCollectionView()
+{
+    if (!m_isCollectionView)
+        return;
+
+    const QString restorePath = m_collectionBasePath.isEmpty() ? m_path : m_collectionBasePath;
+    m_isCollectionView = false;
+    m_collectionTitle.clear();
+    m_collectionBasePath.clear();
+    m_collectionPaths.clear();
+    m_selectedPaths.clear();
+
+    if (!restorePath.isEmpty())
+        m_path = restorePath;
+
+    syncActiveTabState();
+    loadDirectory();
+    emit pathChanged();
+    emit tabsChanged();
+    emit freeSpaceChanged();
+    emit selectionChanged();
+}
+
+void PanelModel::setDiskUsageMode(bool enabled)
+{
+    if (m_diskUsageMode == enabled)
+        return;
+
+    m_diskUsageMode = enabled;
+    if (m_diskUsageMode) {
+        calculateAllFolderSizes();
+        m_sortField = SortBySize;
+        m_sortAscending = false;
+        emit sortChanged();
+        sortItems();
+    }
+    emit diskUsageModeChanged();
+}
+
+void PanelModel::toggleDiskUsageMode()
+{
+    setDiskUsageMode(!m_diskUsageMode);
+}
+
 void PanelModel::cd(const QString &nameOrPath)
 {
     if (nameOrPath == "..") {
@@ -393,17 +750,40 @@ void PanelModel::cd(const QString &nameOrPath)
         return;
     }
 
+    if (isArchiveView()) {
+        if (QFileInfo(nameOrPath).isAbsolute())
+            setPath(nameOrPath);
+        else
+            setPath(m_path + "/" + nameOrPath);
+        return;
+    }
+
     QFileInfo info(nameOrPath);
     if (!info.isAbsolute())
         info.setFile(m_path + "/" + nameOrPath);
 
-    if (info.isDir()) {
+    if (info.isDir() || (info.isFile() && isArchiveFileName(info.fileName()))) {
         setPath(info.absoluteFilePath());
     }
 }
 
 void PanelModel::cdUp()
 {
+    if (m_isCollectionView) {
+        exitCollectionView();
+        return;
+    }
+    if (isArchiveView()) {
+        if (!m_archiveInternalPath.isEmpty()) {
+            const int lastSlash = m_archiveInternalPath.lastIndexOf('/');
+            const QString parentInternal = (lastSlash > 0) ? m_archiveInternalPath.left(lastSlash) : QString();
+            setPath(parentInternal.isEmpty() ? m_archiveFile : (m_archiveFile + "/" + parentInternal));
+        } else {
+            setPath(QFileInfo(m_archiveFile).absolutePath());
+        }
+        return;
+    }
+
     QDir dir(m_path);
     if (dir.cdUp()) {
         setPath(dir.absolutePath());
@@ -438,6 +818,7 @@ void PanelModel::goForward()
 
 void PanelModel::refresh()
 {
+    m_cachedArchiveFile.clear();
     loadDirectory();
     emit freeSpaceChanged();
 }
@@ -454,9 +835,27 @@ qint64 PanelModel::computeDirectorySize(const QString &dirPath)
     return total;
 }
 
-void PanelModel::calculateFolderSize(int index)
+void PanelModel::recalculateSizeMetrics()
 {
-    if (index < 0 || index >= m_items.size())
+    qint64 maxSz = 0;
+    qint64 totalSz = 0;
+    for (const PanelItem &item : std::as_const(m_items)) {
+        if (item.isParent)
+            continue;
+        if (item.isDir && !item.dirSizeCalculated)
+            continue;
+        if (item.size > 0) {
+            maxSz = std::max(maxSz, item.size);
+            totalSz += item.size;
+        }
+    }
+    m_maxItemSize = maxSz;
+    m_totalItemsSize = totalSz;
+}
+
+void PanelModel::calculateFolderSizeInternal(int index, bool deferMetrics)
+{
+    if (isArchiveView() || index < 0 || index >= m_items.size())
         return;
 
     PanelItem &item = m_items[index];
@@ -478,20 +877,41 @@ void PanelModel::calculateFolderSize(int index)
         }
     }
 
-    QModelIndex idx = createIndex(index, 0);
-    emit dataChanged(idx, idx, {SizeRole, FormattedSizeRole});
+    if (!deferMetrics) {
+        recalculateSizeMetrics();
+        if (!m_items.isEmpty())
+            emit dataChanged(createIndex(0, 0), createIndex(m_items.size() - 1, 0),
+                             {SizeRole, FormattedSizeRole, SizeRatioRole, SizePercentRole});
+        emit countChanged();
+    } else {
+        QModelIndex idx = createIndex(index, 0);
+        emit dataChanged(idx, idx, {SizeRole, FormattedSizeRole});
+    }
     emit selectionChanged();
+}
+
+void PanelModel::calculateFolderSize(int index)
+{
+    calculateFolderSizeInternal(index, false);
 }
 
 void PanelModel::calculateAllFolderSizes()
 {
+    bool computedAny = false;
     for (int i = 0; i < m_items.size(); ++i) {
         if (m_items[i].isDir && !m_items[i].isParent) {
-            calculateFolderSize(i);
+            calculateFolderSizeInternal(i, true);
+            computedAny = true;
         }
     }
     if (m_sortField == SortBySize) {
         sortItems();
+    } else if (computedAny) {
+        recalculateSizeMetrics();
+        if (!m_items.isEmpty())
+            emit dataChanged(createIndex(0, 0), createIndex(m_items.size() - 1, 0),
+                             {SizeRole, FormattedSizeRole, SizeRatioRole, SizePercentRole});
+        emit countChanged();
     }
 }
 
@@ -733,7 +1153,7 @@ void PanelModel::updateGitStatus()
     m_gitModifiedCount = 0;
     m_gitUntrackedCount = 0;
 
-    if (m_path.isEmpty() || !QDir(m_path).exists()) {
+    if (isArchiveView() || m_path.isEmpty() || !QDir(m_path).exists()) {
         emit gitChanged();
         return;
     }
@@ -960,7 +1380,10 @@ QStringList PanelModel::allItemPaths(bool excludeParent) const
 
 bool PanelModel::isWritable() const
 {
-    return QFileInfo(m_path).isWritable();
+    if (isArchiveView())
+        return false;
+    const QString checkPath = m_isCollectionView && !m_collectionBasePath.isEmpty() ? m_collectionBasePath : m_path;
+    return QFileInfo(checkPath).isWritable();
 }
 
 int PanelModel::selectedCount() const
@@ -985,7 +1408,8 @@ QString PanelModel::totalSelectedSizeFormatted() const
 
 QString PanelModel::freeSpaceFormatted() const
 {
-    QStorageInfo storage(m_path);
+    const QString target = isArchiveView() ? QFileInfo(m_archiveFile).absolutePath() : m_path;
+    QStorageInfo storage(target);
     if (!storage.isValid() || !storage.isReady())
         return {};
     return formatSize(storage.bytesAvailable(), false);
@@ -1022,12 +1446,12 @@ QString PanelModel::formatSize(qint64 bytes, bool isDir)
     return QString("%1 GB").arg(QString::number(bytes / (1024.0 * 1024.0 * 1024.0), 'f', 2));
 }
 
-QString PanelModel::detectIconType(const QFileInfo &info)
+QString PanelModel::detectIconTypeForName(const QString &fileName, bool isDir, bool isExec)
 {
-    if (info.isDir())
+    if (isDir)
         return QStringLiteral("folder");
 
-    const QString ext = info.suffix().toLower();
+    const QString ext = QFileInfo(fileName).suffix().toLower();
     if (ext == "png" || ext == "jpg" || ext == "jpeg" || ext == "svg" || ext == "webp" || ext == "gif")
         return QStringLiteral("image");
     if (ext == "cpp" || ext == "h" || ext == "c" || ext == "py" || ext == "js" || ext == "ts" ||
@@ -1041,21 +1465,34 @@ QString PanelModel::detectIconType(const QFileInfo &info)
         return QStringLiteral("video");
     if (ext == "txt" || ext == "md" || ext == "log" || ext == "csv")
         return QStringLiteral("text");
-    if (info.isExecutable())
+    if (isExec)
         return QStringLiteral("binary");
 
     return QStringLiteral("file");
 }
 
+QString PanelModel::detectIconType(const QFileInfo &info)
+{
+    return detectIconTypeForName(info.fileName(), info.isDir(), !info.isDir() && info.isExecutable());
+}
+
 void PanelModel::loadDirectory()
 {
+    if (m_isCollectionView) {
+        loadCollectionItems();
+        sortItems();
+        updateGitStatus();
+        return;
+    }
+
+    if (isArchiveView()) {
+        loadArchiveDirectory();
+        sortItems();
+        updateGitStatus();
+        return;
+    }
+
     QDir dir(m_path);
-    QDir::Filters filters = QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot | QDir::System;
-    if (m_showHidden)
-        filters |= QDir::Hidden;
-
-    QFileInfoList entries = dir.entryInfoList(filters);
-
     m_allItems.clear();
 
     if (m_path != "/" && !m_path.isEmpty()) {
@@ -1069,9 +1506,9 @@ void PanelModel::loadDirectory()
         m_allItems.append(parentItem);
     }
 
-    for (const QFileInfo &fi : entries) {
+    auto makeItem = [this](const QFileInfo &fi, const QString &displayName) -> PanelItem {
         PanelItem item;
-        item.name = fi.fileName();
+        item.name = displayName;
         item.path = fi.absoluteFilePath();
         item.isDir = fi.isDir();
         item.isParent = false;
@@ -1089,25 +1526,220 @@ void PanelModel::loadDirectory()
         item.extension = fi.suffix();
         item.iconType = detectIconType(fi);
         item.isSelected = m_selectedPaths.contains(item.path);
+        item.permissions = formatPosixPermissions(toPosixMode(fi.permissions()));
+        return item;
+    };
 
-        QFile::Permissions p = fi.permissions();
-        QString perm;
-        perm += (p & QFile::ReadOwner) ? 'r' : '-';
-        perm += (p & QFile::WriteOwner) ? 'w' : '-';
-        perm += (p & QFile::ExeOwner) ? 'x' : '-';
-        perm += (p & QFile::ReadGroup) ? 'r' : '-';
-        perm += (p & QFile::WriteGroup) ? 'w' : '-';
-        perm += (p & QFile::ExeGroup) ? 'x' : '-';
-        perm += (p & QFile::ReadOther) ? 'r' : '-';
-        perm += (p & QFile::WriteOther) ? 'w' : '-';
-        perm += (p & QFile::ExeOther) ? 'x' : '-';
-        item.permissions = perm;
+    QDir::Filters filters = QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot | QDir::System;
+    if (m_showHidden)
+        filters |= QDir::Hidden;
 
-        m_allItems.append(item);
+    if (m_flatView) {
+        constexpr int kMaxFlatItems = 5000;
+        int flatCount = 0;
+        QStringList queue{m_path};
+        while (!queue.isEmpty() && flatCount < kMaxFlatItems) {
+            const QString currentDir = queue.takeFirst();
+            const QFileInfoList subEntries = QDir(currentDir).entryInfoList(filters);
+            for (const QFileInfo &fi : subEntries) {
+                if (fi.isDir()) {
+                    if (!fi.isSymLink())
+                        queue.append(fi.absoluteFilePath());
+                    continue;
+                }
+                const QString relName = dir.relativeFilePath(fi.absoluteFilePath());
+                if (!m_showHidden && hasHiddenSegment(relName))
+                    continue;
+                m_allItems.append(makeItem(fi, relName));
+                if (++flatCount >= kMaxFlatItems)
+                    break;
+            }
+        }
+    } else {
+        const QFileInfoList entries = dir.entryInfoList(filters);
+        for (const QFileInfo &fi : entries)
+            m_allItems.append(makeItem(fi, fi.fileName()));
     }
 
     sortItems();
     updateGitStatus();
+}
+
+void PanelModel::loadCollectionItems()
+{
+    m_allItems.clear();
+
+    const QString base = m_collectionBasePath.isEmpty() ? m_path : m_collectionBasePath;
+    PanelItem parentItem;
+    parentItem.name = QStringLiteral("..");
+    parentItem.path = base;
+    parentItem.isDir = true;
+    parentItem.isParent = true;
+    parentItem.formattedSize = QStringLiteral("<UP>");
+    parentItem.iconType = QStringLiteral("folder-parent");
+    m_allItems.append(parentItem);
+
+    QString cleanBase = QDir(base).absolutePath();
+    if (!cleanBase.endsWith('/'))
+        cleanBase += '/';
+
+    QSet<QString> seenPaths;
+    for (const QString &rawPath : std::as_const(m_collectionPaths)) {
+        const QFileInfo fi(rawPath);
+        if (!fi.exists())
+            continue;
+        const QString abs = fi.absoluteFilePath();
+        if (seenPaths.contains(abs))
+            continue;
+        seenPaths.insert(abs);
+
+        PanelItem item;
+        item.name = (!cleanBase.isEmpty() && abs.startsWith(cleanBase)) ? abs.mid(cleanBase.size()) : fi.fileName();
+        item.path = abs;
+        item.isDir = fi.isDir();
+        item.isParent = false;
+        if (fi.isDir() && m_calculatedDirSizes.contains(abs)) {
+            item.size = m_calculatedDirSizes.value(abs);
+            item.dirSizeCalculated = true;
+            item.formattedSize = formatSize(item.size, false);
+        } else {
+            item.size = fi.isDir() ? 0 : fi.size();
+            item.dirSizeCalculated = false;
+            item.formattedSize = formatSize(fi.size(), fi.isDir());
+        }
+        item.modified = fi.lastModified();
+        item.formattedModified = item.modified.toString("yyyy-MM-dd hh:mm");
+        item.extension = fi.suffix();
+        item.iconType = detectIconType(fi);
+        item.isSelected = m_selectedPaths.contains(abs);
+        item.permissions = formatPosixPermissions(toPosixMode(fi.permissions()));
+        m_allItems.append(item);
+    }
+}
+
+void PanelModel::loadArchiveDirectory()
+{
+    m_allItems.clear();
+
+    const QFileInfo archiveFi(m_archiveFile);
+    PanelItem parentItem;
+    parentItem.name = "..";
+    if (!m_archiveInternalPath.isEmpty()) {
+        const int lastSlash = m_archiveInternalPath.lastIndexOf('/');
+        const QString parentInternal = (lastSlash > 0) ? m_archiveInternalPath.left(lastSlash) : QString();
+        parentItem.path = parentInternal.isEmpty() ? m_archiveFile : (m_archiveFile + "/" + parentInternal);
+    } else {
+        parentItem.path = archiveFi.absolutePath();
+    }
+    parentItem.isDir = true;
+    parentItem.isParent = true;
+    parentItem.formattedSize = "<UP>";
+    parentItem.iconType = "folder-parent";
+    m_allItems.append(parentItem);
+
+    if (!archiveFi.exists() || !archiveFi.isFile())
+        return;
+
+    const QDateTime archiveMtime = archiveFi.lastModified();
+    if (m_cachedArchiveFile != m_archiveFile || m_cachedArchiveMtime != archiveMtime) {
+        m_cachedArchiveEntries = readArchiveEntries(m_archiveFile);
+        m_cachedArchiveFile = m_archiveFile;
+        m_cachedArchiveMtime = archiveMtime;
+    }
+
+    const QString prefix = m_archiveInternalPath.isEmpty() ? QString() : (m_archiveInternalPath + '/');
+    QHash<QString, PanelItem> childDirs;
+    QHash<QString, PanelItem> childFiles;
+
+    for (const ArchiveEntryInfo &entry : m_cachedArchiveEntries) {
+        if (!prefix.isEmpty() && !entry.internalPath.startsWith(prefix))
+            continue;
+
+        const QString rel = prefix.isEmpty() ? entry.internalPath : entry.internalPath.mid(prefix.size());
+        if (rel.isEmpty())
+            continue;
+        if (!m_showHidden && hasHiddenSegment(rel))
+            continue;
+
+        if (m_flatView) {
+            if (entry.isDir)
+                continue;
+            PanelItem item;
+            item.name = rel;
+            item.path = m_archiveFile + "/" + entry.internalPath;
+            item.isDir = false;
+            item.isParent = false;
+            item.size = entry.size;
+            item.formattedSize = formatSize(entry.size, false);
+            item.modified = entry.modified;
+            item.formattedModified = entry.modified.isValid() ? entry.modified.toString("yyyy-MM-dd hh:mm") : QString();
+            item.extension = QFileInfo(rel).suffix();
+            item.permissions = entry.permissions;
+            item.iconType = detectIconTypeForName(QFileInfo(rel).fileName(), false, entry.isExecutable);
+            item.isSelected = m_selectedPaths.contains(item.path);
+            m_allItems.append(item);
+            continue;
+        }
+
+        const int slash = rel.indexOf('/');
+        if (slash == -1) {
+            if (entry.isDir) {
+                PanelItem &dirItem = childDirs[rel];
+                if (dirItem.name.isEmpty()) {
+                    dirItem.name = rel;
+                    dirItem.path = m_archiveFile + "/" + entry.internalPath;
+                    dirItem.isDir = true;
+                    dirItem.iconType = QStringLiteral("folder");
+                    dirItem.permissions = entry.permissions;
+                    dirItem.modified = entry.modified;
+                    dirItem.formattedModified = entry.modified.isValid() ? entry.modified.toString("yyyy-MM-dd hh:mm") : QString();
+                    dirItem.formattedSize = formatSize(0, true);
+                    dirItem.isSelected = m_selectedPaths.contains(dirItem.path);
+                }
+            } else {
+                PanelItem fileItem;
+                fileItem.name = rel;
+                fileItem.path = m_archiveFile + "/" + entry.internalPath;
+                fileItem.isDir = false;
+                fileItem.size = entry.size;
+                fileItem.formattedSize = formatSize(entry.size, false);
+                fileItem.modified = entry.modified;
+                fileItem.formattedModified = entry.modified.isValid() ? entry.modified.toString("yyyy-MM-dd hh:mm") : QString();
+                fileItem.extension = QFileInfo(rel).suffix();
+                fileItem.permissions = entry.permissions;
+                fileItem.iconType = detectIconTypeForName(rel, false, entry.isExecutable);
+                fileItem.isSelected = m_selectedPaths.contains(fileItem.path);
+                childFiles.insert(rel, fileItem);
+            }
+        } else {
+            const QString dirName = rel.left(slash);
+            const QString dirInternalPath = prefix + dirName;
+            PanelItem &dirItem = childDirs[dirName];
+            if (dirItem.name.isEmpty()) {
+                dirItem.name = dirName;
+                dirItem.path = m_archiveFile + "/" + dirInternalPath;
+                dirItem.isDir = true;
+                dirItem.iconType = QStringLiteral("folder");
+                dirItem.permissions = QStringLiteral("rwxr-xr-x");
+                dirItem.formattedSize = formatSize(0, true);
+                dirItem.isSelected = m_selectedPaths.contains(dirItem.path);
+            }
+            if (!entry.isDir) {
+                dirItem.size += entry.size;
+                dirItem.dirSizeCalculated = true;
+                dirItem.formattedSize = formatSize(dirItem.size, false);
+            }
+            if (entry.modified.isValid() && (!dirItem.modified.isValid() || entry.modified > dirItem.modified)) {
+                dirItem.modified = entry.modified;
+                dirItem.formattedModified = entry.modified.toString("yyyy-MM-dd hh:mm");
+            }
+        }
+    }
+
+    for (auto it = childDirs.constBegin(); it != childDirs.constEnd(); ++it)
+        m_allItems.append(it.value());
+    for (auto it = childFiles.constBegin(); it != childFiles.constEnd(); ++it)
+        m_allItems.append(it.value());
 }
 
 void PanelModel::sortItems()
@@ -1161,14 +1793,24 @@ void PanelModel::sortItems()
         return m_sortAscending ? result : !result;
     };
 
-    std::sort(dirs.begin(), dirs.end(), comparator);
-    std::sort(files.begin(), files.end(), comparator);
-
     m_allItems.clear();
     if (hasParent)
         m_allItems.append(parentItem);
-    m_allItems.append(dirs);
-    m_allItems.append(files);
+
+    if (m_diskUsageMode && m_sortField == SortBySize) {
+        // Rank directories and files together by size so large files surface above empty folders
+        QList<PanelItem> combined;
+        combined.reserve(dirs.size() + files.size());
+        combined.append(dirs);
+        combined.append(files);
+        std::sort(combined.begin(), combined.end(), comparator);
+        m_allItems.append(combined);
+    } else {
+        std::sort(dirs.begin(), dirs.end(), comparator);
+        std::sort(files.begin(), files.end(), comparator);
+        m_allItems.append(dirs);
+        m_allItems.append(files);
+    }
 
     if (m_filter.trimmed().isEmpty()) {
         m_items = m_allItems;
@@ -1182,6 +1824,7 @@ void PanelModel::sortItems()
         }
     }
 
+    recalculateSizeMetrics();
     endResetModel();
     emit countChanged();
 }

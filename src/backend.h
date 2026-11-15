@@ -8,10 +8,13 @@
 #include <QVariantList>
 #include <QVariantMap>
 
+#include <atomic>
+
 #include "fileoperation.h"
 #include "panelmodel.h"
 
 class QMimeData;
+class QTemporaryDir;
 class QThread;
 
 struct UndoPair {
@@ -47,6 +50,12 @@ class Backend : public QObject {
     Q_PROPERTY(bool canPaste READ canPaste NOTIFY clipboardChanged)
     Q_PROPERTY(bool canUndo READ canUndo NOTIFY undoChanged)
     Q_PROPERTY(QString undoDescription READ undoDescription NOTIFY undoChanged)
+    Q_PROPERTY(QString themeMode READ themeMode WRITE setThemeMode NOTIFY themeModeChanged)
+    Q_PROPERTY(bool isDarkTheme READ isDarkTheme NOTIFY themeModeChanged)
+    Q_PROPERTY(QStringList recentDirectories READ recentDirectories NOTIFY recentDirectoriesChanged)
+    Q_PROPERTY(bool searchRunning READ searchRunning NOTIFY searchStateChanged)
+    Q_PROPERTY(int searchScannedCount READ searchScannedCount NOTIFY searchProgressChanged)
+    Q_PROPERTY(QVariantList searchResultItems READ searchResultItems NOTIFY searchResultsChanged)
 
 public:
     explicit Backend(const QString &bookmarksFile = {}, QObject *parent = nullptr);
@@ -78,6 +87,11 @@ public:
 
     bool canUndo() const { return !m_undoStack.isEmpty(); }
     QString undoDescription() const { return m_undoStack.isEmpty() ? QString() : m_undoStack.last().description; }
+
+    QString themeMode() const { return m_themeMode; }
+    bool isDarkTheme() const { return m_themeMode != QLatin1String("light"); }
+    void setThemeMode(const QString &mode);
+    Q_INVOKABLE void toggleThemeMode();
 
     PanelModel* activeModel();
     PanelModel* targetModel();
@@ -159,6 +173,12 @@ public:
     Q_INVOKABLE bool isArchive(const QString &path) const;
     Q_INVOKABLE bool packArchive(const QStringList &sourcePaths, const QString &archivePath);
     Q_INVOKABLE bool extractArchive(const QString &archivePath, const QString &targetDir);
+    Q_INVOKABLE bool extractArchiveItems(const QString &archivePath, const QStringList &sourcePaths, const QString &targetDir);
+
+    QStringList recentDirectories() const { return m_recentDirs; }
+    Q_INVOKABLE void recordRecentDirectory(const QString &path);
+    Q_INVOKABLE QVariantList queryJumpDirectories(const QString &query = QString(), int maxResults = 40) const;
+    static int fuzzyScore(const QString &pattern, const QString &candidate);
 
     Q_INVOKABLE void refreshDrives();
     Q_INVOKABLE void toggleBookmark(const QString &path);
@@ -167,6 +187,24 @@ public:
     Q_INVOKABLE QVariantMap runCommand(const QString &command);
     Q_INVOKABLE QVariantMap getPreview(const QString &path);
     Q_INVOKABLE QStringList searchFiles(const QString &rootPath, const QString &query, int maxResults = 200);
+
+    bool searchRunning() const { return m_searchRunning; }
+    int searchScannedCount() const { return m_searchScannedCount; }
+    QVariantList searchResultItems() const { return m_searchResultItems; }
+    Q_INVOKABLE void startAdvancedSearch(const QString &rootPath, const QVariantMap &options = {});
+    Q_INVOKABLE void cancelSearch();
+    Q_INVOKABLE QVariantList runAdvancedSearchSync(const QString &rootPath, const QVariantMap &options = {});
+    Q_INVOKABLE void feedPathsToPanel(const QStringList &paths, const QString &title = QString(), bool newTab = false);
+
+    Q_INVOKABLE QVariantList compareDirectoriesRecursive(const QString &leftRoot, const QString &rightRoot,
+                                                         const QString &compareMode = QStringLiteral("date_size"),
+                                                         bool includeHidden = false);
+    Q_INVOKABLE QVariantMap executeDirectorySync(const QString &leftRoot, const QString &rightRoot,
+                                                 const QVariantList &syncItems);
+    Q_INVOKABLE QVariantList findDuplicateFiles(const QString &rootPath,
+                                                  const QString &secondaryRootPath = QString(),
+                                                  qint64 minSizeBytes = 1,
+                                                  bool includeHidden = false);
 
     Q_INVOKABLE void showStatus(const QString &message);
 
@@ -179,6 +217,11 @@ signals:
     void bookmarksChanged();
     void clipboardChanged();
     void undoChanged();
+    void themeModeChanged();
+    void recentDirectoriesChanged();
+    void searchStateChanged();
+    void searchProgressChanged();
+    void searchResultsChanged();
     void operationFinished(bool success, const QString &message);
     void conflictRequested(const QVariantMap &info);
 
@@ -192,6 +235,7 @@ private:
     void loadSession();
     void loadBookmarks();
     void saveBookmarks() const;
+    QString extractArchiveEntryToTemp(const QString &archivePath, const QString &internalPath);
     static QString computeNewName(const QString &originalName, int index, const QString &findText,
                                   const QString &replaceText, const QString &prefix,
                                   const QString &suffix, int caseMode, bool addCounter);
@@ -221,4 +265,14 @@ private:
     QStringList m_clipboardPaths;
     bool m_clipboardIsCut = false;
     QList<UndoEntry> m_undoStack;
+    QString m_themeMode = QStringLiteral("dark");
+    QStringList m_recentDirs;
+    QTemporaryDir *m_archiveTempDir = nullptr;
+
+    QThread *m_searchThread = nullptr;
+    std::atomic<bool> m_searchCancelRequested{false};
+    quint64 m_searchGeneration = 0;
+    bool m_searchRunning = false;
+    int m_searchScannedCount = 0;
+    QVariantList m_searchResultItems;
 };
