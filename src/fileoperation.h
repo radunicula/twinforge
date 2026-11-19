@@ -61,6 +61,8 @@ public:
     static QString uniqueName(const QString &dir, const QString &fileName);
     // Moves a single file/folder/symlink from `src` to exact path `dest` (including across filesystems).
     static bool moveSinglePath(const QString &src, const QString &dest);
+    // Reads raw symlink target string (Qt 6.4+ compatible wrapper around readlink / QFileInfo::readSymLink).
+    static QString readRawSymLink(const QFileInfo &fi);
 
 signals:
     void progress(qint64 doneBytes, qint64 totalBytes, const QString &currentName);

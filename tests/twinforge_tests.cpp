@@ -345,7 +345,7 @@ private slots:
 
         const QFileInfo link(dst.filePath("tree/link-to-real"));
         QVERIFY(link.isSymLink());
-        QCOMPARE(link.readSymLink(), QString("real"));
+        QCOMPARE(FileOperation::readRawSymLink(link), QString("real"));
         QVERIFY(QFileInfo(dst.filePath("tree/real/loop")).isSymLink());
         QVERIFY(QFileInfo(dst.filePath("tree/dangling")).isSymLink());
         QCOMPARE(readFile(dst.filePath("tree/real/f.txt")), QByteArray("f"));
@@ -427,7 +427,7 @@ private slots:
         QCOMPARE(op.completedCount(), 1);
         QVERIFY(!QFileInfo::exists(src.filePath("folder")));
         QCOMPARE(readFile(dst.filePath("folder/sub/f.txt")), QByteArray("content"));
-        QCOMPARE(QFileInfo(dst.filePath("folder/link")).readSymLink(), QString("sub/f.txt"));
+        QCOMPARE(FileOperation::readRawSymLink(QFileInfo(dst.filePath("folder/link"))), QString("sub/f.txt"));
     }
 
     void largeCopyReportsProgress()

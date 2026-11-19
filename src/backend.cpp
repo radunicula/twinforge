@@ -3685,7 +3685,7 @@ QVariantMap Backend::getItemProperties(const QString &path) const
     props["parentPath"] = fi.absolutePath();
     props["isDir"] = isRealDir;
     props["isSymLink"] = isSymLink;
-    props["symLinkTarget"] = isSymLink ? fi.readSymLink() : QString();
+    props["symLinkTarget"] = isSymLink ? FileOperation::readRawSymLink(fi) : QString();
     props["mimeName"] = mime.name();
     props["mimeComment"] = mime.comment();
     props["size"] = totalBytes;

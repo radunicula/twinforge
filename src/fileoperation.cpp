@@ -401,9 +401,24 @@ FileOperation::Result FileOperation::copyEntry(const QString &src, QString dest,
     return copyFile(si, dest);
 }
 
+QString FileOperation::readRawSymLink(const QFileInfo &fi)
+{
+#if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
+    return fi.readSymLink();
+#else
+    const QByteArray encoded = QFile::encodeName(fi.absoluteFilePath());
+    char buf[4096];
+    const ssize_t len = ::readlink(encoded.constData(), buf, sizeof(buf) - 1);
+    if (len < 0)
+        return {};
+    buf[len] = '\0';
+    return QFile::decodeName(QByteArray(buf, static_cast<int>(len)));
+#endif
+}
+
 FileOperation::Result FileOperation::copySymlink(const QFileInfo &src, const QString &dest)
 {
-    const QByteArray target = QFile::encodeName(src.readSymLink());
+    const QByteArray target = QFile::encodeName(readRawSymLink(src));
     const QByteArray destName = QFile::encodeName(dest);
 
     if (!pathExists(QFileInfo(dest))) {
