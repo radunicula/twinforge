@@ -13,6 +13,7 @@
   <img src="https://img.shields.io/badge/UI-Qt%206%20%2F%20QML-41CD52?logo=qt&logoColor=white" alt="Qt 6">
   <img src="https://img.shields.io/badge/CLI-twinforge%20%7C%20tf-00B4D8" alt="CLI twinforge / tf">
   <img src="https://img.shields.io/badge/License-Freeware-6366F1" alt="Freeware">
+  <a href="https://revolut.me/radunicula"><img src="https://img.shields.io/badge/Donate-Revolut-0075EB?logo=revolut&logoColor=white" alt="Donate via Revolut"></a>
 </p>
 
 ---
@@ -97,7 +98,9 @@ curl -fsSL https://raw.githubusercontent.com/radunicula/twinforge/main/uninstall
 
 ## 💖 Support TwinForge
 
-TwinForge is **100% free** for personal and commercial use. If it saves you time and you'd like to support ongoing Linux development, optional donations are always appreciated via the **Sponsor** button at the top of this page.
+TwinForge is **100% free** for personal and commercial use. If it saves you time and you'd like to support ongoing Linux development, you can buy me a coffee via Revolut (card, Apple Pay, Google Pay, or Revolut):
+
+👉 **[Donate via Revolut (`revolut.me/radunicula`)](https://revolut.me/radunicula)** — or use the **Sponsor** button at the top of this repository.
 
 ---
 
