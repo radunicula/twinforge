@@ -128,6 +128,18 @@ if command -v gtk-update-icon-cache >/dev/null 2>&1; then
   $SUDO gtk-update-icon-cache -f -t "${PREFIX}/share/icons/hicolor" 2>/dev/null || true
 fi
 
+if command -v ldd >/dev/null 2>&1; then
+  MISSING_LIBS="$(ldd "${PREFIX}/bin/twinforge" 2>&1 | grep -E 'not found|version .* not found' || true)"
+  if [ -n "$MISSING_LIBS" ]; then
+    echo ""
+    echo "Warning: Some required system libraries are missing or older than required:" >&2
+    echo "$MISSING_LIBS" >&2
+    echo "" >&2
+    echo "Note: Current binary releases target Arch Linux / Arch-based rolling distros (Qt 6 + libarchive)." >&2
+    echo "On Arch: sudo pacman -S qt6-base qt6-declarative qt6-svg qt6-wayland libarchive" >&2
+  fi
+fi
+
 echo ""
 echo "TwinForge installed successfully!"
 echo "  Binary: ${PREFIX}/bin/twinforge (alias: tf)"

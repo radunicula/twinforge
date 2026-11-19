@@ -79,6 +79,9 @@ install -Dm755 dist/install.sh "$PUBLIC_STAGE/install.sh"
 install -Dm755 dist/uninstall.sh "$PUBLIC_STAGE/uninstall.sh"
 install -Dm644 dist/.github/FUNDING.yml "$PUBLIC_STAGE/.github/FUNDING.yml"
 install -Dm644 src/assets/logo_full.png "$PUBLIC_STAGE/assets/logo_full.png"
+for img in dist/assets/screenshot-*.png; do
+  [ -f "$img" ] && install -Dm644 "$img" "$PUBLIC_STAGE/assets/$(basename "$img")"
+done
 
 echo ""
 echo "==> Release v${VER} artifacts ready in ${OUT_DIR}/:"

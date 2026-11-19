@@ -24,11 +24,31 @@
 
 > This repository hosts official prebuilt **binary releases**, **installers**, **SHA-256 checksums**, and the **issue tracker** for TwinForge.
 
+### 📸 Screenshots
+
+**Obsidian Carbon (Dark Mode)** — locked tabs, Git status badges, Disk Usage bars, Active Workspace pill, Google Drive & Trash bar:
+<p align="center">
+  <img src="assets/screenshot-dark.png" alt="TwinForge Dark Mode (Obsidian Carbon)" width="960">
+</p>
+
+**Alabaster Daylight (Light Mode)** — instant theme switch (<kbd>Ctrl+Shift+T</kbd>):
+<p align="center">
+  <img src="assets/screenshot-light.png" alt="TwinForge Light Mode (Alabaster Daylight)" width="960">
+</p>
+
 ---
 
 ## 🚀 Quick Install
 
-### Option 1: One-Line Installer (Recommended — User Install in `~/.local/`, no `sudo` needed)
+> **Supported Distributions (`v0.1.0`):** Prebuilt binaries currently target **Arch Linux & Arch-based rolling distributions** (Omarchy, CachyOS, EndeavourOS, Manjaro — `x86_64`, glibc/Qt 6 rolling). A portable **AppImage** built on an LTS base for **Ubuntu / Debian / Fedora** is planned for an upcoming release.
+
+### Option 1: Arch Linux / Omarchy Package (`.pkg.tar.zst`) — Recommended
+Download `twinforge-<version>-1-x86_64.pkg.tar.zst` from the [Releases](https://github.com/radunicula/twinforge/releases) page and install via `pacman`:
+```bash
+sudo pacman -U twinforge-*-x86_64.pkg.tar.zst
+```
+
+### Option 2: User Installer (`~/.local/`, no `sudo` required)
 ```bash
 curl -fsSL https://raw.githubusercontent.com/radunicula/twinforge/main/install.sh | bash
 ```
@@ -37,14 +57,19 @@ For a system-wide install into `/usr/local/`:
 curl -fsSL https://raw.githubusercontent.com/radunicula/twinforge/main/install.sh | bash -s -- --system
 ```
 
-### Option 2: Arch Linux / Omarchy Package (`.pkg.tar.zst`)
-Download `twinforge-<version>-1-x86_64.pkg.tar.zst` from the [Releases](https://github.com/radunicula/twinforge/releases) page and install via `pacman`:
+### 🔍 Prefer to inspect or verify manually? (No `curl | bash` needed)
+You can inspect the installer script first, or download the release tarball & verify its SHA-256 checksum manually:
 ```bash
-sudo pacman -U twinforge-*-x86_64.pkg.tar.zst
+# 1. Inspect the installer before running it:
+curl -fsSL https://raw.githubusercontent.com/radunicula/twinforge/main/install.sh | less
+
+# 2. Or download from Releases, verify SHA-256, and install offline:
+sha256sum -c SHA256SUMS.txt
+./install.sh --from-tarball twinforge-0.1.0-linux-x86_64.tar.gz
 ```
 
 ### Runtime Dependencies
-TwinForge dynamically links against standard system libraries:
+TwinForge dynamically links against standard system libraries (installed automatically when using `pacman -U`):
 - **Required:** `qt6-base`, `qt6-declarative`, `qt6-svg`, `qt6-wayland`, `libarchive`
 - **Optional (for extra features):** `rclone` (Google Drive FUSE mounts), `zoxide` (Quick Jump frecency), `poppler` (PDF preview), `ffmpeg` (`ffprobe` media metadata), `gvfs` (`gio` for SFTP/SMB), `sshfs`, `udisksctl`
 
