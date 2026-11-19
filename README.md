@@ -5,7 +5,7 @@
 <h1 align="center">TwinForge</h1>
 
 <p align="center">
-  <b>A fast, modern dual-panel orthodox file manager for Linux (<code>twinforge</code> / <code>tf</code>), inspired by Total Commander and tailored for modern Linux desktops.</b>
+  <b>A fast, modern dual-panel orthodox file manager for Linux (<code>twinforge</code> / <code>tf</code>), built for keyboard-driven workflows and modern Linux desktops.</b>
 </p>
 
 <p align="center">
@@ -20,7 +20,7 @@
 
 ## ✨ About TwinForge
 
-**TwinForge** (`twinforge` / `tf`) is a native Linux dual-panel orthodox file manager built with **C++20, Qt 6, and QML**. Designed for keyboard-driven speed and modern desktop polish, it pairs classic Total Commander ergonomics (dual independent panels, F3–F10 function keys, locked tabs, workspaces, multi-rename, file split/combine) with a **100% non-blocking asynchronous architecture**, Freedesktop standards (Thumbnails, Trash `trash://`, XDG MIME / `.desktop` integration), and live **Obsidian Carbon (Dark) / Alabaster Daylight (Light)** theming that syncs automatically with Omarchy / Hyprland accents.
+**TwinForge** (`twinforge` / `tf`) is a native Linux dual-panel orthodox file manager built with **C++20, Qt 6, and QML**. Designed for keyboard-driven speed and modern desktop polish, it pairs classic dual-panel ergonomics (independent panels, F3–F10 function keys, locked tabs, workspaces, multi-rename, file split/combine) with a **100% non-blocking asynchronous architecture**, Freedesktop standards (Thumbnails, Trash `trash://`, XDG MIME / `.desktop` integration), and live **Obsidian Carbon (Dark) / Alabaster Daylight (Light)** theming that syncs automatically with Omarchy / Hyprland accents.
 
 ---
 
@@ -33,7 +33,7 @@
 
 ### ⚡ Power-User Productivity
 - **Command Palette (<kbd>Ctrl+Shift+P</kbd>) & Quick Jump (<kbd>Ctrl+P</kbd>):** Fuzzy-searchable action launcher and instant folder jump powered by bookmarks, tab/visit history, and `zoxide` frecency integration.
-- **Async Command Bar, Live Output Drawer & History (<kbd>Ctrl+E</kbd> / <kbd>Ctrl+O</kbd>):** Non-blocking shell command execution with live streaming output drawer, cancel button, persistent <kbd>↑</kbd>/<kbd>↓</kbd> command history, built-in `cd` navigation (`cd ..`, `cd ~`, `cd -`, `cd trash://`), and Total Commander-style <kbd>Ctrl+Enter</kbd> / <kbd>Ctrl+Shift+Enter</kbd> filename/path insertion.
+- **Async Command Bar, Live Output Drawer & History (<kbd>Ctrl+E</kbd> / <kbd>Ctrl+O</kbd>):** Non-blocking shell command execution with live streaming output drawer, cancel button, persistent <kbd>↑</kbd>/<kbd>↓</kbd> command history, built-in `cd` navigation (`cd ..`, `cd ~`, `cd -`, `cd trash://`), and instant <kbd>Ctrl+Enter</kbd> / <kbd>Ctrl+Shift+Enter</kbd> filename/path insertion.
 - **Multi-Character Type-Ahead Quick Jump:** Type characters directly in List or Grid view to jump instantly to matching files (prefix + substring fallback, floating `Jump:` pill, <kbd>Backspace</kbd> editing, and repeating a letter to cycle).
 - **File Split & Combine (<kbd>Ctrl+Alt+S</kbd>):** Split large files into `.001`, `.002`, … chunks with an optional `.crc` SHA-256 verification manifest, and recombine parts asynchronously with progress, cancel, and automatic integrity checking.
 - **Flat / Branch View (<kbd>Ctrl+Shift+B</kbd>):** Flatten all files from subdirectories into a single panel list with relative subpath chips for rapid filtering, batch renaming, or bulk copying.
@@ -82,7 +82,7 @@
 
 ### 🛠️ Additional Tools
 - **Non-Blocking Async Architecture:** Background worker execution with live progress & cancellation for Git status, recursive folder sizes, duplicate scanning, directory compare/sync, checksums, previews (`pdftoppm`/`ffprobe`), archive pack/extract, `lsblk` drive discovery, and remote mounts (`rclone`/`gio`/`sshfs`).
-- **List & Grid Thumbnail Views (Freedesktop Cache):** Toggle between Total Commander-style detailed list (<kbd>Ctrl+1</kbd>) and visual thumbnail grid (<kbd>Ctrl+2</kbd>) backed by an asynchronous Freedesktop-compliant thumbnail cache (`~/.cache/thumbnails/{normal,large}`) for images, videos, and PDFs.
+- **List & Grid Thumbnail Views (Freedesktop Cache):** Toggle between a detailed dual-panel list (<kbd>Ctrl+1</kbd>) and visual thumbnail grid (<kbd>Ctrl+2</kbd>) backed by an asynchronous Freedesktop-compliant thumbnail cache (`~/.cache/thumbnails/{normal,large}`) for images, videos, and PDFs.
 - **Git Status Tracking:** Live repository detection showing branch name, modified/untracked counts, and per-item status badges (`M`, `?`, `A`, `D`).
 - **Checksum Calculation & Verification:** MD5, SHA-1, and SHA-256 calculation, live matching against clipboard hashes, and `.sha256` / `.md5` verification.
 - **Visual File Diff (<kbd>Ctrl+Alt+D</kbd>):** Side-by-side visual diff between two files or panel selections.
@@ -212,4 +212,4 @@ Translations can be edited directly in `src/i18n/`.
 ---
 
 ## 📄 License
-GPL-3.0 License. Inspired by Christian Ghisler's legendary Total Commander.
+GPL-3.0-or-later License.

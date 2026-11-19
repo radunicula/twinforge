@@ -679,7 +679,7 @@ private slots:
     {
         QTemporaryDir dir, cfg;
         const QString testFile = dir.filePath("test.txt");
-        writeFile(testFile, "Hello Total Commander omapanel checksum!");
+        writeFile(testFile, "Hello TwinForge checksum!");
         Backend backend(cfg.filePath("bookmarks.json"));
 
         const QVariantMap hashes = backend.calculateChecksums(testFile);

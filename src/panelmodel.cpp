@@ -1292,7 +1292,7 @@ void PanelModel::toggleSelection(int index)
     if (item.isParent)
         return;
 
-    // Total Commander behavior: pressing Space on a folder also calculates its size
+    // Pressing Space on a folder also calculates its size
     if (item.isDir && !item.dirSizeCalculated) {
         calculateFolderSize(index);
     }

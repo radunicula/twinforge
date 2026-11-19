@@ -6791,7 +6791,7 @@ ApplicationWindow {
                 }
             }
 
-            // Mini Command Line Bar (Total Commander style — Async + History + Built-in cd)
+            // Mini Command Line Bar (Async + History + Built-in cd)
             Rectangle {
                 Layout.fillWidth: true
                 height: 34
@@ -6862,7 +6862,7 @@ ApplicationWindow {
                 }
             }
 
-            // Bottom Function Keys Bar (Total Commander classic F3-F10)
+            // Bottom Function Keys Bar (F3-F10)
             Rectangle {
                 Layout.fillWidth: true
                 height: 32
