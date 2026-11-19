@@ -11202,7 +11202,7 @@ ApplicationWindow {
                 font.pixelSize: 11
                 lineHeight: 1.35
                 color: p.textDim
-                text: qsTr("Freeware © 2026 Radu. Dynamically linked against Qt 6 (GNU LGPLv3 — download.qt.io) and libarchive (BSD-2-Clause). See LICENSE for full third-party notices.")
+                text: qsTr("Open-Source (GNU GPLv3) © 2026 Radu. Built with C++20, Qt 6 & libarchive.")
             }
         }
 

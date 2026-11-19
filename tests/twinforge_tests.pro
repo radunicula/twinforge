@@ -1,6 +1,6 @@
 QT += core gui quick quickcontrols2 testlib dbus concurrent network
 CONFIG += c++20 testcase
-TARGET = omapanel_tests
+TARGET = twinforge_tests
 TEMPLATE = app
 
 INCLUDEPATH += ../src
@@ -16,7 +16,7 @@ HEADERS += \
     ../src/translator.h
 
 SOURCES += \
-    omapanel_tests.cpp \
+    twinforge_tests.cpp \
     ../src/backend.cpp \
     ../src/cli.cpp \
     ../src/fileoperation.cpp \

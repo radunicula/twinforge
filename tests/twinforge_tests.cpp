@@ -61,7 +61,7 @@ static bool runBackendOp(Backend &backend, bool move, const QStringList &sources
     return done && finished.first().at(0).toBool();
 }
 
-class OmapanelTests : public QObject {
+class TwinForgeTests : public QObject {
     Q_OBJECT
 
 private slots:
@@ -3049,5 +3049,5 @@ private slots:
     }
 };
 
-QTEST_MAIN(OmapanelTests)
-#include "omapanel_tests.moc"
+QTEST_MAIN(TwinForgeTests)
+#include "twinforge_tests.moc"

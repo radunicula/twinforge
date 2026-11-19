@@ -9,18 +9,67 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/radunicula/twinforge/actions/workflows/ci.yml"><img src="https://github.com/radunicula/twinforge/actions/workflows/ci.yml/badge.svg" alt="CI Build & Tests"></a>
   <img src="https://img.shields.io/badge/Qt-6-41CD52?logo=qt&logoColor=white" alt="Qt 6">
   <img src="https://img.shields.io/badge/C%2B%2B-20-00599C?logo=c%2B%2B&logoColor=white" alt="C++20">
   <img src="https://img.shields.io/badge/Platform-Linux-FCC624?logo=linux&logoColor=black" alt="Linux">
   <img src="https://img.shields.io/badge/CLI-twinforge%20%7C%20tf-00B4D8" alt="CLI twinforge / tf">
   <img src="https://img.shields.io/badge/Tests-63%20Passing-success" alt="Tests 63 Passing">
+  <img src="https://img.shields.io/badge/License-GPLv3-blue" alt="License GPL-3.0">
+  <a href="https://revolut.me/radunicula"><img src="https://img.shields.io/badge/Donate-Revolut-0075EB?logo=revolut&logoColor=white" alt="Donate via Revolut"></a>
 </p>
 
 ---
 
 ## ✨ About TwinForge
 
-**TwinForge** (`twinforge` / `tf`) is a native Linux dual-panel orthodox file manager built with **C++20, Qt 6, and QML**. Designed for keyboard-driven speed and modern desktop polish, it pairs classic dual-panel ergonomics (independent panels, F3–F10 function keys, locked tabs, workspaces, multi-rename, file split/combine) with a **100% non-blocking asynchronous architecture**, Freedesktop standards (Thumbnails, Trash `trash://`, XDG MIME / `.desktop` integration), and live **Obsidian Carbon (Dark) / Alabaster Daylight (Light)** theming that syncs automatically with Omarchy / Hyprland accents.
+**TwinForge** (`twinforge` / `tf`) is an open-source, native Linux dual-panel orthodox file manager built with **C++20, Qt 6, and QML**. Designed for keyboard-driven speed and modern desktop polish, it pairs classic dual-panel ergonomics (independent panels, F3–F10 function keys, locked tabs, workspaces, multi-rename, file split/combine) with a **100% non-blocking asynchronous architecture**, Freedesktop standards (Thumbnails, Trash `trash://`, XDG MIME / `.desktop` integration), and live **Obsidian Carbon (Dark) / Alabaster Daylight (Light)** theming that syncs automatically with Omarchy / Hyprland accents.
+
+### 📸 Screenshots
+
+**Obsidian Carbon (Dark Mode)** — locked tabs, Git status badges, Disk Usage bars, Active Workspace pill, Google Drive & Trash bar:
+<p align="center">
+  <img src="src/assets/screenshot-dark.png" alt="TwinForge Dark Mode (Obsidian Carbon)" width="960">
+</p>
+
+**Alabaster Daylight (Light Mode)** — instant theme switch (<kbd>Ctrl+Shift+T</kbd>):
+<p align="center">
+  <img src="src/assets/screenshot-light.png" alt="TwinForge Light Mode (Alabaster Daylight)" width="960">
+</p>
+
+---
+
+## 🚀 Quick Install
+
+### Option 1: Arch Linux / Omarchy (From Source or Prebuilt `.pkg.tar.zst`)
+```bash
+# Build & install native Arch package directly from the repository:
+git clone https://github.com/radunicula/twinforge.git
+cd twinforge
+./bin/install
+
+# Or install the prebuilt package from GitHub Releases:
+sudo pacman -U twinforge-*-x86_64.pkg.tar.zst
+```
+
+### Option 2: Prebuilt Binary Installer (Arch / Rolling Release — `~/.local/`, no `sudo` needed)
+```bash
+curl -fsSL https://raw.githubusercontent.com/radunicula/twinforge/main/install.sh | bash
+```
+*(Or inspect first with `curl -fsSL https://raw.githubusercontent.com/radunicula/twinforge/main/install.sh | less`, or download the tarball from [Releases](https://github.com/radunicula/twinforge/releases) and verify `sha256sum -c SHA256SUMS.txt`.)*
+
+### Option 3: Build from Source (Ubuntu, Debian, Fedora, Arch, NixOS)
+```bash
+# Ubuntu 24.04+ / Debian:
+sudo apt install build-essential qmake6 qt6-base-dev qt6-declarative-dev libqt6svg6-dev \
+  qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-layouts \
+  qml6-module-qtquick-window qml6-module-qtquick-templates libarchive-dev
+
+git clone https://github.com/radunicula/twinforge.git
+cd twinforge
+./bin/build   # Produces ./build/twinforge (and ./build/tf alias)
+./bin/test    # Runs the 63 automated headless tests
+```
 
 ---
 
@@ -211,5 +260,13 @@ Translations can be edited directly in `src/i18n/`.
 
 ---
 
+## 💖 Support TwinForge
+
+TwinForge is **100% free and open-source** software. If it saves you time and you'd like to support ongoing Linux development, you can buy me a coffee via Revolut (card, Apple Pay, Google Pay, or Revolut):
+
+👉 **[Donate via Revolut (`revolut.me/radunicula`)](https://revolut.me/radunicula)** — or use the **Sponsor** button at the top of this repository.
+
+---
+
 ## 📄 License
-TwinForge Freeware License (see [LICENSE](LICENSE)) — dynamically linked against Qt 6 (GNU LGPLv3) and `libarchive` (BSD-2-Clause).
+Licensed under the **GNU General Public License v3.0 or later (`GPL-3.0-or-later`)** — see [LICENSE](LICENSE).
