@@ -1,11 +1,12 @@
 [Desktop Entry]
 Type=Application
-Name=omapanel
-Name[ro]=omapanel
+Name=TwinForge
+Name[ro]=TwinForge
 Comment=Modern dual-panel file manager
 Comment[ro]=Manager de fișiere cu două panouri
-Exec=omapanel %f
-Icon=omapanel
+Exec=twinforge %U
+Icon=twinforge
 Terminal=false
 Categories=Utility;FileManager;
-StartupWMClass=omapanel
+MimeType=inode/directory;
+StartupWMClass=twinforge

@@ -100,7 +100,7 @@ bool FileOperation::moveSinglePath(const QString &src, const QString &dest)
         return false;
 
     // Cross-filesystem fallback: stage inside a temp directory beside `dest`, then atomic-rename into place.
-    QTemporaryDir stageDir(destInfo.absolutePath() + "/.omapanel-move-XXXXXX");
+    QTemporaryDir stageDir(destInfo.absolutePath() + "/.twinforge-move-XXXXXX");
     if (!stageDir.isValid())
         return false;
 
@@ -413,7 +413,7 @@ FileOperation::Result FileOperation::copySymlink(const QFileInfo &src, const QSt
         }
     } else {
         // Replace atomically: create the link under a temporary name, then rename over.
-        const QString tmp = QString("%1/.omapanel-%2.tmp").arg(QFileInfo(dest).absolutePath())
+        const QString tmp = QString("%1/.twinforge-%2.tmp").arg(QFileInfo(dest).absolutePath())
                                 .arg(QRandomGenerator::global()->generate64(), 0, 16);
         const QByteArray tmpName = QFile::encodeName(tmp);
         if (::symlink(target.constData(), tmpName.constData()) != 0) {

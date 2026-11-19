@@ -10,6 +10,9 @@
 #include <QStorageInfo>
 #include <QVariantList>
 
+#include <atomic>
+#include <memory>
+
 struct PanelTab {
     QString path;
     QStringList backStack;
@@ -18,6 +21,8 @@ struct PanelTab {
     QString collectionTitle;
     QString collectionBasePath;
     QStringList collectionPaths;
+    int lockMode = 0; // 0 = Unlocked, 1 = Locked (strict), 2 = LockedAllowNavigation
+    QString lockedRootPath;
 };
 
 struct ArchiveEntryInfo {
@@ -43,6 +48,8 @@ struct PanelItem {
     QString permissions;
     QString iconType;
     QString gitStatus; // "", "modified", "untracked", "staged", "deleted"
+    QString originalPath; // populated in trash:// view
+    QString deletionDate; // populated in trash:// view
     bool isSelected = false;
 };
 
@@ -62,11 +69,14 @@ class PanelModel : public QAbstractListModel {
     Q_PROPERTY(QVariantList tabs READ tabs NOTIFY tabsChanged)
     Q_PROPERTY(int activeTab READ activeTab WRITE setActiveTab NOTIFY tabsChanged)
     Q_PROPERTY(int tabCount READ tabCount NOTIFY tabsChanged)
+    Q_PROPERTY(bool canReopenClosedTab READ canReopenClosedTab NOTIFY tabsChanged)
+    Q_PROPERTY(int activeTabLockMode READ activeTabLockMode NOTIFY tabsChanged)
     Q_PROPERTY(int viewMode READ viewMode WRITE setViewMode NOTIFY viewModeChanged)
     Q_PROPERTY(bool isGitRepo READ isGitRepo NOTIFY gitChanged)
     Q_PROPERTY(QString gitBranch READ gitBranch NOTIFY gitChanged)
     Q_PROPERTY(int gitModifiedCount READ gitModifiedCount NOTIFY gitChanged)
     Q_PROPERTY(int gitUntrackedCount READ gitUntrackedCount NOTIFY gitChanged)
+    Q_PROPERTY(bool gitStatusLoading READ gitStatusLoading NOTIFY gitChanged)
     Q_PROPERTY(bool isWritable READ isWritable NOTIFY pathChanged)
     Q_PROPERTY(bool flatView READ flatView WRITE setFlatView NOTIFY flatViewChanged)
     Q_PROPERTY(bool isArchiveView READ isArchiveView NOTIFY pathChanged)
@@ -74,7 +84,12 @@ class PanelModel : public QAbstractListModel {
     Q_PROPERTY(QString archiveInternalPath READ archiveInternalPath NOTIFY pathChanged)
     Q_PROPERTY(bool isCollectionView READ isCollectionView NOTIFY pathChanged)
     Q_PROPERTY(QString collectionTitle READ collectionTitle NOTIFY pathChanged)
+    Q_PROPERTY(bool isTrashView READ isTrashView NOTIFY pathChanged)
+    Q_PROPERTY(int trashItemCount READ trashItemCount NOTIFY countChanged)
     Q_PROPERTY(bool diskUsageMode READ diskUsageMode WRITE setDiskUsageMode NOTIFY diskUsageModeChanged)
+    Q_PROPERTY(bool calculatingFolderSizes READ calculatingFolderSizes NOTIFY folderSizeCalculationChanged)
+    Q_PROPERTY(int folderSizeTotal READ folderSizeTotal NOTIFY folderSizeCalculationChanged)
+    Q_PROPERTY(int folderSizeDone READ folderSizeDone NOTIFY folderSizeCalculationChanged)
     Q_PROPERTY(qint64 maxItemSize READ maxItemSize NOTIFY countChanged)
     Q_PROPERTY(qint64 totalItemsSize READ totalItemsSize NOTIFY countChanged)
     Q_PROPERTY(QString totalItemsSizeFormatted READ totalItemsSizeFormatted NOTIFY countChanged)
@@ -94,6 +109,13 @@ public:
     };
     Q_ENUM(ViewMode)
 
+    enum TabLockMode {
+        TabUnlocked = 0,
+        TabLocked = 1,
+        TabLockedAllowNav = 2
+    };
+    Q_ENUM(TabLockMode)
+
     enum PanelRoles {
         NameRole = Qt::UserRole + 1,
         PathRole,
@@ -109,10 +131,13 @@ public:
         ThumbnailUrlRole,
         IsSelectedRole,
         SizeRatioRole,
-        SizePercentRole
+        SizePercentRole,
+        OriginalPathRole,
+        DeletionDateRole
     };
 
     explicit PanelModel(const QString &initialPath = QString(), QObject *parent = nullptr);
+    ~PanelModel() override;
 
     int rowCount(const QModelIndex &parent = QModelIndex()) const override;
     QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const override;
@@ -144,6 +169,8 @@ public:
     QVariantList tabs() const;
     int activeTab() const { return m_activeTab; }
     int tabCount() const { return m_tabs.size(); }
+    bool canReopenClosedTab() const { return !m_closedTabs.isEmpty(); }
+    int activeTabLockMode() const;
     int viewMode() const { return m_viewMode; }
     Q_INVOKABLE void setViewMode(int mode);
     Q_INVOKABLE void toggleViewMode();
@@ -152,6 +179,7 @@ public:
     QString gitBranch() const { return m_gitBranch; }
     int gitModifiedCount() const { return m_gitModifiedCount; }
     int gitUntrackedCount() const { return m_gitUntrackedCount; }
+    bool gitStatusLoading() const { return m_gitStatusLoading; }
     bool isWritable() const;
 
     bool flatView() const { return m_flatView; }
@@ -167,9 +195,17 @@ public:
     Q_INVOKABLE void feedItems(const QStringList &paths, const QString &title = QString(), const QString &basePath = QString());
     Q_INVOKABLE void exitCollectionView();
 
+    bool isTrashView() const { return m_path == QLatin1String("trash://"); }
+    int trashItemCount() const;
+    static QString trashRootDir();
+    static bool isTrashUri(const QString &rawPath);
+
     bool diskUsageMode() const { return m_diskUsageMode; }
     Q_INVOKABLE void setDiskUsageMode(bool enabled);
     Q_INVOKABLE void toggleDiskUsageMode();
+    bool calculatingFolderSizes() const { return m_calculatingFolderSizes; }
+    int folderSizeTotal() const { return m_folderSizeTotal; }
+    int folderSizeDone() const { return m_folderSizeDone; }
     qint64 maxItemSize() const { return m_maxItemSize; }
     qint64 totalItemsSize() const { return m_totalItemsSize; }
     QString totalItemsSizeFormatted() const { return formatSize(m_totalItemsSize, false); }
@@ -183,9 +219,18 @@ public:
     Q_INVOKABLE void closeTab(int index = -1);
     Q_INVOKABLE void nextTab();
     Q_INVOKABLE void prevTab();
+    Q_INVOKABLE void setTabLockMode(int index, int lockMode);
+    Q_INVOKABLE void toggleTabLock(int index = -1);
+    Q_INVOKABLE void resetLockedTab(int index = -1);
+    Q_INVOKABLE int duplicateTab(int index = -1);
+    Q_INVOKABLE bool reopenClosedTab();
+    Q_INVOKABLE void closeOtherTabs(int keepIndex = -1);
+    Q_INVOKABLE void moveTab(int fromIndex, int toIndex);
 
     QStringList tabPaths() const;
     void restoreTabs(const QStringList &paths, int activeIndex);
+    Q_INVOKABLE QVariantList serializeTabs() const;
+    void restoreTabsState(const QVariantList &tabsState, int activeIndex);
 
     Q_INVOKABLE void cd(const QString &nameOrPath);
     Q_INVOKABLE void cdUp();
@@ -201,6 +246,8 @@ public:
     Q_INVOKABLE void deselectByPattern(const QString &pattern) { selectByPattern(pattern, false); }
     Q_INVOKABLE void calculateFolderSize(int index);
     Q_INVOKABLE void calculateAllFolderSizes();
+    Q_INVOKABLE void cancelFolderSizeCalculation();
+    Q_INVOKABLE void cancelGitStatus();
     Q_INVOKABLE void selectAll();
     Q_INVOKABLE void deselectAll();
     Q_INVOKABLE void invertSelection();
@@ -213,8 +260,11 @@ public:
     Q_INVOKABLE QStringList allItemNames(bool excludeParent = true) const;
     Q_INVOKABLE QStringList allItemPaths(bool excludeParent = true) const;
     Q_INVOKABLE int findIndexByPrefix(const QString &prefix, int startIndex = 0) const;
+    Q_INVOKABLE int findIndexByQuery(const QString &query, int startIndex = 0, bool allowSubstringFallback = true) const;
+    Q_INVOKABLE int findIndexByPath(const QString &path) const;
 
     static QString formatSize(qint64 bytes, bool isDir);
+    static QString detectIconTypeForName(const QString &fileName, bool isDir, bool isExec = false);
 
 signals:
     void pathChanged();
@@ -230,6 +280,7 @@ signals:
     void gitChanged();
     void flatViewChanged();
     void diskUsageModeChanged();
+    void folderSizeCalculationChanged();
 
 private:
     void syncActiveTabState();
@@ -238,13 +289,14 @@ private:
     void loadDirectory();
     void loadArchiveDirectory();
     void loadCollectionItems();
+    void loadTrashDirectory();
     void recalculateSizeMetrics();
-    void calculateFolderSizeInternal(int index, bool deferMetrics);
+    void startFolderSizeCalculation(const QStringList &dirPaths, bool sortWhenDone);
+    void applyCalculatedFolderSize(const QString &dirPath, qint64 bytes);
     void updateGitStatus();
     void sortItems();
-    static qint64 computeDirectorySize(const QString &dirPath);
+    static qint64 computeDirectorySize(const QString &dirPath, const std::atomic<bool> *cancelFlag = nullptr);
     static QString detectIconType(const QFileInfo &info);
-    static QString detectIconTypeForName(const QString &fileName, bool isDir, bool isExec = false);
 
     QString m_path;
     QString m_filter;
@@ -267,12 +319,22 @@ private:
     QString m_gitBranch;
     int m_gitModifiedCount = 0;
     int m_gitUntrackedCount = 0;
+    bool m_gitStatusLoading = false;
+    std::atomic<quint64> m_gitGeneration{0};
+    std::shared_ptr<std::atomic<bool>> m_gitCancel;
+
+    bool m_calculatingFolderSizes = false;
+    int m_folderSizeTotal = 0;
+    int m_folderSizeDone = 0;
+    std::atomic<quint64> m_sizeCalcGeneration{0};
+    std::shared_ptr<std::atomic<bool>> m_sizeCalcCancel;
 
     QStringList m_backStack;
     QStringList m_forwardStack;
     bool m_navigatingHistory = false;
     bool m_switchingTab = false;
     QList<PanelTab> m_tabs;
+    QList<PanelTab> m_closedTabs;
     int m_activeTab = 0;
 
     QList<PanelItem> m_allItems;

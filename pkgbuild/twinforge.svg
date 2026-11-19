@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <linearGradient id="tfGrad" x1="12%" y1="35%" x2="88%" y2="35%">
+      <stop offset="0%" stop-color="#00D4AA"/>
+      <stop offset="50%" stop-color="#00A6E8"/>
+      <stop offset="100%" stop-color="#0055FF"/>
+    </linearGradient>
+  </defs>
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="#07090E" stroke="#1E293B" stroke-width="1.5"/>
+  <!-- Left geometric wing -->
+  <path d="M18 22 L12 28 L20 36 C25 41 29.5 41 32 37.5 L18 22 Z"
+        fill="none" stroke="url(#tfGrad)" stroke-width="3.6" stroke-linejoin="miter" stroke-linecap="round"/>
+  <!-- Right geometric wing -->
+  <path d="M46 22 L52 28 L44 36 C39 41 34.5 41 32 37.5 L46 22 Z"
+        fill="none" stroke="url(#tfGrad)" stroke-width="3.6" stroke-linejoin="miter" stroke-linecap="round"/>
+</svg>

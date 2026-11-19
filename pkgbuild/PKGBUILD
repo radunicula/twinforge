@@ -1,11 +1,14 @@
-pkgname=omapanel
+pkgname=twinforge
 pkgver=0.1.0
 pkgrel=1
-pkgdesc='Modern dual-panel file manager for Linux'
+pkgdesc='TwinForge — Modern dual-panel file manager for Linux'
 arch=('x86_64' 'aarch64')
-license=('MIT')
-depends=('qt6-base' 'qt6-declarative' 'qt6-wayland' 'xdg-desktop-portal')
+license=('GPL-3.0-or-later')
+depends=('qt6-base' 'qt6-declarative' 'qt6-svg' 'qt6-wayland' 'libarchive' 'xdg-desktop-portal')
 makedepends=('gcc' 'make')
+provides=('twinforge')
+conflicts=('twinforge-git' 'twinforge-bin' 'omapanel')
+replaces=('omapanel')
 source=()
 sha256sums=()
 
@@ -16,8 +19,10 @@ build() {
 
 package() {
   cd "$startdir/.."
-  install -Dm755 build/omapanel "$pkgdir/usr/bin/omapanel"
+  install -Dm755 build/twinforge "$pkgdir/usr/bin/twinforge"
+  ln -s twinforge "$pkgdir/usr/bin/tf"
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
-  install -Dm644 "$startdir/omapanel.svg" "$pkgdir/usr/share/icons/hicolor/scalable/apps/omapanel.svg"
-  install -Dm644 "$startdir/omapanel.desktop" "$pkgdir/usr/share/applications/omapanel.desktop"
+  install -Dm644 "$startdir/twinforge.svg" "$pkgdir/usr/share/icons/hicolor/scalable/apps/twinforge.svg"
+  install -Dm644 "$startdir/twinforge.png" "$pkgdir/usr/share/icons/hicolor/256x256/apps/twinforge.png"
+  install -Dm644 "$startdir/twinforge.desktop" "$pkgdir/usr/share/applications/twinforge.desktop"
 }

@@ -11,7 +11,7 @@ ApplicationWindow {
     minimumWidth: 860
     minimumHeight: 540
     visible: true
-    title: "AeroCommander — Total Commander for Linux"
+    title: "TwinForge — Dual-Panel File Manager for Linux"
     color: p.windowBg
 
     readonly property bool isDark: backend.isDarkTheme
@@ -179,6 +179,14 @@ ApplicationWindow {
     property bool queueDialogOpen: false
     property bool remoteConnectionsOpen: false
     property bool openWithOpen: false
+    property bool workspacesOpen: false
+    property bool confirmEmptyTrashOpen: false
+    property bool commandDrawerOpen: false
+    property int cmdHistoryIndex: -1
+    property string cmdHistoryDraft: ""
+    property bool splitCombineOpen: false
+    property string splitSourcePath: ""
+    property var splitSourceInfo: ({})
     property string openWithTargetPath: ""
     property var openWithAppsList: []
     property var openWithAllApps: []
@@ -192,7 +200,56 @@ ApplicationWindow {
             if (win.quickViewActive)
                 win.updateQuickView();
             if (win.previewOpen && win.previewData && win.previewData.path)
-                win.previewData = backend.getPreview(win.previewData.path, win.previewData.pdfPage || 1);
+                backend.requestPreview(win.previewData.path, win.previewData.pdfPage || 1, "modal");
+        }
+        function onPreviewReady(target, data) {
+            if (target === "quickview") {
+                if (win.quickViewActive)
+                    win.quickViewData = data || ({});
+            } else {
+                if (win.previewOpen)
+                    win.previewData = data || ({});
+            }
+        }
+        function onChecksumFinished(result) {
+            if (win.checksumOpen)
+                checksumDialog.hashes = result || ({});
+        }
+        function onSyncCompareResultsChanged() {
+            if (win.syncDirsOpen)
+                syncDirsDialog.applyCompareResults(backend.syncCompareResults);
+        }
+        function onDirectorySyncFinished(summary) {
+            if (win.syncDirsOpen)
+                syncDirsDialog.refreshCompare();
+        }
+        function onDuplicateResultsChanged() {
+            if (win.duplicateFinderOpen)
+                duplicateFinderDialog.applyDuplicateResults(backend.duplicateResults);
+        }
+        function onRemoteOperationFinished(success, mountPath, message) {
+            if (success && mountPath && mountPath.length > 0 && win.remoteConnectionsOpen) {
+                win.remoteConnectionsOpen = false;
+                currentListView().forceActiveFocus();
+            }
+        }
+        function onFocusAndSelectRequested(panelIndex, filePath) {
+            backend.activePanel = (panelIndex === 1) ? 1 : 0;
+            var m = (panelIndex === 1) ? backend.rightPanel : backend.leftPanel;
+            var pane = (panelIndex === 1) ? rightPane : leftPane;
+            if (!pane || !m)
+                return;
+            var idx = m.findIndexByPath(filePath);
+            if (idx >= 0 && pane.activeView) {
+                pane.activeView.currentIndex = idx;
+                if (typeof pane.activeView.positionViewAtIndex === "function")
+                    pane.activeView.positionViewAtIndex(idx, ListView.Center);
+                pane.activeView.forceActiveFocus();
+            }
+        }
+        function onWindowActivateRequested() {
+            win.raise();
+            win.requestActivate();
         }
     }
 
@@ -219,338 +276,104 @@ ApplicationWindow {
 
     // ================= REUSABLE INLINE UI COMPONENTS =================
 
-    // Crisp 16x16 vector icon for files, folders, and UI actions — consistent across all font setups.
-    component VectorIcon : Canvas {
-        id: iconCanvas
+    // 2026 Multi-Tone Glossy/Gradient HD SVG Vector Icon (4x HiDPI supersampled).
+    component VectorIcon : Item {
+        id: iconRoot
         property string kind: "file"
         property color iconColor: p.iconDefault
+        readonly property alias status: iconImg.status
+        readonly property alias sourceSize: iconImg.sourceSize
+        readonly property alias source: iconImg.source
         implicitWidth: 16
         implicitHeight: 16
-        width: 16
-        height: 16
+        width: implicitWidth
+        height: implicitHeight
 
-        onKindChanged: requestPaint()
-        onIconColorChanged: requestPaint()
+        readonly property var multiToneTemplates: ({
+            "folder": "<defs><linearGradient id=\"gb\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0%\" stop-color=\"#F59E0B\"/><stop offset=\"100%\" stop-color=\"#B45309\"/></linearGradient><linearGradient id=\"gf\" x1=\"0\" y1=\"0\" x2=\"0.2\" y2=\"1\"><stop offset=\"0%\" stop-color=\"#FDE047\"/><stop offset=\"45%\" stop-color=\"#FBBF24\"/><stop offset=\"100%\" stop-color=\"#D97706\"/></linearGradient></defs><path d=\"M2.5 6.2A2.2 2.2 0 0 1 4.7 4h4.1c.6 0 1.2.3 1.6.8l1.2 1.4h7.7A2.2 2.2 0 0 1 21.5 8.4v2H2.5Z\" fill=\"url(#gb)\"/><rect x=\"2.5\" y=\"7.5\" width=\"19\" height=\"12.5\" rx=\"2.4\" fill=\"url(#gf)\"/><path d=\"M4.6 8.2h14.8\" stroke=\"#FFFFFF\" stroke-opacity=\"0.48\" stroke-width=\"1\"/>",
+            "parent": "<defs><linearGradient id=\"gp\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0%\" stop-color=\"#818CF8\"/><stop offset=\"100%\" stop-color=\"#4F46E5\"/></linearGradient></defs><rect x=\"2.5\" y=\"2.5\" width=\"19\" height=\"19\" rx=\"5\" fill=\"url(#gp)\" fill-opacity=\"0.20\" stroke=\"url(#gp)\" stroke-width=\"1.4\" stroke-opacity=\"0.55\"/><path d=\"M16.5 16v-2.8A3.7 3.7 0 0 0 12.8 9.5H7.5\" stroke=\"url(#gp)\" stroke-width=\"2.1\"/><polyline points=\"10.5 6.3 7.2 9.5 10.5 12.7\" stroke=\"url(#gp)\" stroke-width=\"2.1\"/>",
+            "pdf": "<defs><linearGradient id=\"gr\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0%\" stop-color=\"#FB7185\"/><stop offset=\"100%\" stop-color=\"#E11D48\"/></linearGradient></defs><path d=\"M5.5 2.5h8.2L19 7.8v11.7a2 2 0 0 1-2 2H5.5a2 2 0 0 1-2-2v-15a2 2 0 0 1 2-2Z\" fill=\"url(#gr)\"/><path d=\"M13.7 2.5v3.8a1.5 1.5 0 0 0 1.5 1.5H19Z\" fill=\"#FFFFFF\" fill-opacity=\"0.42\"/><rect x=\"6\" y=\"13\" width=\"10.5\" height=\"4.8\" rx=\"1.2\" fill=\"#FFFFFF\" fill-opacity=\"0.92\"/><path d=\"M7.6 14.3h1.5a.8.8 0 0 1 0 1.6H7.6v.9m3.1-2.5h1a1.1 1.1 0 0 1 0 2.5h-1v-2.5m3.3 2.5v-2.5h1.5m-1.5 1.2h1.1\" stroke=\"#E11D48\" stroke-width=\"1.15\"/>",
+            "markdown": "<defs><linearGradient id=\"gm\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0%\" stop-color=\"#38BDF8\"/><stop offset=\"100%\" stop-color=\"#0284C7\"/></linearGradient></defs><rect x=\"3\" y=\"3.5\" width=\"18\" height=\"17\" rx=\"3\" fill=\"url(#gm)\"/><path d=\"M6.2 15V9l2.4 2.9L11 9v6\" stroke=\"#FFFFFF\" stroke-width=\"1.7\"/><path d=\"M15.8 9v5.5m0 0-2-2m2 2 2-2\" stroke=\"#FFFFFF\" stroke-width=\"1.7\"/>",
+            "sheet": "<defs><linearGradient id=\"gs\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0%\" stop-color=\"#34D399\"/><stop offset=\"100%\" stop-color=\"#059669\"/></linearGradient></defs><rect x=\"3.5\" y=\"2.5\" width=\"17\" height=\"19\" rx=\"2.6\" fill=\"url(#gs)\"/><rect x=\"6.2\" y=\"6.5\" width=\"11.6\" height=\"11\" rx=\"1.4\" fill=\"#FFFFFF\" fill-opacity=\"0.22\" stroke=\"#FFFFFF\" stroke-width=\"1.3\"/><line x1=\"6.2\" y1=\"10.5\" x2=\"17.8\" y2=\"10.5\" stroke=\"#FFFFFF\" stroke-width=\"1.2\"/><line x1=\"6.2\" y1=\"14\" x2=\"17.8\" y2=\"14\" stroke=\"#FFFFFF\" stroke-width=\"1.2\"/><line x1=\"11.2\" y1=\"6.5\" x2=\"11.2\" y2=\"17.5\" stroke=\"#FFFFFF\" stroke-width=\"1.2\"/>",
+            "doc": "<defs><linearGradient id=\"gd\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0%\" stop-color=\"#60A5FA\"/><stop offset=\"100%\" stop-color=\"#2563EB\"/></linearGradient></defs><path d=\"M5.5 2.5h8.2L19 7.8v11.7a2 2 0 0 1-2 2H5.5a2 2 0 0 1-2-2v-15a2 2 0 0 1 2-2Z\" fill=\"url(#gd)\"/><path d=\"M13.7 2.5v3.8a1.5 1.5 0 0 0 1.5 1.5H19Z\" fill=\"#FFFFFF\" fill-opacity=\"0.42\"/><path d=\"M7 11.2h8.5M7 14.4h8.5M7 17.6h5.5\" stroke=\"#FFFFFF\" stroke-width=\"1.6\" stroke-opacity=\"0.92\"/>",
+            "config": "<defs><linearGradient id=\"gcfg\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0%\" stop-color=\"#C084FC\"/><stop offset=\"100%\" stop-color=\"#7C3AED\"/></linearGradient></defs><rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"4\" fill=\"url(#gcfg)\"/><path d=\"M9.2 7.5c-1 0-1.4.5-1.4 1.4v1.7c0 .7-.4 1.2-1 1.4.6.2 1 .7 1 1.4v1.7c0 .9.4 1.4 1.4 1.4M14.8 7.5c1 0 1.4.5 1.4 1.4v1.7c0 .7.4 1.2 1 1.4-.6.2-1 .7-1 1.4v1.7c0 .9-.4 1.4-1.4 1.4\" stroke=\"#FFFFFF\" stroke-width=\"1.6\"/><circle cx=\"12\" cy=\"12\" r=\"1.3\" fill=\"#FDE047\" stroke=\"none\"/>",
+            "script": "<defs><linearGradient id=\"gsh\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0%\" stop-color=\"#10B981\"/><stop offset=\"100%\" stop-color=\"#047857\"/></linearGradient></defs><rect x=\"2.5\" y=\"3.5\" width=\"19\" height=\"17\" rx=\"3.2\" fill=\"url(#gsh)\"/><rect x=\"4.3\" y=\"5.3\" width=\"15.4\" height=\"13.4\" rx=\"2\" fill=\"#022C22\" fill-opacity=\"0.48\"/><polyline points=\"7 9.5 10 12 7 14.5\" stroke=\"#6EE7B7\" stroke-width=\"1.9\"/><line x1=\"11.8\" y1=\"14.8\" x2=\"16.5\" y2=\"14.8\" stroke=\"#FFFFFF\" stroke-width=\"1.9\"/>",
+            "database": "<defs><linearGradient id=\"gdb\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0%\" stop-color=\"#FBBF24\"/><stop offset=\"100%\" stop-color=\"#B45309\"/></linearGradient></defs><path d=\"M4.5 6.5v11c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3v-11Z\" fill=\"url(#gdb)\"/><ellipse cx=\"12\" cy=\"6.5\" rx=\"7.5\" ry=\"2.8\" fill=\"#FDE68A\" stroke=\"#F59E0B\" stroke-width=\"0.9\"/><path d=\"M4.5 12c0 1.6 3.4 2.8 7.5 2.8s7.5-1.2 7.5-2.8\" stroke=\"#FFFFFF\" stroke-opacity=\"0.55\" stroke-width=\"1.3\"/>",
+            "font": "<defs><linearGradient id=\"gfnt\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0%\" stop-color=\"#22D3EE\"/><stop offset=\"100%\" stop-color=\"#0891B2\"/></linearGradient></defs><rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"3.5\" fill=\"url(#gfnt)\"/><path d=\"M6.2 16.5 9.6 7.5h.8l3.4 9M7.4 13.8h5.2\" stroke=\"#FFFFFF\" stroke-width=\"1.7\"/><circle cx=\"17\" cy=\"14.5\" r=\"2.1\" stroke=\"#FFFFFF\" stroke-width=\"1.5\"/><line x1=\"19.1\" y1=\"12.2\" x2=\"19.1\" y2=\"16.6\" stroke=\"#FFFFFF\" stroke-width=\"1.5\"/>",
+            "lock": "<defs><linearGradient id=\"glk\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0%\" stop-color=\"#FDE047\"/><stop offset=\"100%\" stop-color=\"#D97706\"/></linearGradient></defs><path d=\"M7.5 10.5V7.8a4.5 4.5 0 0 1 9 0v2.7\" stroke=\"#CBD5E1\" stroke-width=\"2.2\"/><rect x=\"4.5\" y=\"10\" width=\"15\" height=\"11\" rx=\"2.8\" fill=\"url(#glk)\"/><circle cx=\"12\" cy=\"14.8\" r=\"1.5\" fill=\"#451A03\" stroke=\"none\"/><path d=\"M12 16v2\" stroke=\"#451A03\" stroke-width=\"1.6\"/>",
+            "code": "<defs><linearGradient id=\"gc\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0%\" stop-color=\"#38BDF8\"/><stop offset=\"55%\" stop-color=\"#2563EB\"/><stop offset=\"100%\" stop-color=\"#1D4ED8\"/></linearGradient></defs><rect x=\"2.5\" y=\"3.5\" width=\"19\" height=\"17\" rx=\"3.2\" fill=\"url(#gc)\"/><polyline points=\"8.5 9 5.5 12 8.5 15\" stroke=\"#FFFFFF\" stroke-width=\"1.9\"/><polyline points=\"15.5 9 18.5 12 15.5 15\" stroke=\"#FFFFFF\" stroke-width=\"1.9\"/><line x1=\"13.3\" y1=\"7.8\" x2=\"10.7\" y2=\"16.2\" stroke=\"#BAE6FD\" stroke-width=\"1.8\"/>",
+            "archive": "<defs><linearGradient id=\"ga\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0%\" stop-color=\"#FB923C\"/><stop offset=\"100%\" stop-color=\"#C2410C\"/></linearGradient></defs><rect x=\"3.5\" y=\"3\" width=\"17\" height=\"18\" rx=\"3\" fill=\"url(#ga)\"/><path d=\"M3.5 8h17\" stroke=\"#FFFFFF\" stroke-opacity=\"0.42\" stroke-width=\"1.2\"/><path d=\"M12 3v9.5\" stroke=\"#FFFFFF\" stroke-width=\"1.6\" stroke-dasharray=\"1.8 1.4\"/><rect x=\"9.6\" y=\"12.5\" width=\"4.8\" height=\"5\" rx=\"1.2\" fill=\"#FFFFFF\" fill-opacity=\"0.92\"/><circle cx=\"12\" cy=\"15.5\" r=\"0.9\" fill=\"#C2410C\" stroke=\"none\"/>",
+            "image": "<defs><linearGradient id=\"gi\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0%\" stop-color=\"#2DD4BF\"/><stop offset=\"55%\" stop-color=\"#0EA5E9\"/><stop offset=\"100%\" stop-color=\"#6366F1\"/></linearGradient></defs><rect x=\"2.5\" y=\"3.5\" width=\"19\" height=\"17\" rx=\"3\" fill=\"url(#gi)\"/><circle cx=\"8\" cy=\"8.8\" r=\"2\" fill=\"#FDE047\" stroke=\"none\"/><path d=\"M3.2 18.8 8.8 13a1.2 1.2 0 0 1 1.7 0l2.8 2.8 2.4-2.5a1.2 1.2 0 0 1 1.7 0l3.4 3.6v2.1a1.5 1.5 0 0 1-1.5 1.5H4.7a1.5 1.5 0 0 1-1.5-1.5Z\" fill=\"#FFFFFF\" fill-opacity=\"0.90\"/>",
+            "video": "<defs><linearGradient id=\"gv\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0%\" stop-color=\"#F472B6\"/><stop offset=\"100%\" stop-color=\"#9333EA\"/></linearGradient></defs><rect x=\"2.5\" y=\"4\" width=\"19\" height=\"16\" rx=\"3.4\" fill=\"url(#gv)\"/><rect x=\"4\" y=\"5.5\" width=\"16\" height=\"2.2\" rx=\"1\" fill=\"#FFFFFF\" fill-opacity=\"0.28\"/><polygon points=\"10 9.6 16.2 13 10 16.4\" fill=\"#FFFFFF\" stroke=\"#FFFFFF\" stroke-width=\"1.2\" stroke-linejoin=\"round\"/>",
+            "audio": "<defs><linearGradient id=\"gau\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0%\" stop-color=\"#FB7185\"/><stop offset=\"100%\" stop-color=\"#EA580C\"/></linearGradient></defs><rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"4.5\" fill=\"url(#gau)\"/><circle cx=\"8.5\" cy=\"16\" r=\"2.1\" fill=\"#FFFFFF\" stroke=\"none\"/><circle cx=\"15.5\" cy=\"14.5\" r=\"2.1\" fill=\"#FFFFFF\" stroke=\"none\"/><path d=\"M10.1 16V8.2l6.9-1.5V14.5\" stroke=\"#FFFFFF\" stroke-width=\"1.7\"/>",
+            "binary": "<defs><linearGradient id=\"gbin\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0%\" stop-color=\"#64748B\"/><stop offset=\"100%\" stop-color=\"#334155\"/></linearGradient></defs><path d=\"M9 2.5v2M15 2.5v2M9 19.5v2M15 19.5v2M2.5 9h2M2.5 15h2M19.5 9h2M19.5 15h2\" stroke=\"#94A3B8\" stroke-width=\"1.6\"/><rect x=\"4.5\" y=\"4.5\" width=\"15\" height=\"15\" rx=\"2.6\" fill=\"url(#gbin)\"/><rect x=\"8\" y=\"8\" width=\"8\" height=\"8\" rx=\"1.4\" fill=\"#38BDF8\" fill-opacity=\"0.9\"/>",
+            "drive": "<defs><linearGradient id=\"gdrv\" x1=\"0\" y1=\"0\" x2=\"0\" y2=\"1\"><stop offset=\"0%\" stop-color=\"#CBD5E1\"/><stop offset=\"100%\" stop-color=\"#475569\"/></linearGradient></defs><rect x=\"2.5\" y=\"5\" width=\"19\" height=\"14\" rx=\"3\" fill=\"url(#gdrv)\"/><rect x=\"3.8\" y=\"13.5\" width=\"16.4\" height=\"4.2\" rx=\"1.4\" fill=\"#1E293B\" fill-opacity=\"0.85\"/><circle cx=\"17.2\" cy=\"15.6\" r=\"1.2\" fill=\"#34D399\" stroke=\"none\"/><line x1=\"6.2\" y1=\"15.6\" x2=\"11.5\" y2=\"15.6\" stroke=\"#94A3B8\" stroke-width=\"1.5\"/>",
+            "usb": "<defs><linearGradient id=\"gusb\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0%\" stop-color=\"#38BDF8\"/><stop offset=\"100%\" stop-color=\"#2563EB\"/></linearGradient></defs><rect x=\"7\" y=\"2.5\" width=\"10\" height=\"5\" rx=\"1\" fill=\"#CBD5E1\"/><rect x=\"5.5\" y=\"7\" width=\"13\" height=\"14\" rx=\"3\" fill=\"url(#gusb)\"/><circle cx=\"10\" cy=\"5\" r=\"0.8\" fill=\"#475569\" stroke=\"none\"/><circle cx=\"14\" cy=\"5\" r=\"0.8\" fill=\"#475569\" stroke=\"none\"/><path d=\"M9 12.5h6M12 10v6\" stroke=\"#FFFFFF\" stroke-opacity=\"0.85\" stroke-width=\"1.6\"/>",
+            "cloud": "<defs><linearGradient id=\"gcld\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0%\" stop-color=\"#34D399\"/><stop offset=\"50%\" stop-color=\"#38BDF8\"/><stop offset=\"100%\" stop-color=\"#3B82F6\"/></linearGradient></defs><path d=\"M6.8 18.8h10.4a4.2 4.2 0 0 0 .8-8.32A5.8 5.8 0 0 0 6.7 9 4 4 0 0 0 6.8 18.8Z\" fill=\"url(#gcld)\"/><path d=\"M7.5 11.2a4.6 4.6 0 0 1 8.4-1.3\" stroke=\"#FFFFFF\" stroke-opacity=\"0.55\" stroke-width=\"1.3\"/>",
+            "network": "<defs><linearGradient id=\"gnet\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0%\" stop-color=\"#38BDF8\"/><stop offset=\"100%\" stop-color=\"#4F46E5\"/></linearGradient></defs><circle cx=\"12\" cy=\"12\" r=\"9\" fill=\"url(#gnet)\"/><ellipse cx=\"12\" cy=\"12\" rx=\"4\" ry=\"9\" stroke=\"#FFFFFF\" stroke-opacity=\"0.78\" stroke-width=\"1.35\"/><line x1=\"3.4\" y1=\"12\" x2=\"20.6\" y2=\"12\" stroke=\"#FFFFFF\" stroke-opacity=\"0.78\" stroke-width=\"1.35\"/><path d=\"M5.5 7.5h13M5.5 16.5h13\" stroke=\"#FFFFFF\" stroke-opacity=\"0.42\" stroke-width=\"1.1\"/>",
+            "sun": "<defs><linearGradient id=\"gsun\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0%\" stop-color=\"#FEF08A\"/><stop offset=\"100%\" stop-color=\"#F59E0B\"/></linearGradient></defs><circle cx=\"12\" cy=\"12\" r=\"4.8\" fill=\"url(#gsun)\"/><path d=\"M12 2.4v2.3M12 19.3v2.3M4.9 4.9l1.7 1.7M17.4 17.4l1.7 1.7M2.4 12h2.3M19.3 12h2.3M4.9 19.1l1.7-1.7M17.4 6.6l1.7-1.7\" stroke=\"#FBBF24\" stroke-width=\"2\"/>",
+            "moon": "<defs><linearGradient id=\"gmn\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0%\" stop-color=\"#E0E7FF\"/><stop offset=\"100%\" stop-color=\"#6366F1\"/></linearGradient></defs><path d=\"M19.8 14.2A7.8 7.8 0 0 1 9.8 4.2a7.8 7.8 0 1 0 10 10Z\" fill=\"url(#gmn)\"/><circle cx=\"17.5\" cy=\"6.5\" r=\"1.1\" fill=\"#FDE047\" stroke=\"none\"/><circle cx=\"14.5\" cy=\"4.5\" r=\"0.7\" fill=\"#E0E7FF\" stroke=\"none\"/>",
+            "star-filled": "<defs><linearGradient id=\"gst\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0%\" stop-color=\"#FEF08A\"/><stop offset=\"50%\" stop-color=\"#FBBF24\"/><stop offset=\"100%\" stop-color=\"#D97706\"/></linearGradient></defs><polygon points=\"12 2.8 14.9 8.6 21.3 9.5 16.6 14 17.7 20.4 12 17.4 6.3 20.4 7.4 14 2.7 9.5 9.1 8.6\" fill=\"url(#gst)\"/>"
+        })
 
-        onPaint: {
-            var ctx = getContext("2d");
-            ctx.reset();
-            ctx.clearRect(0, 0, width, height);
-            ctx.strokeStyle = iconColor;
-            ctx.fillStyle = iconColor;
-            ctx.lineWidth = 1.5;
-            ctx.lineCap = "round";
-            ctx.lineJoin = "round";
+        readonly property var actionTemplates: ({
+            "file": "<path d=\"M5.5 2.5h8.2L19 7.8v11.7a2 2 0 0 1-2 2H5.5a2 2 0 0 1-2-2v-15a2 2 0 0 1 2-2Z\" fill=\"{C}\" fill-opacity=\"{FA}\"/><path d=\"M13.7 2.5v3.8a1.5 1.5 0 0 0 1.5 1.5H19\" fill=\"{C}\" fill-opacity=\"0.28\"/><line x1=\"7.5\" y1=\"12.5\" x2=\"15\" y2=\"12.5\" stroke-opacity=\"0.78\"/><line x1=\"7.5\" y1=\"16.2\" x2=\"12.2\" y2=\"16.2\" stroke-opacity=\"0.65\"/>",
+            "eject": "<polygon points=\"12 5.5 19.2 13.5 4.8 13.5\" fill=\"{C}\" fill-opacity=\"{FA}\"/><rect x=\"5\" y=\"16.5\" width=\"14\" height=\"2.4\" rx=\"1.2\" fill=\"{C}\" stroke=\"none\"/>",
+            "grid": "<rect x=\"3.5\" y=\"3.5\" width=\"7.2\" height=\"7.2\" rx=\"2\" fill=\"{C}\" fill-opacity=\"{FA}\"/><rect x=\"13.3\" y=\"3.5\" width=\"7.2\" height=\"7.2\" rx=\"2\" fill=\"{C}\" fill-opacity=\"{FA}\"/><rect x=\"3.5\" y=\"13.3\" width=\"7.2\" height=\"7.2\" rx=\"2\" fill=\"{C}\" fill-opacity=\"{FA}\"/><rect x=\"13.3\" y=\"13.3\" width=\"7.2\" height=\"7.2\" rx=\"2\" fill=\"{C}\" fill-opacity=\"{FA}\"/>",
+            "list": "<rect x=\"3.8\" y=\"5.3\" width=\"2.6\" height=\"2.6\" rx=\"0.9\" fill=\"{C}\" stroke=\"none\"/><line x1=\"8.8\" y1=\"6.6\" x2=\"20\" y2=\"6.6\" stroke-width=\"2\"/><rect x=\"3.8\" y=\"10.7\" width=\"2.6\" height=\"2.6\" rx=\"0.9\" fill=\"{C}\" stroke=\"none\"/><line x1=\"8.8\" y1=\"12\" x2=\"20\" y2=\"12\" stroke-width=\"2\"/><rect x=\"3.8\" y=\"16.1\" width=\"2.6\" height=\"2.6\" rx=\"0.9\" fill=\"{C}\" stroke=\"none\"/><line x1=\"8.8\" y1=\"17.4\" x2=\"20\" y2=\"17.4\" stroke-width=\"2\"/>",
+            "back": "<path d=\"M14.8 5 7.8 12l7 7\" stroke-width=\"2.2\"/>",
+            "forward": "<path d=\"M9.2 5l7 7-7 7\" stroke-width=\"2.2\"/>",
+            "up": "<path d=\"M12 19.2V5\" stroke-width=\"2.1\"/><path d=\"M6.5 10.5 12 4.8l5.5 5.7\" stroke-width=\"2.1\"/>",
+            "home": "<path d=\"M3.5 10.6 12 3.8l8.5 6.8V19a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2Z\" fill=\"{C}\" fill-opacity=\"{FA}\"/><rect x=\"9.4\" y=\"13.2\" width=\"5.2\" height=\"7.8\" rx=\"1.3\" fill=\"{C}\" fill-opacity=\"0.32\"/>",
+            "filter": "<path d=\"M3.5 5.2h17l-6.4 7.4v5.3l-4.2 1.9v-7.2Z\" fill=\"{C}\" fill-opacity=\"{FA}\"/>",
+            "refresh": "<path d=\"M20.2 11.4a8.2 8.2 0 1 0 1.4 4.6\" stroke-width=\"2\"/><polygon points=\"21 4.2 21 9.8 15.4 9.8\" fill=\"{C}\" stroke=\"none\"/>",
+            "close": "<path d=\"M6.2 6.2l11.6 11.6M17.8 6.2 6.2 17.8\" stroke-width=\"2.1\"/>",
+            "star": "<polygon points=\"12 3 14.8 8.7 21 9.6 16.5 14 17.6 20.2 12 17.2 6.4 20.2 7.5 14 3 9.6 9.2 8.7\"/>",
+            "branch": "<circle cx=\"7\" cy=\"5.8\" r=\"2.2\" fill=\"{C}\" fill-opacity=\"0.35\"/><circle cx=\"17\" cy=\"8.2\" r=\"2.2\" fill=\"{C}\" fill-opacity=\"0.35\"/><circle cx=\"7\" cy=\"18.2\" r=\"2.2\" fill=\"{C}\" fill-opacity=\"0.35\"/><path d=\"M7 8v8M17 10.4a5 5 0 0 1-5 5H7\" stroke-width=\"2\"/>",
+            "command": "<rect x=\"2.8\" y=\"4\" width=\"18.4\" height=\"16\" rx=\"3.4\" fill=\"{C}\" fill-opacity=\"{FA}\"/><path d=\"M7.4 9.3 10.6 12l-3.2 2.7\" stroke-width=\"2\"/><line x1=\"12.4\" y1=\"14.7\" x2=\"16.6\" y2=\"14.7\" stroke-width=\"2\"/>",
+            "chart": "<rect x=\"3.8\" y=\"12.8\" width=\"4.2\" height=\"7.4\" rx=\"1.2\" fill=\"{C}\" fill-opacity=\"0.42\"/><rect x=\"9.9\" y=\"4.2\" width=\"4.2\" height=\"16\" rx=\"1.2\" fill=\"{C}\" fill-opacity=\"0.78\"/><rect x=\"16\" y=\"8.6\" width=\"4.2\" height=\"11.6\" rx=\"1.2\" fill=\"{C}\" fill-opacity=\"0.55\"/>",
+            "sync": "<path d=\"M19.5 8H6l3.4-3.4M4.5 16H18l-3.4 3.4\" stroke-width=\"2.1\"/>",
+            "duplicate": "<rect x=\"8.6\" y=\"8\" width=\"11.4\" height=\"12.5\" rx=\"2.4\" fill=\"{C}\" fill-opacity=\"{FA}\"/><path d=\"M5.6 15.5H5a2.2 2.2 0 0 1-2.2-2.2V5A2.2 2.2 0 0 1 5 2.8h8.5a2.2 2.2 0 0 1 2.2 2.2v1\"/>",
+            "copy": "<rect x=\"8.6\" y=\"8\" width=\"11.4\" height=\"12.5\" rx=\"2.4\" fill=\"{C}\" fill-opacity=\"{FA}\"/><path d=\"M5.6 15.5H5a2.2 2.2 0 0 1-2.2-2.2V5A2.2 2.2 0 0 1 5 2.8h8.5a2.2 2.2 0 0 1 2.2 2.2v1\"/>",
+            "trash": "<path d=\"M4.5 7h15M9.5 7V4.8a1.2 1.2 0 0 1 1.2-1.2h2.6a1.2 1.2 0 0 1 1.2 1.2V7\" stroke-width=\"1.9\"/><path d=\"M6.4 7l1 12.2a1.8 1.8 0 0 0 1.8 1.6h5.6a1.8 1.8 0 0 0 1.8-1.6l1-12.2\" fill=\"{C}\" fill-opacity=\"{FA}\"/><line x1=\"10\" y1=\"11\" x2=\"10\" y2=\"16.8\" stroke-width=\"1.6\"/><line x1=\"14\" y1=\"11\" x2=\"14\" y2=\"16.8\" stroke-width=\"1.6\"/>",
+            "workspace": "<rect x=\"3\" y=\"4\" width=\"8\" height=\"16\" rx=\"2\" fill=\"{C}\" fill-opacity=\"{FA}\"/><rect x=\"13\" y=\"4\" width=\"8\" height=\"7.2\" rx=\"2\" fill=\"{C}\" fill-opacity=\"{FA}\"/><rect x=\"13\" y=\"13\" width=\"8\" height=\"7\" rx=\"2\" fill=\"{C}\" fill-opacity=\"0.12\"/>",
+            "check": "<circle cx=\"12\" cy=\"12\" r=\"9\" fill=\"#10B981\" fill-opacity=\"0.22\" stroke=\"#10B981\" stroke-width=\"1.5\"/><path d=\"M7.8 12.2 10.6 15 16.4 9\" stroke=\"#10B981\" stroke-width=\"2.2\"/>"
+        })
 
-            if (kind === "folder") {
-                ctx.beginPath();
-                ctx.moveTo(1.5, 4.5);
-                ctx.lineTo(1.5, 13);
-                ctx.quadraticCurveTo(1.5, 14, 2.5, 14);
-                ctx.lineTo(13.5, 14);
-                ctx.quadraticCurveTo(14.5, 14, 14.5, 13);
-                ctx.lineTo(14.5, 6);
-                ctx.quadraticCurveTo(14.5, 5, 13.5, 5);
-                ctx.lineTo(7.8, 5);
-                ctx.lineTo(6.3, 3.2);
-                ctx.lineTo(2.5, 3.2);
-                ctx.quadraticCurveTo(1.5, 3.2, 1.5, 4.5);
-                ctx.closePath();
-                ctx.globalAlpha = 0.22;
-                ctx.fill();
-                ctx.globalAlpha = 1.0;
-                ctx.stroke();
-            } else if (kind === "parent") {
-                ctx.beginPath();
-                ctx.moveTo(11.5, 12.5);
-                ctx.lineTo(7, 12.5);
-                ctx.quadraticCurveTo(5, 12.5, 5, 10.5);
-                ctx.lineTo(5, 4);
-                ctx.stroke();
-                ctx.beginPath();
-                ctx.moveTo(2.5, 6.8);
-                ctx.lineTo(5, 3.8);
-                ctx.lineTo(7.5, 6.8);
-                ctx.stroke();
-            } else if (kind === "code") {
-                ctx.beginPath();
-                ctx.moveTo(5.5, 4.5);
-                ctx.lineTo(2.2, 8);
-                ctx.lineTo(5.5, 11.5);
-                ctx.moveTo(10.5, 4.5);
-                ctx.lineTo(13.8, 8);
-                ctx.lineTo(10.5, 11.5);
-                ctx.moveTo(8.8, 3.5);
-                ctx.lineTo(7.2, 12.5);
-                ctx.stroke();
-            } else if (kind === "archive") {
-                ctx.strokeRect(2.5, 2.5, 11, 11);
-                ctx.beginPath();
-                ctx.moveTo(2.5, 6);
-                ctx.lineTo(13.5, 6);
-                ctx.moveTo(8, 2.5);
-                ctx.lineTo(8, 10.5);
-                ctx.moveTo(6.5, 10.5);
-                ctx.lineTo(9.5, 10.5);
-                ctx.stroke();
-            } else if (kind === "image") {
-                ctx.strokeRect(2, 2.5, 12, 11);
-                ctx.beginPath();
-                ctx.arc(5.5, 6, 1.2, 0, Math.PI * 2);
-                ctx.fill();
-                ctx.beginPath();
-                ctx.moveTo(2.5, 12.5);
-                ctx.lineTo(6.5, 8.5);
-                ctx.lineTo(9.2, 11);
-                ctx.lineTo(11.2, 9.2);
-                ctx.lineTo(13.5, 12.5);
-                ctx.stroke();
-            } else if (kind === "video") {
-                ctx.strokeRect(2, 3, 12, 10);
-                ctx.beginPath();
-                ctx.moveTo(6.5, 5.5);
-                ctx.lineTo(10.8, 8);
-                ctx.lineTo(6.5, 10.5);
-                ctx.closePath();
-                ctx.fill();
-            } else if (kind === "audio") {
-                ctx.beginPath();
-                ctx.moveTo(6, 11.5);
-                ctx.lineTo(6, 4);
-                ctx.lineTo(12.5, 2.8);
-                ctx.lineTo(12.5, 10.2);
-                ctx.stroke();
-                ctx.beginPath();
-                ctx.arc(4.5, 11.8, 1.8, 0, Math.PI * 2);
-                ctx.arc(11, 10.5, 1.8, 0, Math.PI * 2);
-                ctx.fill();
-            } else if (kind === "binary") {
-                ctx.strokeRect(2, 2.5, 12, 11);
-                ctx.beginPath();
-                ctx.moveTo(4.8, 6.2);
-                ctx.lineTo(7.2, 8.2);
-                ctx.lineTo(4.8, 10.2);
-                ctx.moveTo(8.5, 10.2);
-                ctx.lineTo(11.2, 10.2);
-                ctx.stroke();
-            } else if (kind === "drive") {
-                ctx.strokeRect(2, 3.5, 12, 9);
-                ctx.beginPath();
-                ctx.moveTo(2, 9.5);
-                ctx.lineTo(14, 9.5);
-                ctx.stroke();
-                ctx.beginPath();
-                ctx.arc(11.5, 11, 0.9, 0, Math.PI * 2);
-                ctx.fill();
-            } else if (kind === "usb") {
-                ctx.beginPath();
-                ctx.moveTo(8, 2.5); ctx.lineTo(8, 12);
-                ctx.moveTo(8, 6); ctx.lineTo(4.5, 8.5); ctx.lineTo(4.5, 11);
-                ctx.moveTo(8, 7.5); ctx.lineTo(11.5, 9.5); ctx.lineTo(11.5, 11);
-                ctx.stroke();
-                ctx.fillRect(7, 2, 2, 2);
-                ctx.beginPath();
-                ctx.arc(4.5, 11.5, 1, 0, Math.PI * 2);
-                ctx.arc(11.5, 11.5, 1, 0, Math.PI * 2);
-                ctx.fill();
-            } else if (kind === "network") {
-                ctx.beginPath();
-                ctx.arc(8, 8, 5.5, 0, Math.PI * 2);
-                ctx.stroke();
-                ctx.beginPath();
-                ctx.moveTo(2.7, 8); ctx.lineTo(13.3, 8);
-                ctx.moveTo(8, 2.5); ctx.lineTo(8, 13.5);
-                ctx.stroke();
-            } else if (kind === "grid") {
-                ctx.strokeRect(3, 3, 4, 4);
-                ctx.strokeRect(9, 3, 4, 4);
-                ctx.strokeRect(3, 9, 4, 4);
-                ctx.strokeRect(9, 9, 4, 4);
-            } else if (kind === "list") {
-                ctx.beginPath();
-                ctx.moveTo(3, 4.5); ctx.lineTo(13, 4.5);
-                ctx.moveTo(3, 8); ctx.lineTo(13, 8);
-                ctx.moveTo(3, 11.5); ctx.lineTo(13, 11.5);
-                ctx.stroke();
-            } else if (kind === "back") {
-                ctx.beginPath();
-                ctx.moveTo(10, 3.5);
-                ctx.lineTo(5.5, 8);
-                ctx.lineTo(10, 12.5);
-                ctx.stroke();
-            } else if (kind === "forward") {
-                ctx.beginPath();
-                ctx.moveTo(6, 3.5);
-                ctx.lineTo(10.5, 8);
-                ctx.lineTo(6, 12.5);
-                ctx.stroke();
-            } else if (kind === "up") {
-                ctx.beginPath();
-                ctx.moveTo(8, 12.5);
-                ctx.lineTo(8, 3.8);
-                ctx.moveTo(4.5, 7.2);
-                ctx.lineTo(8, 3.5);
-                ctx.lineTo(11.5, 7.2);
-                ctx.stroke();
-            } else if (kind === "home") {
-                ctx.beginPath();
-                ctx.moveTo(2.5, 8);
-                ctx.lineTo(8, 3);
-                ctx.lineTo(13.5, 8);
-                ctx.moveTo(4.5, 6.8);
-                ctx.lineTo(4.5, 13);
-                ctx.lineTo(11.5, 13);
-                ctx.lineTo(11.5, 6.8);
-                ctx.stroke();
-            } else if (kind === "filter") {
-                ctx.beginPath();
-                ctx.moveTo(2.5, 3.5);
-                ctx.lineTo(13.5, 3.5);
-                ctx.lineTo(9.5, 8.2);
-                ctx.lineTo(9.5, 12.8);
-                ctx.lineTo(6.5, 11.5);
-                ctx.lineTo(6.5, 8.2);
-                ctx.closePath();
-                ctx.stroke();
-            } else if (kind === "refresh") {
-                ctx.beginPath();
-                ctx.arc(8, 8, 4.8, 0.35, Math.PI * 1.75);
-                ctx.stroke();
-                ctx.beginPath();
-                ctx.moveTo(10.8, 2.6);
-                ctx.lineTo(13, 4.5);
-                ctx.lineTo(10.2, 5.4);
-                ctx.stroke();
-            } else if (kind === "close") {
-                ctx.beginPath();
-                ctx.moveTo(4.2, 4.2);
-                ctx.lineTo(11.8, 11.8);
-                ctx.moveTo(11.8, 4.2);
-                ctx.lineTo(4.2, 11.8);
-                ctx.stroke();
-            } else if (kind === "star" || kind === "star-filled") {
-                ctx.beginPath();
-                for (var i = 0; i < 5; i++) {
-                    var outer = (i * 72 - 90) * Math.PI / 180;
-                    var inner = ((i * 72 + 36) - 90) * Math.PI / 180;
-                    var ox = 8 + Math.cos(outer) * 5.5;
-                    var oy = 8.2 + Math.sin(outer) * 5.5;
-                    var ix = 8 + Math.cos(inner) * 2.4;
-                    var iy = 8.2 + Math.sin(inner) * 2.4;
-                    if (i === 0) ctx.moveTo(ox, oy);
-                    else ctx.lineTo(ox, oy);
-                    ctx.lineTo(ix, iy);
-                }
-                ctx.closePath();
-                if (kind === "star-filled") ctx.fill();
-                ctx.stroke();
-            } else if (kind === "sun") {
-                ctx.beginPath();
-                ctx.arc(8, 8, 3.1, 0, Math.PI * 2);
-                ctx.stroke();
-                for (var r = 0; r < 8; r++) {
-                    var angle = (r * 45) * Math.PI / 180;
-                    ctx.beginPath();
-                    ctx.moveTo(8 + Math.cos(angle) * 4.9, 8 + Math.sin(angle) * 4.9);
-                    ctx.lineTo(8 + Math.cos(angle) * 6.4, 8 + Math.sin(angle) * 6.4);
-                    ctx.stroke();
-                }
-            } else if (kind === "moon") {
-                var r = 5.0;
-                var cx = 8.5, cy = 8.0;
-                var a1 = 0.38 * Math.PI;
-                var a2 = 1.62 * Math.PI;
-                ctx.beginPath();
-                ctx.arc(cx, cy, r, a1, a2, false);
-                ctx.quadraticCurveTo(5.6, cy, cx + Math.cos(a1) * r, cy + Math.sin(a1) * r);
-                ctx.closePath();
-                ctx.globalAlpha = 0.22;
-                ctx.fill();
-                ctx.globalAlpha = 1.0;
-                ctx.stroke();
-            } else if (kind === "branch") {
-                ctx.beginPath();
-                ctx.moveTo(3.5, 2.5);
-                ctx.lineTo(3.5, 12.5);
-                ctx.moveTo(3.5, 3.5);
-                ctx.lineTo(7.2, 3.5);
-                ctx.moveTo(9.5, 3.5);
-                ctx.lineTo(13.5, 3.5);
-                ctx.moveTo(3.5, 8.0);
-                ctx.lineTo(7.2, 8.0);
-                ctx.moveTo(9.5, 8.0);
-                ctx.lineTo(13.5, 8.0);
-                ctx.moveTo(3.5, 12.5);
-                ctx.lineTo(7.2, 12.5);
-                ctx.moveTo(9.5, 12.5);
-                ctx.lineTo(13.5, 12.5);
-                ctx.stroke();
-            } else if (kind === "command") {
-                ctx.beginPath();
-                ctx.roundedRect(1.8, 2.5, 12.4, 11, 2.2, 2.2);
-                ctx.globalAlpha = 0.14;
-                ctx.fill();
-                ctx.globalAlpha = 1.0;
-                ctx.stroke();
-                ctx.beginPath();
-                ctx.moveTo(4.6, 5.8);
-                ctx.lineTo(7.4, 8.0);
-                ctx.lineTo(4.6, 10.2);
-                ctx.moveTo(8.8, 10.2);
-                ctx.lineTo(11.6, 10.2);
-                ctx.stroke();
-            } else if (kind === "chart") {
-                ctx.globalAlpha = 0.22;
-                ctx.fillRect(2.5, 9.5, 2.8, 4.0);
-                ctx.fillRect(6.6, 3.0, 2.8, 10.5);
-                ctx.fillRect(10.7, 6.2, 2.8, 7.3);
-                ctx.globalAlpha = 1.0;
-                ctx.strokeRect(2.5, 9.5, 2.8, 4.0);
-                ctx.strokeRect(6.6, 3.0, 2.8, 10.5);
-                ctx.strokeRect(10.7, 6.2, 2.8, 7.3);
-            } else if (kind === "sync") {
-                ctx.beginPath();
-                ctx.moveTo(13.5, 5.2);
-                ctx.lineTo(2.8, 5.2);
-                ctx.moveTo(5.4, 2.8);
-                ctx.lineTo(2.8, 5.2);
-                ctx.lineTo(5.4, 7.6);
-                ctx.moveTo(2.5, 10.8);
-                ctx.lineTo(13.2, 10.8);
-                ctx.moveTo(10.6, 8.4);
-                ctx.lineTo(13.2, 10.8);
-                ctx.lineTo(10.6, 13.2);
-                ctx.stroke();
-            } else if (kind === "duplicate") {
-                ctx.beginPath();
-                ctx.moveTo(5.4, 4.4);
-                ctx.lineTo(5.4, 2.2);
-                ctx.lineTo(13.0, 2.2);
-                ctx.lineTo(13.0, 11.2);
-                ctx.lineTo(10.8, 11.2);
-                ctx.stroke();
-                ctx.beginPath();
-                ctx.roundedRect(2.6, 4.6, 8.0, 9.2, 1.4, 1.4);
-                ctx.globalAlpha = 0.2;
-                ctx.fill();
-                ctx.globalAlpha = 1.0;
-                ctx.stroke();
-            } else {
-                // Default document icon with folded corner
-                ctx.beginPath();
-                ctx.moveTo(3.5, 2);
-                ctx.lineTo(9.8, 2);
-                ctx.lineTo(12.5, 4.8);
-                ctx.lineTo(12.5, 14);
-                ctx.lineTo(3.5, 14);
-                ctx.closePath();
-                ctx.stroke();
-                ctx.beginPath();
-                ctx.moveTo(9.5, 2);
-                ctx.lineTo(9.5, 5);
-                ctx.lineTo(12.5, 5);
-                ctx.stroke();
+        function hex2(n) {
+            var v = Math.max(0, Math.min(255, Math.round(n * 255))).toString(16);
+            return v.length === 1 ? "0" + v : v;
+        }
+
+        function buildSvgUri(k, col) {
+            var mt = multiToneTemplates[k];
+            if (mt) {
+                var svgMt = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke-linecap=\"round\" stroke-linejoin=\"round\">"
+                          + mt + "</svg>";
+                return "data:image/svg+xml;utf8," + encodeURIComponent(svgMt);
             }
+            var hex = "#" + hex2(col.r) + hex2(col.g) + hex2(col.b);
+            var alpha = Number(col.a).toFixed(2);
+            var fillAlpha = Number(col.a * 0.24).toFixed(2);
+            var tpl = actionTemplates[k] || actionTemplates["file"];
+            var body = tpl.replace(/\{C\}/g, hex)
+                          .replace(/\{FA\}/g, fillAlpha);
+            var svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"" + hex
+                    + "\" stroke-opacity=\"" + alpha + "\" stroke-width=\"1.9\" stroke-linecap=\"round\" stroke-linejoin=\"round\">"
+                    + body + "</svg>";
+            return "data:image/svg+xml;utf8," + encodeURIComponent(svg);
+        }
+
+        Image {
+            id: iconImg
+            anchors.fill: parent
+            fillMode: Image.PreserveAspectFit
+            smooth: true
+            mipmap: true
+            asynchronous: false
+            cache: true
+            sourceSize: Qt.size(Math.max(64, Math.round(iconRoot.width * 4)), Math.max(64, Math.round(iconRoot.height * 4)))
+            source: iconRoot.buildSvgUri(iconRoot.kind, iconRoot.iconColor)
         }
     }
 
@@ -581,6 +404,8 @@ ApplicationWindow {
         VectorIcon {
             visible: iconBtn.iconKind.length > 0
             anchors.centerIn: parent
+            width: 17
+            height: 17
             kind: iconBtn.iconKind
             iconColor: iconBtn.active ? p.accent : (btnMouse.containsMouse ? p.textOnHover : p.textMuted)
         }
@@ -880,9 +705,12 @@ ApplicationWindow {
         property alias readOnly: textInput.readOnly
         property string placeholderText: ""
         property bool monospace: false
+        property int rightPadding: 10
         signal accepted()
         signal escaped()
         signal textEdited()
+        signal upPressed()
+        signal downPressed()
 
         function forceFieldFocus() {
             textInput.forceActiveFocus();
@@ -900,7 +728,7 @@ ApplicationWindow {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.leftMargin: 10
-            anchors.rightMargin: 10
+            anchors.rightMargin: fieldRoot.rightPadding
             anchors.verticalCenter: parent.verticalCenter
             visible: textInput.text.length === 0 && !textInput.preeditText
             text: fieldRoot.placeholderText
@@ -915,7 +743,7 @@ ApplicationWindow {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.leftMargin: 10
-            anchors.rightMargin: 10
+            anchors.rightMargin: fieldRoot.rightPadding
             anchors.verticalCenter: parent.verticalCenter
             font.pixelSize: 12
             font.family: fieldRoot.monospace ? "monospace" : ""
@@ -929,6 +757,14 @@ ApplicationWindow {
             Keys.onEscapePressed: function(event) {
                 fieldRoot.escaped();
                 event.accepted = true;
+            }
+            Keys.onUpPressed: function(event) {
+                fieldRoot.upPressed();
+                event.accepted = false;
+            }
+            Keys.onDownPressed: function(event) {
+                fieldRoot.downPressed();
+                event.accepted = false;
             }
         }
     }
@@ -1586,6 +1422,7 @@ ApplicationWindow {
         required property var panelModel
         property bool filterVisible: false
         property bool pathEditing: false
+        property bool pathCopyFlashed: false
         property alias listView: fileList
         property alias gridView: fileGrid
         readonly property var activeView: panelModel.viewMode === 1 ? fileGrid : fileList
@@ -1954,11 +1791,13 @@ ApplicationWindow {
         function focusList() {
             backend.activePanel = panelIndex;
             pathEditing = false;
+            pathCopyFlashed = false;
             activeView.forceActiveFocus();
         }
 
         function openPathEditor() {
             backend.activePanel = panelIndex;
+            pathCopyFlashed = false;
             pathEditField.text = panelModel.path;
             pathEditing = true;
             pathEditField.forceFieldFocus();
@@ -1991,6 +1830,56 @@ ApplicationWindow {
             return out;
         }
 
+        property string typeAheadBuffer: ""
+        Timer {
+            id: typeAheadTimer
+            interval: 1200
+            onTriggered: panelRoot.typeAheadBuffer = ""
+        }
+
+        function handleTypeAheadKey(event, view) {
+            var m = panelRoot.panelModel;
+            if (event.key === Qt.Key_Backspace && panelRoot.typeAheadBuffer.length > 0) {
+                panelRoot.typeAheadBuffer = panelRoot.typeAheadBuffer.slice(0, -1);
+                if (panelRoot.typeAheadBuffer.length > 0) {
+                    typeAheadTimer.restart();
+                    var bIdx = m.findIndexByQuery(panelRoot.typeAheadBuffer, 0, true);
+                    if (bIdx >= 0) view.currentIndex = bIdx;
+                } else {
+                    typeAheadTimer.stop();
+                }
+                event.accepted = true;
+                return true;
+            }
+            if (event.key === Qt.Key_Escape && panelRoot.typeAheadBuffer.length > 0) {
+                panelRoot.typeAheadBuffer = "";
+                typeAheadTimer.stop();
+                event.accepted = true;
+                return true;
+            }
+            var mods = event.modifiers;
+            if (event.text.length === 1
+                    && (mods === Qt.NoModifier || mods === Qt.ShiftModifier)
+                    && /^[A-Za-z0-9._-]$/.test(event.text)) {
+                var ch = event.text;
+                var idx = -1;
+                if (panelRoot.typeAheadBuffer.length === 1
+                        && panelRoot.typeAheadBuffer.toLowerCase() === ch.toLowerCase()) {
+                    // Repeating the same letter cycles to the next item starting with that letter
+                    idx = m.findIndexByQuery(panelRoot.typeAheadBuffer, view.currentIndex + 1, false);
+                } else {
+                    panelRoot.typeAheadBuffer += ch;
+                    idx = m.findIndexByQuery(panelRoot.typeAheadBuffer, 0, true);
+                }
+                typeAheadTimer.restart();
+                if (idx >= 0)
+                    view.currentIndex = idx;
+                event.accepted = true;
+                return true;
+            }
+            return false;
+        }
+
         function displayStem(name, ext, isDir) {
             if (isDir || !ext || ext.length === 0)
                 return name;
@@ -2015,9 +1904,10 @@ ApplicationWindow {
         function iconKindFor(isParent, isDir, iconType) {
             if (isParent) return "parent";
             if (isDir) return "folder";
-            if (iconType === "code" || iconType === "image" || iconType === "archive"
-                || iconType === "video" || iconType === "audio" || iconType === "binary")
+            if (iconType && iconType.length > 0 && iconType !== "text")
                 return iconType;
+            if (iconType === "text")
+                return "doc";
             return "file";
         }
 
@@ -2087,6 +1977,14 @@ ApplicationWindow {
                         }
 
                         Text {
+                            visible: backend.quickViewLoading
+                            text: qsTr("Loading…")
+                            font.pixelSize: 11
+                            font.bold: true
+                            color: p.accent
+                        }
+
+                        Text {
                             visible: (win.quickViewData.formattedSize || "").length > 0
                             text: win.quickViewData.formattedSize || ""
                             font.pixelSize: 11
@@ -2125,7 +2023,7 @@ ApplicationWindow {
                     previewItem: win.quickViewData
                     onRequestPage: function(page) {
                         if (win.quickViewData && win.quickViewData.path)
-                            win.quickViewData = backend.getPreview(win.quickViewData.path, page);
+                            backend.requestPreview(win.quickViewData.path, page, "quickview");
                     }
                 }
             }
@@ -2173,11 +2071,14 @@ ApplicationWindow {
                                 delegate: Rectangle {
                                     id: tabPill
                                     readonly property bool isTabActive: index === panelRoot.panelModel.activeTab
+                                    readonly property int tabLockMode: modelData.lockMode || 0
+                                    readonly property bool isTabLocked: modelData.isLocked === true
+                                    readonly property bool isTrashTab: modelData.isTrash === true
                                     property bool dropHover: tabDropArea.containsDrag
 
                                     anchors.verticalCenter: parent.verticalCenter
                                     height: 22
-                                    width: Math.min(180, Math.max(72, tabContentRow.implicitWidth + 14))
+                                    width: Math.min(200, Math.max(76, tabContentRow.implicitWidth + 14))
                                     radius: win.smallRadius
                                     color: {
                                         if (dropHover) return Qt.alpha(p.accent, 0.24);
@@ -2185,23 +2086,40 @@ ApplicationWindow {
                                         if (tabMouse.containsMouse) return p.tabHoverBg;
                                         return "transparent";
                                     }
-                                    border.width: (isTabActive || dropHover) ? 1 : 0
+                                    border.width: (isTabActive || dropHover || isTabLocked) ? 1 : 0
                                     border.color: dropHover ? p.accent
-                                                : (panelRoot.isActive ? Qt.alpha(p.accent, 0.52) : p.borderDefault)
+                                                : (isTabActive ? (panelRoot.isActive ? Qt.alpha(p.accent, 0.52) : p.borderDefault)
+                                                : Qt.alpha(p.accent, 0.28))
 
                                     MouseArea {
                                         id: tabMouse
                                         anchors.fill: parent
                                         hoverEnabled: true
-                                        acceptedButtons: Qt.LeftButton | Qt.MiddleButton
+                                        acceptedButtons: Qt.LeftButton | Qt.MiddleButton | Qt.RightButton
                                         cursorShape: Qt.PointingHandCursor
                                         onClicked: function(mouse) {
+                                            if (mouse.button === Qt.RightButton) {
+                                                backend.activePanel = panelRoot.panelIndex;
+                                                tabContextMenu.targetTabIndex = index;
+                                                tabContextMenu.targetLockMode = tabPill.tabLockMode;
+                                                tabContextMenu.targetPath = modelData.path || "";
+                                                tabContextMenu.targetLockedRoot = modelData.lockedRootPath || "";
+                                                var pt = tabMouse.mapToItem(panelRoot, mouse.x, mouse.y);
+                                                tabContextMenu.popup(panelRoot, pt.x, pt.y);
+                                                return;
+                                            }
                                             if (mouse.button === Qt.MiddleButton) {
-                                                if (panelRoot.panelModel.tabCount > 1)
+                                                if (!tabPill.isTabLocked && panelRoot.panelModel.tabCount > 1)
                                                     panelRoot.panelModel.closeTab(index);
                                             } else {
                                                 backend.activePanel = panelRoot.panelIndex;
-                                                panelRoot.panelModel.setActiveTab(index);
+                                                if (tabPill.isTabActive && tabPill.isTabLocked
+                                                        && (modelData.lockedRootPath || "").length > 0
+                                                        && modelData.path !== modelData.lockedRootPath) {
+                                                    panelRoot.panelModel.resetLockedTab(index);
+                                                } else {
+                                                    panelRoot.panelModel.setActiveTab(index);
+                                                }
                                                 fileList.forceActiveFocus();
                                             }
                                         }
@@ -2225,13 +2143,13 @@ ApplicationWindow {
                                         id: tabContentRow
                                         anchors.fill: parent
                                         anchors.leftMargin: 7
-                                        anchors.rightMargin: panelRoot.panelModel.tabCount > 1 ? 4 : 7
+                                        anchors.rightMargin: (!tabPill.isTabLocked && panelRoot.panelModel.tabCount > 1) ? 4 : 7
                                         spacing: 5
 
                                         VectorIcon {
                                             width: 12
                                             height: 12
-                                            kind: "folder"
+                                            kind: tabPill.isTabLocked ? "lock" : (tabPill.isTrashTab ? "trash" : "folder")
                                             iconColor: tabPill.isTabActive
                                                        ? (panelRoot.isActive ? p.accent : p.textMuted)
                                                        : p.textDim
@@ -2240,7 +2158,7 @@ ApplicationWindow {
                                         Text {
                                             text: modelData.title
                                             font.pixelSize: 11
-                                            font.weight: tabPill.isTabActive ? Font.DemiBold : Font.Normal
+                                            font.weight: (tabPill.isTabActive || tabPill.isTabLocked) ? Font.DemiBold : Font.Normal
                                             color: tabPill.isTabActive ? p.textPrimary
                                                  : (tabMouse.containsMouse ? p.textSecondary : p.textMuted)
                                             Layout.fillWidth: true
@@ -2248,7 +2166,7 @@ ApplicationWindow {
                                         }
 
                                         Rectangle {
-                                            visible: panelRoot.panelModel.tabCount > 1
+                                            visible: !tabPill.isTabLocked && panelRoot.panelModel.tabCount > 1
                                             width: 15
                                             height: 15
                                             radius: Math.min(3, theme.radius)
@@ -2275,9 +2193,91 @@ ApplicationWindow {
 
                                     ToolTip.visible: tabMouse.containsMouse
                                     ToolTip.delay: 500
-                                    ToolTip.text: modelData.path
+                                    ToolTip.text: {
+                                        var tip = modelData.path;
+                                        if (tabPill.tabLockMode === 1)
+                                            tip += "\n" + qsTr("Locked (strict — navigation opens new tab)");
+                                        else if (tabPill.tabLockMode === 2) {
+                                            tip += "\n" + qsTr("Locked (allow navigation)");
+                                            if ((modelData.lockedRootPath || "").length > 0 && modelData.lockedRootPath !== modelData.path)
+                                                tip += "\n" + qsTr("Locked root: %1 (click tab to return)").arg(modelData.lockedRootPath);
+                                        }
+                                        return tip;
+                                    }
                                 }
                             }
+                        }
+                    }
+
+                    AppMenu {
+                        id: tabContextMenu
+                        property int targetTabIndex: -1
+                        property int targetLockMode: 0
+                        property string targetPath: ""
+                        property string targetLockedRoot: ""
+
+                        AppMenuItem {
+                            text: qsTr("Lock Tab (Allow Navigation)")
+                            checkable: true
+                            checked: tabContextMenu.targetLockMode === 2
+                            onTriggered: panelRoot.panelModel.setTabLockMode(tabContextMenu.targetTabIndex, tabContextMenu.targetLockMode === 2 ? 0 : 2)
+                        }
+                        AppMenuItem {
+                            text: qsTr("Lock Tab (Strict)")
+                            checkable: true
+                            checked: tabContextMenu.targetLockMode === 1
+                            onTriggered: panelRoot.panelModel.setTabLockMode(tabContextMenu.targetTabIndex, tabContextMenu.targetLockMode === 1 ? 0 : 1)
+                        }
+                        AppMenuItem {
+                            text: qsTr("Unlock Tab")
+                            enabled: tabContextMenu.targetLockMode !== 0
+                            onTriggered: panelRoot.panelModel.setTabLockMode(tabContextMenu.targetTabIndex, 0)
+                        }
+                        AppMenuItem {
+                            text: qsTr("Return to Locked Root")
+                            enabled: tabContextMenu.targetLockMode !== 0 && tabContextMenu.targetLockedRoot.length > 0 && tabContextMenu.targetPath !== tabContextMenu.targetLockedRoot
+                            onTriggered: panelRoot.panelModel.resetLockedTab(tabContextMenu.targetTabIndex)
+                        }
+
+                        AppMenuSeparator {}
+
+                        AppMenuItem {
+                            text: qsTr("Duplicate Tab")
+                            onTriggered: panelRoot.panelModel.duplicateTab(tabContextMenu.targetTabIndex)
+                        }
+                        AppMenuItem {
+                            text: qsTr("Move Tab to Opposite Panel")
+                            onTriggered: backend.moveTabToOppositePanel(panelRoot.panelIndex, tabContextMenu.targetTabIndex)
+                        }
+                        AppMenuItem {
+                            text: qsTr("Move Tab Left")
+                            enabled: tabContextMenu.targetTabIndex > 0
+                            onTriggered: panelRoot.panelModel.moveTab(tabContextMenu.targetTabIndex, tabContextMenu.targetTabIndex - 1)
+                        }
+                        AppMenuItem {
+                            text: qsTr("Move Tab Right")
+                            enabled: tabContextMenu.targetTabIndex >= 0 && tabContextMenu.targetTabIndex < panelRoot.panelModel.tabCount - 1
+                            onTriggered: panelRoot.panelModel.moveTab(tabContextMenu.targetTabIndex, tabContextMenu.targetTabIndex + 1)
+                        }
+
+                        AppMenuSeparator {}
+
+                        AppMenuItem {
+                            text: qsTr("Reopen Closed Tab")
+                            shortcutHint: "Ctrl+Shift+W"
+                            enabled: panelRoot.panelModel.canReopenClosedTab
+                            onTriggered: panelRoot.panelModel.reopenClosedTab()
+                        }
+                        AppMenuItem {
+                            text: qsTr("Close Other Unlocked Tabs")
+                            enabled: panelRoot.panelModel.tabCount > 1
+                            onTriggered: panelRoot.panelModel.closeOtherTabs(tabContextMenu.targetTabIndex)
+                        }
+                        AppMenuItem {
+                            text: qsTr("Close Tab")
+                            shortcutHint: "Ctrl+W"
+                            enabled: tabContextMenu.targetLockMode === 0 && panelRoot.panelModel.tabCount > 1
+                            onTriggered: panelRoot.panelModel.closeTab(tabContextMenu.targetTabIndex)
                         }
                     }
 
@@ -2365,6 +2365,8 @@ ApplicationWindow {
 
                         // Breadcrumb Bar (normal state)
                         Rectangle {
+                            id: crumbBox
+                            objectName: "crumbBox_" + panelRoot.panelIndex
                             anchors.fill: parent
                             visible: !panelRoot.pathEditing
                             radius: win.smallRadius
@@ -2372,6 +2374,15 @@ ApplicationWindow {
                             border.width: 1
                             border.color: panelRoot.isActive ? p.borderStrong : p.borderDefault
                             clip: true
+
+                            // Clicking anywhere inside empty box area, separators, or margins opens text editor
+                            MouseArea {
+                                id: crumbBgMouse
+                                objectName: "crumbBgMouse_" + panelRoot.panelIndex
+                                anchors.fill: parent
+                                cursorShape: Qt.IBeamCursor
+                                onClicked: panelRoot.openPathEditor()
+                            }
 
                             RowLayout {
                                 anchors.fill: parent
@@ -2384,6 +2395,7 @@ ApplicationWindow {
                                     Layout.fillWidth: true
                                     Layout.fillHeight: true
                                     contentWidth: crumbRow.implicitWidth
+                                    interactive: false
                                     clip: true
                                     boundsBehavior: Flickable.StopAtBounds
                                     onContentWidthChanged: {
@@ -2393,11 +2405,15 @@ ApplicationWindow {
                                             contentX = 0;
                                     }
 
-                                    // Clicking empty space to the right of breadcrumbs opens text editor
-                                    MouseArea {
-                                        anchors.fill: parent
-                                        cursorShape: Qt.IBeamCursor
-                                        onClicked: panelRoot.openPathEditor()
+                                    WheelHandler {
+                                        acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                                        onWheel: function(event) {
+                                            if (crumbFlick.contentWidth <= crumbFlick.width)
+                                                return;
+                                            var delta = event.angleDelta.x !== 0 ? event.angleDelta.x : event.angleDelta.y;
+                                            crumbFlick.contentX = Math.max(0, Math.min(crumbFlick.contentWidth - crumbFlick.width, crumbFlick.contentX - delta));
+                                            event.accepted = true;
+                                        }
                                     }
 
                                     Row {
@@ -2543,7 +2559,25 @@ ApplicationWindow {
                                 }
 
                                 Rectangle {
-                                    visible: !panelRoot.panelModel.isWritable && !panelRoot.panelModel.isArchiveView
+                                    visible: panelRoot.panelModel.isTrashView
+                                    implicitHeight: 18
+                                    implicitWidth: trashBadgeText.implicitWidth + 8
+                                    radius: 3
+                                    color: Qt.alpha(p.dangerAccent, 0.14)
+                                    border.width: 1
+                                    border.color: Qt.alpha(p.dangerAccent, 0.4)
+                                    Text {
+                                        id: trashBadgeText
+                                        anchors.centerIn: parent
+                                        text: qsTr("Trash")
+                                        font.pixelSize: 10
+                                        font.bold: true
+                                        color: p.dangerText
+                                    }
+                                }
+
+                                Rectangle {
+                                    visible: !panelRoot.panelModel.isWritable && !panelRoot.panelModel.isArchiveView && !panelRoot.panelModel.isTrashView
                                     implicitHeight: 18
                                     implicitWidth: roText.implicitWidth + 8
                                     radius: 3
@@ -2561,6 +2595,8 @@ ApplicationWindow {
                                 }
 
                                 IconBtn {
+                                    id: bookmarkPathBtn
+                                    objectName: "bookmarkPathBtn_" + panelRoot.panelIndex
                                     implicitWidth: 22
                                     implicitHeight: 22
                                     iconKind: {
@@ -2584,24 +2620,58 @@ ApplicationWindow {
                         // Direct Path Input (when editing via click or Ctrl+L)
                         CompactField {
                             id: pathEditField
+                            objectName: "pathEditField_" + panelRoot.panelIndex
                             anchors.fill: parent
                             visible: panelRoot.pathEditing
                             monospace: true
+                            rightPadding: 32
                             placeholderText: qsTr("Enter folder path...")
                             onAccepted: {
                                 panelRoot.pathEditing = false;
+                                panelRoot.pathCopyFlashed = false;
                                 panelRoot.panelModel.setPath(pathEditField.text);
                                 fileList.forceActiveFocus();
                             }
                             onEscaped: {
                                 panelRoot.pathEditing = false;
+                                panelRoot.pathCopyFlashed = false;
                                 fileList.forceActiveFocus();
                             }
                             Connections {
                                 target: pathEditField.input
                                 function onActiveFocusChanged() {
-                                    if (!pathEditField.input.activeFocus && panelRoot.pathEditing)
+                                    if (!pathEditField.input.activeFocus && panelRoot.pathEditing) {
                                         panelRoot.pathEditing = false;
+                                        panelRoot.pathCopyFlashed = false;
+                                    }
+                                }
+                            }
+
+                            Timer {
+                                id: copyFlashTimer
+                                interval: 1200
+                                onTriggered: panelRoot.pathCopyFlashed = false
+                            }
+
+                            IconBtn {
+                                id: copyPathBtn
+                                objectName: "copyPathBtn_" + panelRoot.panelIndex
+                                anchors.right: parent.right
+                                anchors.rightMargin: 4
+                                anchors.verticalCenter: parent.verticalCenter
+                                implicitWidth: 22
+                                implicitHeight: 22
+                                z: 2
+                                iconKind: panelRoot.pathCopyFlashed ? "check" : "copy"
+                                active: panelRoot.pathCopyFlashed
+                                tooltipText: qsTr("Copy path to clipboard")
+                                onClicked: {
+                                    var textToCopy = pathEditField.text.length > 0 ? pathEditField.text : panelRoot.panelModel.path;
+                                    if (backend.copyTextToClipboard(textToCopy, qsTr("Copied path to clipboard: %1").arg(textToCopy))) {
+                                        panelRoot.pathCopyFlashed = true;
+                                        copyFlashTimer.restart();
+                                    }
+                                    pathEditField.forceFieldFocus();
                                 }
                             }
                         }
@@ -2715,6 +2785,79 @@ ApplicationWindow {
                         iconKind: "close"
                         tooltipText: qsTr("Clear filter (Esc)")
                         onClicked: panelRoot.setFilterOpen(false)
+                    }
+                }
+
+                Rectangle {
+                    anchors.bottom: parent.bottom
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    height: 1
+                    color: p.borderSubtle
+                }
+            }
+
+            // 2b. Trash Manager Action Bar (visible when browsing trash://)
+            Rectangle {
+                visible: panelRoot.panelModel.isTrashView
+                Layout.fillWidth: true
+                height: 34
+                color: p.filterBarBg
+
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: 10
+                    anchors.rightMargin: 8
+                    spacing: 8
+
+                    VectorIcon {
+                        width: 14
+                        height: 14
+                        kind: "trash"
+                        iconColor: p.dangerText
+                    }
+
+                    Text {
+                        text: qsTr("Trash (%1)").arg(panelRoot.panelModel.itemCount)
+                        font.pixelSize: 11
+                        font.bold: true
+                        color: p.textPrimary
+                    }
+
+                    Item { Layout.fillWidth: true }
+
+                    ToolbarBtn {
+                        label: qsTr("Restore")
+                        accentHighlight: true
+                        btnEnabled: panelRoot.panelModel.itemCount > 0
+                        tooltipText: qsTr("Restore selected item(s) to original location")
+                        onClicked: {
+                            backend.activePanel = panelRoot.panelIndex;
+                            var paths = win.getSelectedOrCurrentPaths();
+                            if (paths.length > 0)
+                                backend.restoreFromTrash(paths);
+                            panelRoot.focusList();
+                        }
+                    }
+
+                    ToolbarBtn {
+                        label: qsTr("Delete Permanently")
+                        btnEnabled: panelRoot.panelModel.itemCount > 0
+                        tooltipText: qsTr("Permanently remove selected item(s) from Trash (F8)")
+                        onClicked: {
+                            backend.activePanel = panelRoot.panelIndex;
+                            win.triggerF8Delete();
+                        }
+                    }
+
+                    ToolbarBtn {
+                        label: qsTr("Empty Trash")
+                        btnEnabled: panelRoot.panelModel.itemCount > 0
+                        tooltipText: qsTr("Permanently delete all items in Trash")
+                        onClicked: {
+                            backend.activePanel = panelRoot.panelIndex;
+                            win.confirmEmptyTrashOpen = true;
+                        }
                     }
                 }
 
@@ -3177,6 +3320,8 @@ ApplicationWindow {
 
                                     VectorIcon {
                                         Layout.alignment: Qt.AlignVCenter
+                                        width: 19
+                                        height: 19
                                         kind: panelRoot.iconKindFor(model.isParent, model.isDir, model.iconType)
                                         iconColor: panelRoot.iconColorFor(model.isParent, model.isDir, model.iconType, model.isSelected)
                                     }
@@ -3195,6 +3340,17 @@ ApplicationWindow {
                                             if (model.isDir) return p.textPrimary;
                                             return p.textSecondary;
                                         }
+                                    }
+
+                                    Text {
+                                        visible: panelRoot.panelModel.isTrashView && (model.originalPath || "").length > 0
+                                        Layout.maximumWidth: 260
+                                        Layout.alignment: Qt.AlignVCenter
+                                        text: "← " + (model.originalPath || "")
+                                        elide: Text.ElideMiddle
+                                        font.pixelSize: 10
+                                        font.family: "monospace"
+                                        color: p.textDim
                                     }
 
                                     Rectangle {
@@ -3348,7 +3504,10 @@ ApplicationWindow {
 
                     Keys.onPressed: function(event) {
                         var m = panelRoot.panelModel;
+                        if (panelRoot.handleTypeAheadKey(event, this))
+                            return;
                         if (event.key === Qt.Key_Enter || event.key === Qt.Key_Return) {
+                            panelRoot.typeAheadBuffer = "";
                             if (currentIndex >= 0 && currentIndex < m.itemCount) {
                                 if (m.itemIsDir(currentIndex))
                                     m.cd(m.itemName(currentIndex));
@@ -3362,14 +3521,10 @@ ApplicationWindow {
                             m.cdUp();
                             event.accepted = true;
                         } else if (event.key === Qt.Key_Space || event.key === Qt.Key_Insert) {
+                            panelRoot.typeAheadBuffer = "";
                             m.toggleSelection(currentIndex);
                             if (currentIndex + 1 < m.itemCount)
                                 currentIndex++;
-                            event.accepted = true;
-                        } else if (event.text.length === 1 && event.modifiers === Qt.NoModifier && event.key >= Qt.Key_A && event.key <= Qt.Key_Z) {
-                            var idx = m.findIndexByPrefix(event.text, currentIndex + 1);
-                            if (idx >= 0)
-                                currentIndex = idx;
                             event.accepted = true;
                         }
                     }
@@ -3633,7 +3788,9 @@ ApplicationWindow {
                                     height: Math.min(parent.height, 58)
                                     fillMode: Image.PreserveAspectFit
                                     source: model.thumbnailUrl || ""
-                                    sourceSize: Qt.size(96, 96)
+                                    sourceSize: Qt.size(192, 192)
+                                    mipmap: true
+                                    smooth: true
                                     asynchronous: true
                                     cache: true
                                 }
@@ -3641,8 +3798,8 @@ ApplicationWindow {
                                 VectorIcon {
                                     visible: !thumbImg.visible || thumbImg.status === Image.Error || thumbImg.status === Image.Null
                                     anchors.centerIn: parent
-                                    width: 36
-                                    height: 36
+                                    width: 44
+                                    height: 44
                                     kind: panelRoot.iconKindFor(model.isParent, model.isDir, model.iconType)
                                     iconColor: panelRoot.iconColorFor(model.isParent, model.isDir, model.iconType, model.isSelected)
                                 }
@@ -3718,7 +3875,10 @@ ApplicationWindow {
 
                     Keys.onPressed: function(event) {
                         var m = panelRoot.panelModel;
+                        if (panelRoot.handleTypeAheadKey(event, this))
+                            return;
                         if (event.key === Qt.Key_Enter || event.key === Qt.Key_Return) {
+                            panelRoot.typeAheadBuffer = "";
                             if (currentIndex >= 0 && currentIndex < m.itemCount) {
                                 if (m.itemIsDir(currentIndex))
                                     m.cd(m.itemName(currentIndex));
@@ -3732,15 +3892,48 @@ ApplicationWindow {
                             m.cdUp();
                             event.accepted = true;
                         } else if (event.key === Qt.Key_Space || event.key === Qt.Key_Insert) {
+                            panelRoot.typeAheadBuffer = "";
                             m.toggleSelection(currentIndex);
                             if (currentIndex + 1 < m.itemCount)
                                 currentIndex++;
                             event.accepted = true;
-                        } else if (event.text.length === 1 && event.modifiers === Qt.NoModifier && event.key >= Qt.Key_A && event.key <= Qt.Key_Z) {
-                            var idx = m.findIndexByPrefix(event.text, currentIndex + 1);
-                            if (idx >= 0)
-                                currentIndex = idx;
-                            event.accepted = true;
+                        }
+                    }
+                }
+
+                // Floating Type-Ahead Quick Search badge
+                Rectangle {
+                    visible: panelRoot.typeAheadBuffer.length > 0
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                    anchors.rightMargin: 12
+                    anchors.bottomMargin: 10
+                    z: 20
+                    height: 26
+                    width: typeAheadRow.implicitWidth + 18
+                    radius: win.smallRadius
+                    color: p.dialogBg
+                    border.width: 1
+                    border.color: p.accent
+
+                    RowLayout {
+                        id: typeAheadRow
+                        anchors.centerIn: parent
+                        spacing: 6
+
+                        Text {
+                            text: qsTr("Jump:")
+                            font.pixelSize: 10
+                            font.bold: true
+                            color: p.accent
+                        }
+
+                        Text {
+                            text: panelRoot.typeAheadBuffer
+                            font.pixelSize: 12
+                            font.family: "monospace"
+                            font.bold: true
+                            color: p.textPrimary
                         }
                     }
                 }
@@ -4034,10 +4227,17 @@ ApplicationWindow {
     }
 
     function updateQuickView() {
-        if (!win.quickViewActive)
+        if (!win.quickViewActive) {
+            backend.cancelPreview("quickview");
             return;
+        }
         var p = currentHighlightedPath();
-        win.quickViewData = p.length > 0 ? backend.getPreview(p) : ({});
+        if (p.length > 0) {
+            backend.requestPreview(p, 1, "quickview");
+        } else {
+            backend.cancelPreview("quickview");
+            win.quickViewData = ({});
+        }
     }
 
     function getSelectedOrCurrentPaths() {
@@ -4089,8 +4289,9 @@ ApplicationWindow {
     function triggerF3View() {
         var p = currentHighlightedPath();
         if (p.length > 0) {
-            previewData = backend.getPreview(p);
+            previewData = ({ path: p, name: backend.fileName(p), exists: true });
             previewOpen = true;
+            backend.requestPreview(p, 1, "modal");
         }
     }
 
@@ -4181,9 +4382,71 @@ ApplicationWindow {
     function triggerExtractArchive() {
         var p = currentHighlightedPath();
         if (p.length > 0 && backend.isArchive(p))
-            backend.extractArchive(p, targetModel().path);
+            backend.extractArchiveAsync(p, targetModel().path);
         else
             backend.showStatus(qsTr("Highlight an archive (.zip, .tar.gz, .7z) to extract (Alt+F9)."));
+    }
+
+    function insertIntoCmdBar(fullPath) {
+        var m = currentModel();
+        var lv = currentListView();
+        if (lv.currentIndex < 0 || lv.currentIndex >= m.itemCount)
+            return;
+        var name = m.itemName(lv.currentIndex);
+        if (name === "..")
+            return;
+        var raw = fullPath ? m.itemPath(lv.currentIndex) : name;
+        var quoted = backend.shellQuote(raw);
+        if (cmdLineInput.text.length > 0 && !cmdLineInput.text.endsWith(" "))
+            cmdLineInput.text += " ";
+        cmdLineInput.text += quoted + " ";
+        cmdLineInput.forceFieldFocus();
+        cmdLineInput.input.cursorPosition = cmdLineInput.text.length;
+    }
+
+    function navigateCmdHistory(direction) {
+        var hist = backend.commandHistory;
+        if (!hist || hist.length === 0)
+            return;
+        if (direction < 0) {
+            if (win.cmdHistoryIndex === -1) {
+                win.cmdHistoryDraft = cmdLineInput.text;
+                win.cmdHistoryIndex = hist.length - 1;
+            } else if (win.cmdHistoryIndex > 0) {
+                win.cmdHistoryIndex--;
+            }
+            cmdLineInput.text = hist[win.cmdHistoryIndex];
+        } else {
+            if (win.cmdHistoryIndex === -1)
+                return;
+            if (win.cmdHistoryIndex < hist.length - 1) {
+                win.cmdHistoryIndex++;
+                cmdLineInput.text = hist[win.cmdHistoryIndex];
+            } else {
+                win.cmdHistoryIndex = -1;
+                cmdLineInput.text = win.cmdHistoryDraft;
+            }
+        }
+        cmdLineInput.input.cursorPosition = cmdLineInput.text.length;
+    }
+
+    function openSplitCombineDialog() {
+        var path = currentHighlightedPath();
+        if (!path || path.length === 0) {
+            backend.showStatus(qsTr("Highlight a file to split or a .001 / .crc file to combine."));
+            return;
+        }
+        var info = backend.inspectSplitSource(path);
+        if (!info.valid) {
+            backend.showStatus(qsTr("Select a regular file to split or combine."));
+            return;
+        }
+        win.splitSourcePath = path;
+        win.splitSourceInfo = info;
+        splitTargetDirField.text = targetModel().isTrashView || targetModel().isArchiveView
+                                   ? currentModel().path
+                                   : targetModel().path;
+        win.splitCombineOpen = true;
     }
 
     function triggerF8Delete() {
@@ -4282,10 +4545,11 @@ ApplicationWindow {
             return;
         }
         checksumDialog.filePath = p;
-        checksumDialog.hashes = backend.calculateChecksums(p);
+        checksumDialog.hashes = ({});
         checksumDialog.verificationResult = "";
         verifyHashInput.text = "";
         win.checksumOpen = true;
+        backend.startChecksumCalculation(p);
     }
 
     function triggerFileDiff() {
@@ -4373,7 +4637,7 @@ ApplicationWindow {
             { id: "gridView", title: qsTr("View Mode: Grid Thumbnails"), category: qsTr("View"), shortcut: "Ctrl+2", run: function() { currentModel().setViewMode(1); } },
             { id: "quickFilter", title: qsTr("Toggle Quick Filter"), category: qsTr("View"), shortcut: "Ctrl+S", run: function() { toggleFilterBar(); } },
             { id: "refresh", title: qsTr("Refresh Active Panel"), category: qsTr("View"), shortcut: "Ctrl+R", run: function() { currentModel().refresh(); } },
-            { id: "calcSizes", title: qsTr("Calculate All Folder Sizes"), category: qsTr("View"), shortcut: "Alt+Shift+Enter", run: function() { currentModel().calculateAllFolderSizes(); backend.showStatus(qsTr("Calculated sizes for all folders.")); } },
+            { id: "calcSizes", title: qsTr("Calculate All Folder Sizes"), category: qsTr("View"), shortcut: "Alt+Shift+Enter", run: function() { currentModel().calculateAllFolderSizes(); backend.showStatus(qsTr("Calculating folder sizes…")); } },
             { id: "sortName", title: qsTr("Sort by Name"), category: qsTr("Sort"), shortcut: "Ctrl+F3", run: function() { currentModel().setSortField(0); } },
             { id: "sortExt", title: qsTr("Sort by Extension"), category: qsTr("Sort"), shortcut: "Ctrl+F4", run: function() { currentModel().setSortField(1); } },
             { id: "sortDate", title: qsTr("Sort by Date"), category: qsTr("Sort"), shortcut: "Ctrl+F5", run: function() { currentModel().setSortField(3); } },
@@ -4385,7 +4649,16 @@ ApplicationWindow {
             { id: "goUp", title: qsTr("Go to Parent Directory"), category: qsTr("Navigation"), shortcut: "Backspace", run: function() { currentModel().cdUp(); } },
             { id: "newTab", title: qsTr("Open New Tab"), category: qsTr("Tabs"), shortcut: "Ctrl+T", run: function() { currentModel().addTab(); currentListView().forceActiveFocus(); } },
             { id: "closeTab", title: qsTr("Close Active Tab"), category: qsTr("Tabs"), shortcut: "Ctrl+W", run: function() { currentModel().closeTab(); currentListView().forceActiveFocus(); } },
+            { id: "reopenTab", title: qsTr("Reopen Closed Tab"), category: qsTr("Tabs"), shortcut: "Ctrl+Shift+W", run: function() { currentModel().reopenClosedTab(); currentListView().forceActiveFocus(); } },
+            { id: "lockTab", title: currentModel().activeTabLockMode > 0 ? qsTr("Unlock Active Tab") : qsTr("Lock / Pin Active Tab"), category: qsTr("Tabs"), shortcut: "Ctrl+Alt+L", run: function() { currentModel().toggleTabLock(); } },
+            { id: "lockTabStrict", title: qsTr("Lock Active Tab (Strict)"), category: qsTr("Tabs"), shortcut: "", run: function() { currentModel().setTabLockMode(currentModel().activeTab, 1); } },
+            { id: "duplicateTab", title: qsTr("Duplicate Active Tab"), category: qsTr("Tabs"), shortcut: "", run: function() { currentModel().duplicateTab(); currentListView().forceActiveFocus(); } },
+            { id: "moveTabOpposite", title: qsTr("Move Active Tab to Opposite Panel"), category: qsTr("Tabs"), shortcut: "", run: function() { backend.moveTabToOppositePanel(backend.activePanel); } },
+            { id: "closeOtherTabs", title: qsTr("Close Other Unlocked Tabs"), category: qsTr("Tabs"), shortcut: "", run: function() { currentModel().closeOtherTabs(); } },
             { id: "nextTab", title: qsTr("Next Tab"), category: qsTr("Tabs"), shortcut: "Ctrl+Tab", run: function() { currentModel().nextTab(); currentListView().forceActiveFocus(); } },
+            { id: "workspaces", title: qsTr("Workspaces (Save / Load Dual-Panel Layout)..."), category: qsTr("Workspaces"), shortcut: "Ctrl+Shift+L", run: function() { win.workspacesOpen = true; } },
+            { id: "openTrash", title: qsTr("Open Trash (trash://)"), category: qsTr("Trash"), shortcut: "Ctrl+Shift+Backspace", run: function() { backend.openTrash(); currentListView().forceActiveFocus(); } },
+            { id: "emptyTrash", title: qsTr("Empty Trash..."), category: qsTr("Trash"), shortcut: "", run: function() { win.confirmEmptyTrashOpen = true; } },
             { id: "bookmarks", title: qsTr("Open Bookmarks Manager"), category: qsTr("Bookmarks"), shortcut: "Ctrl+B", run: function() { win.bookmarksOpen = true; } },
             { id: "toggleBookmark", title: qsTr("Toggle Bookmark for Current Folder"), category: qsTr("Bookmarks"), shortcut: "", run: function() { backend.toggleBookmark(currentModel().path); } },
             { id: "swapPanels", title: qsTr("Swap Left & Right Panels"), category: qsTr("Panels"), shortcut: "Ctrl+U", run: function() { backend.swapPanels(); } },
@@ -4396,11 +4669,14 @@ ApplicationWindow {
             { id: "syncDirs", title: qsTr("Synchronize Directories (Recursive)..."), category: qsTr("Commands"), shortcut: "Ctrl+Shift+S", run: function() { win.openSyncDirsDialog(); } },
             { id: "duplicateFinder", title: qsTr("Find Duplicate Files..."), category: qsTr("Commands"), shortcut: "Ctrl+Shift+F7", run: function() { win.openDuplicateFinderDialog(); } },
             { id: "operationQueue", title: qsTr("Operation Queue & Transfer Monitor..."), category: qsTr("Commands"), shortcut: "Ctrl+Shift+Q", run: function() { win.openOperationQueueDialog(); } },
-            { id: "remoteConnections", title: qsTr("Remote Connections (SFTP / SMB / SSHFS)..."), category: qsTr("Network"), shortcut: "Ctrl+Shift+M", run: function() { win.openRemoteConnectionsDialog(""); } },
+            { id: "remoteConnections", title: qsTr("Remote Connections (Google Drive / SFTP / SMB)..."), category: qsTr("Network"), shortcut: "Ctrl+Shift+M", run: function() { win.openRemoteConnectionsDialog(""); } },
             { id: "openWith", title: qsTr("Open With / Custom Actions..."), category: qsTr("Files"), shortcut: "Ctrl+Shift+O", run: function() { win.openOpenWithDialog("", 0); } },
             { id: "diffFiles", title: qsTr("Compare Files (Visual Diff)..."), category: qsTr("Commands"), shortcut: "Ctrl+Alt+D", run: function() { triggerFileDiff(); } },
             { id: "checksum", title: qsTr("Compute File Checksums..."), category: qsTr("Commands"), shortcut: "", run: function() { triggerChecksum(); } },
             { id: "terminal", title: qsTr("Open Terminal in Current Folder"), category: qsTr("Commands"), shortcut: "F9", run: function() { backend.openInTerminal(currentModel().path); } },
+            { id: "focusCmdBar", title: qsTr("Focus Command Line Bar"), category: qsTr("Commands"), shortcut: "Ctrl+E", run: function() { cmdLineInput.forceFieldFocus(); } },
+            { id: "toggleCmdOutput", title: qsTr("Toggle Command Output Drawer"), category: qsTr("Commands"), shortcut: "Ctrl+O", run: function() { win.commandDrawerOpen = !win.commandDrawerOpen; } },
+            { id: "splitCombine", title: qsTr("Split / Combine File (.001 / .crc)..."), category: qsTr("Files"), shortcut: "Ctrl+Alt+S", run: function() { win.openSplitCombineDialog(); } },
             { id: "preview", title: qsTr("View / Preview Item"), category: qsTr("Files"), shortcut: "F3", run: function() { triggerF3View(); } },
             { id: "editFile", title: qsTr("Edit Item with $EDITOR"), category: qsTr("Files"), shortcut: "F4", run: function() { triggerF4Edit(); } },
             { id: "newFile", title: qsTr("Create New File..."), category: qsTr("Files"), shortcut: "Shift+F4", run: function() { triggerNewFile(); } },
@@ -4421,7 +4697,7 @@ ApplicationWindow {
             { id: "deselectMask", title: qsTr("Deselect by Wildcard..."), category: qsTr("Selection"), shortcut: "Num-", run: function() { openMaskDialog(false); } },
             { id: "undo", title: qsTr("Undo Last Operation"), category: qsTr("Edit"), shortcut: "Ctrl+Z", run: function() { backend.undoLastOperation(); } },
             { id: "shortcuts", title: qsTr("Keyboard Shortcuts"), category: qsTr("Help"), shortcut: "?", run: function() { win.helpOpen = true; } },
-            { id: "about", title: qsTr("About AeroCommander"), category: qsTr("Help"), shortcut: "", run: function() { win.aboutOpen = true; } }
+            { id: "about", title: qsTr("About TwinForge"), category: qsTr("Help"), shortcut: "", run: function() { win.aboutOpen = true; } }
         ];
     }
 
@@ -4456,6 +4732,8 @@ ApplicationWindow {
 
     function openRemoteConnectionsDialog(selectId) {
         win.closeAllMenus();
+        backend.refreshRcloneRemotes();
+        backend.refreshDrives();
         win.remoteConnectionsOpen = true;
         if (selectId)
             remoteConnectionsDialog.loadConnectionById(selectId);
@@ -4619,6 +4897,15 @@ ApplicationWindow {
     Shortcut { sequence: "Ctrl+Shift+P"; context: Qt.ApplicationShortcut; onActivated: win.openCommandPalette("commands") }
     Shortcut { sequence: "Ctrl+P"; context: Qt.ApplicationShortcut; onActivated: win.openCommandPalette("jump") }
     Shortcut { sequence: "Ctrl+Shift+T"; context: Qt.ApplicationShortcut; onActivated: backend.toggleThemeMode() }
+    Shortcut { sequence: "Ctrl+Shift+L"; context: Qt.ApplicationShortcut; onActivated: win.workspacesOpen = !win.workspacesOpen }
+    Shortcut { sequence: "Ctrl+Alt+L"; context: Qt.ApplicationShortcut; onActivated: currentModel().toggleTabLock() }
+    Shortcut { sequence: "Ctrl+Shift+W"; context: Qt.ApplicationShortcut; onActivated: { currentModel().reopenClosedTab(); currentListView().forceActiveFocus(); } }
+    Shortcut { sequence: "Ctrl+Shift+Backspace"; context: Qt.ApplicationShortcut; onActivated: { backend.openTrash(); currentListView().forceActiveFocus(); } }
+    Shortcut { sequence: "Ctrl+O"; context: Qt.ApplicationShortcut; onActivated: win.commandDrawerOpen = !win.commandDrawerOpen }
+    Shortcut { sequence: "Ctrl+E"; context: Qt.ApplicationShortcut; onActivated: cmdLineInput.forceFieldFocus() }
+    Shortcut { sequence: "Ctrl+Return"; enabled: !win.isTextInputFocused(); context: Qt.ApplicationShortcut; onActivated: win.insertIntoCmdBar(false) }
+    Shortcut { sequence: "Ctrl+Shift+Return"; enabled: !win.isTextInputFocused(); context: Qt.ApplicationShortcut; onActivated: win.insertIntoCmdBar(true) }
+    Shortcut { sequence: "Ctrl+Alt+S"; context: Qt.ApplicationShortcut; onActivated: win.openSplitCombineDialog() }
 
     // Menu Bar Access Shortcuts (Alt+F, Alt+E, Alt+V, Alt+C, Alt+H)
     Shortcut { sequence: "Alt+F"; enabled: !win.isTextInputFocused(); context: Qt.ApplicationShortcut; onActivated: { win.closeAllMenus(); filesMenu.open(); win.menuBarActive = true; } }
@@ -4635,6 +4922,9 @@ ApplicationWindow {
         if (queueDialogOpen) { queueDialogOpen = false; currentListView().forceActiveFocus(); return; }
         if (remoteConnectionsOpen) { remoteConnectionsOpen = false; currentListView().forceActiveFocus(); return; }
         if (openWithOpen) { openWithOpen = false; currentListView().forceActiveFocus(); return; }
+        if (workspacesOpen) { workspacesOpen = false; currentListView().forceActiveFocus(); return; }
+        if (confirmEmptyTrashOpen) { confirmEmptyTrashOpen = false; currentListView().forceActiveFocus(); return; }
+        if (splitCombineOpen) { splitCombineOpen = false; currentListView().forceActiveFocus(); return; }
         if (aboutOpen) { aboutOpen = false; return; }
         if (conflictDialog.visible) { conflictDialog.answer(4); return; }
         if (propertiesOpen) { propertiesOpen = false; return; }
@@ -4667,6 +4957,11 @@ ApplicationWindow {
             return;
         }
         if (cmdLineInput.input.activeFocus) {
+            currentListView().forceActiveFocus();
+            return;
+        }
+        if (win.commandDrawerOpen) {
+            win.commandDrawerOpen = false;
             currentListView().forceActiveFocus();
             return;
         }
@@ -4719,7 +5014,7 @@ ApplicationWindow {
                         }
 
                         Text {
-                            text: "AeroCommander"
+                            text: "TwinForge"
                             font.bold: true
                             font.pixelSize: 14
                             color: p.textPrimary
@@ -5179,7 +5474,7 @@ ApplicationWindow {
                                     onTriggered: win.openOperationQueueDialog()
                                 }
                                 AppMenuItem {
-                                    text: qsTr("Remote Connections (SFTP / SMB)...")
+                                    text: qsTr("Remote Connections (Google Drive / SFTP / SMB)...")
                                     shortcutHint: "Ctrl+Shift+M"
                                     onTriggered: win.openRemoteConnectionsDialog("")
                                 }
@@ -5192,6 +5487,16 @@ ApplicationWindow {
                                     text: qsTr("Compare Files (Diff)...")
                                     shortcutHint: "Ctrl+Alt+D"
                                     onTriggered: triggerFileDiff()
+                                }
+                                AppMenuItem {
+                                    text: qsTr("Split / Combine File...")
+                                    shortcutHint: "Ctrl+Alt+S"
+                                    onTriggered: win.openSplitCombineDialog()
+                                }
+                                AppMenuItem {
+                                    text: qsTr("Toggle Command Output Drawer")
+                                    shortcutHint: "Ctrl+O"
+                                    onTriggered: win.commandDrawerOpen = !win.commandDrawerOpen
                                 }
                                 AppMenuItem {
                                     text: qsTr("Calculate Folder Sizes")
@@ -5225,6 +5530,33 @@ ApplicationWindow {
                                     shortcutHint: "Ctrl+Tab"
                                     onTriggered: {
                                         currentModel().nextTab();
+                                        currentListView().forceActiveFocus();
+                                    }
+                                }
+                                AppMenuItem {
+                                    text: currentModel().activeTabLockMode > 0 ? qsTr("Unlock Active Tab") : qsTr("Lock / Pin Active Tab")
+                                    shortcutHint: "Ctrl+Alt+L"
+                                    onTriggered: currentModel().toggleTabLock()
+                                }
+                                AppMenuItem {
+                                    text: qsTr("Reopen Closed Tab")
+                                    shortcutHint: "Ctrl+Shift+W"
+                                    enabled: currentModel().canReopenClosedTab
+                                    onTriggered: {
+                                        currentModel().reopenClosedTab();
+                                        currentListView().forceActiveFocus();
+                                    }
+                                }
+                                AppMenuItem {
+                                    text: qsTr("Workspaces...")
+                                    shortcutHint: "Ctrl+Shift+L"
+                                    onTriggered: win.workspacesOpen = true
+                                }
+                                AppMenuItem {
+                                    text: qsTr("Open Trash")
+                                    shortcutHint: "Ctrl+Shift+Backspace"
+                                    onTriggered: {
+                                        backend.openTrash();
                                         currentListView().forceActiveFocus();
                                     }
                                 }
@@ -5294,7 +5626,7 @@ ApplicationWindow {
                                 AppMenuSeparator {}
 
                                 AppMenuItem {
-                                    text: qsTr("About omapanel")
+                                    text: qsTr("About TwinForge")
                                     onTriggered: win.aboutOpen = true
                                 }
                             }
@@ -5505,6 +5837,7 @@ ApplicationWindow {
                                 delegate: Rectangle {
                                     readonly property bool isDevMounted: modelData.isMounted !== false
                                     readonly property bool isRemoteDev: modelData.isRemote === true
+                                    readonly property bool isTrashChip: modelData.isTrash === true
                                     implicitHeight: 22
                                     implicitWidth: driveRow.implicitWidth + (modelData.canUnmount ? 24 : 12)
                                     radius: win.smallRadius
@@ -5518,10 +5851,14 @@ ApplicationWindow {
                                         spacing: 5
 
                                         VectorIcon {
-                                            width: 13
-                                            height: 13
-                                            kind: isRemoteDev ? "network" : (modelData.isRemovable ? "usb" : "drive")
-                                            iconColor: !isDevMounted ? p.textDim : (currentModel().path === modelData.path ? p.accent : p.textMuted)
+                                            width: isTrashChip ? 14 : 16
+                                            height: isTrashChip ? 14 : 16
+                                            kind: isTrashChip
+                                                  ? "trash"
+                                                  : (isRemoteDev
+                                                     ? ((modelData.protocol === "gdrive" || modelData.protocol === "rclone") ? "cloud" : "network")
+                                                     : (modelData.isRemovable ? "usb" : "drive"))
+                                            iconColor: !isDevMounted ? p.textDim : (currentModel().path === modelData.path ? p.accent : (isTrashChip ? p.dangerText : p.textMuted))
                                         }
 
                                         Text {
@@ -5536,7 +5873,7 @@ ApplicationWindow {
                                             text: modelData.free
                                             font.pixelSize: 10
                                             font.family: "monospace"
-                                            color: isRemoteDev ? p.accent : p.textDim
+                                            color: isTrashChip ? p.dangerText : (isRemoteDev ? p.accent : p.textDim)
                                         }
 
                                         // Mount / Connect button for unmounted disks & saved remotes
@@ -5563,9 +5900,9 @@ ApplicationWindow {
                                                 cursorShape: Qt.PointingHandCursor
                                                 onClicked: {
                                                     if (isRemoteDev)
-                                                        backend.connectRemote(modelData.remoteId || modelData.remoteUri);
+                                                        backend.connectRemoteAsync(modelData.remoteId || modelData.remoteUri);
                                                     else
-                                                        backend.mountDevice(modelData.devPath);
+                                                        backend.mountDeviceAsync(modelData.devPath);
                                                 }
                                             }
                                         }
@@ -5578,11 +5915,12 @@ ApplicationWindow {
                                             radius: 2
                                             color: unmountMouse.containsMouse ? p.dangerHoverBg : "transparent"
 
-                                            Text {
+                                            VectorIcon {
                                                 anchors.centerIn: parent
-                                                text: "⏏"
-                                                font.pixelSize: 10
-                                                color: unmountMouse.containsMouse ? p.dangerAccent : p.textMuted
+                                                width: 11
+                                                height: 11
+                                                kind: "eject"
+                                                iconColor: unmountMouse.containsMouse ? p.dangerAccent : p.textMuted
                                             }
 
                                             MouseArea {
@@ -5592,9 +5930,9 @@ ApplicationWindow {
                                                 cursorShape: Qt.PointingHandCursor
                                                 onClicked: {
                                                     if (isRemoteDev)
-                                                        backend.disconnectRemote(modelData.remoteId || modelData.path);
+                                                        backend.disconnectRemoteAsync(modelData.remoteId || modelData.path);
                                                     else
-                                                        backend.unmountDevice(modelData.path);
+                                                        backend.unmountDeviceAsync(modelData.path);
                                                 }
                                             }
                                         }
@@ -5615,9 +5953,9 @@ ApplicationWindow {
                                                 currentModel().setPath(modelData.path);
                                                 currentListView().forceActiveFocus();
                                             } else if (isRemoteDev) {
-                                                backend.connectRemote(modelData.remoteId || modelData.remoteUri);
+                                                backend.connectRemoteAsync(modelData.remoteId || modelData.remoteUri);
                                             } else {
-                                                backend.mountDevice(modelData.devPath);
+                                                backend.mountDeviceAsync(modelData.devPath);
                                             }
                                         }
                                     }
@@ -5642,9 +5980,9 @@ ApplicationWindow {
                                     spacing: 4
 
                                     VectorIcon {
-                                        width: 12
-                                        height: 12
-                                        kind: "network"
+                                        width: 14
+                                        height: 14
+                                        kind: "cloud"
                                         iconColor: p.accent
                                     }
 
@@ -5666,7 +6004,7 @@ ApplicationWindow {
 
                                 ToolTip.visible: addRemoteMouse.containsMouse
                                 ToolTip.delay: 450
-                                ToolTip.text: qsTr("Remote Connections — SFTP / SMB / SSHFS (Ctrl+Shift+M)")
+                                ToolTip.text: qsTr("Remote Connections — Google Drive / SFTP / SMB (Ctrl+Shift+M)")
                             }
 
                             Rectangle { width: 1; height: 14; color: p.borderDefault }
@@ -5815,8 +6153,33 @@ ApplicationWindow {
 
             // Status Notification / Background Progress Bar
             Rectangle {
+                id: statusProgressBar
+                readonly property bool bgAuxBusy: !backend.isBusy && (
+                    backend.archiveOpRunning
+                    || backend.remoteOpRunning
+                    || backend.leftPanel.calculatingFolderSizes
+                    || backend.rightPanel.calculatingFolderSizes
+                )
+                readonly property string bgAuxTitle: backend.archiveOpRunning
+                    ? backend.archiveOpTitle
+                    : (backend.remoteOpRunning
+                        ? qsTr("Remote / Mount")
+                        : qsTr("Calculating Folder Sizes"))
+                readonly property string bgAuxDetail: backend.archiveOpRunning
+                    ? backend.archiveOpDetail
+                    : (backend.remoteOpRunning
+                        ? backend.remoteOpDetail
+                        : (backend.leftPanel.calculatingFolderSizes
+                            ? qsTr("%1 / %2 folder(s)").arg(backend.leftPanel.folderSizeDone).arg(backend.leftPanel.folderSizeTotal)
+                            : qsTr("%1 / %2 folder(s)").arg(backend.rightPanel.folderSizeDone).arg(backend.rightPanel.folderSizeTotal)))
+                readonly property double bgAuxProgress: {
+                    if (backend.archiveOpRunning || backend.remoteOpRunning)
+                        return -1;
+                    var pModel = backend.leftPanel.calculatingFolderSizes ? backend.leftPanel : backend.rightPanel;
+                    return pModel.folderSizeTotal > 0 ? (pModel.folderSizeDone / pModel.folderSizeTotal) : -1;
+                }
                 Layout.fillWidth: true
-                height: backend.isBusy ? 34 : (backend.statusMessage.length > 0 ? 26 : 0)
+                height: (backend.isBusy || bgAuxBusy) ? 34 : (backend.statusMessage.length > 0 ? 26 : 0)
                 visible: height > 0
                 color: p.panelFooterBg
 
@@ -5844,17 +6207,17 @@ ApplicationWindow {
                     Text {
                         text: backend.isBusy
                               ? (backend.isPaused ? (qsTr("Paused") + " · " + backend.busyTitle) : backend.busyTitle)
-                              : backend.statusMessage
+                              : (statusProgressBar.bgAuxBusy ? statusProgressBar.bgAuxTitle : backend.statusMessage)
                         font.pixelSize: 11
-                        font.weight: backend.isBusy ? Font.DemiBold : Font.Normal
-                        color: backend.isPaused ? p.warningText : (backend.isBusy ? p.accent : p.textSecondary)
-                        Layout.fillWidth: !backend.isBusy
+                        font.weight: (backend.isBusy || statusProgressBar.bgAuxBusy) ? Font.DemiBold : Font.Normal
+                        color: backend.isPaused ? p.warningText : ((backend.isBusy || statusProgressBar.bgAuxBusy) ? p.accent : p.textSecondary)
+                        Layout.fillWidth: !backend.isBusy && !statusProgressBar.bgAuxBusy
                         elide: Text.ElideRight
                     }
 
                     Text {
-                        visible: backend.isBusy
-                        text: backend.busyDetail
+                        visible: backend.isBusy || statusProgressBar.bgAuxBusy
+                        text: backend.isBusy ? backend.busyDetail : statusProgressBar.bgAuxDetail
                         font.pixelSize: 11
                         font.family: "monospace"
                         color: p.textMuted
@@ -5879,8 +6242,8 @@ ApplicationWindow {
                     }
 
                     Text {
-                        visible: backend.isBusy
-                        text: Math.round(backend.busyProgress * 100) + "%"
+                        visible: backend.isBusy || (statusProgressBar.bgAuxBusy && statusProgressBar.bgAuxProgress >= 0)
+                        text: Math.round((backend.isBusy ? backend.busyProgress : statusProgressBar.bgAuxProgress) * 100) + "%"
                         font.pixelSize: 11
                         font.family: "monospace"
                         color: p.textSecondary
@@ -5888,14 +6251,17 @@ ApplicationWindow {
 
                     // Slim custom progress track
                     Rectangle {
-                        visible: backend.isBusy
+                        visible: backend.isBusy || statusProgressBar.bgAuxBusy
                         Layout.preferredWidth: 160
                         Layout.preferredHeight: 6
                         radius: 3
                         color: p.borderDefault
+                        clip: true
 
                         Rectangle {
-                            width: parent.width * Math.max(0, Math.min(1, backend.busyProgress))
+                            width: (backend.isBusy || statusProgressBar.bgAuxProgress >= 0)
+                                   ? parent.width * Math.max(0, Math.min(1, backend.isBusy ? backend.busyProgress : statusProgressBar.bgAuxProgress))
+                                   : parent.width * 0.42
                             height: parent.height
                             radius: 3
                             color: backend.isPaused ? p.warningText : p.accent
@@ -5918,16 +6284,158 @@ ApplicationWindow {
                     }
 
                     ToolbarBtn {
-                        visible: backend.isBusy && backend.canCancel
+                        visible: (backend.isBusy && backend.canCancel) || statusProgressBar.bgAuxBusy
                         implicitHeight: 22
                         label: qsTr("Cancel")
                         accentHighlight: !backend.isPaused
-                        onClicked: backend.cancelOperation()
+                        onClicked: {
+                            if (backend.isBusy) {
+                                backend.cancelOperation();
+                            } else if (backend.archiveOpRunning) {
+                                backend.cancelArchiveOperation();
+                            } else if (backend.remoteOpRunning) {
+                                backend.cancelRemoteOperation();
+                            } else {
+                                backend.leftPanel.cancelFolderSizeCalculation();
+                                backend.rightPanel.cancelFolderSizeCalculation();
+                            }
+                        }
                     }
                 }
             }
 
-            // Mini Command Line Bar (Total Commander style)
+            // Collapsible Live Command Output Drawer (Ctrl+O)
+            Rectangle {
+                visible: win.commandDrawerOpen
+                Layout.fillWidth: true
+                height: 176
+                color: p.panelBg
+
+                Rectangle {
+                    anchors.top: parent.top
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    height: 1
+                    color: p.borderDefault
+                }
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    spacing: 0
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        height: 28
+                        color: p.subBarBg
+
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: 10
+                            anchors.rightMargin: 8
+                            spacing: 8
+
+                            Text {
+                                text: backend.commandRunning
+                                      ? qsTr("Running: %1").arg(backend.commandRunningText)
+                                      : qsTr("Command Output")
+                                font.pixelSize: 11
+                                font.bold: true
+                                color: backend.commandRunning ? p.accent : p.textSecondary
+                                elide: Text.ElideRight
+                                Layout.fillWidth: true
+                            }
+
+                            Rectangle {
+                                visible: !backend.commandRunning && backend.commandOutput.length > 0
+                                implicitHeight: 18
+                                implicitWidth: exitCodeText.implicitWidth + 10
+                                radius: 3
+                                color: backend.commandLastExitCode === 0
+                                       ? Qt.alpha(p.accent, 0.16)
+                                       : Qt.alpha(p.dangerAccent, 0.16)
+                                Text {
+                                    id: exitCodeText
+                                    anchors.centerIn: parent
+                                    text: "exit " + backend.commandLastExitCode
+                                    font.pixelSize: 10
+                                    font.family: "monospace"
+                                    font.bold: true
+                                    color: backend.commandLastExitCode === 0 ? p.accent : p.dangerText
+                                }
+                            }
+
+                            ToolbarBtn {
+                                visible: backend.commandRunning
+                                label: qsTr("Stop")
+                                tooltipText: qsTr("Cancel running command")
+                                onClicked: backend.cancelCommand()
+                            }
+
+                            ToolbarBtn {
+                                label: qsTr("Copy")
+                                btnEnabled: backend.commandOutput.length > 0
+                                onClicked: backend.copyTextToClipboard(backend.commandOutput, qsTr("Command output copied to clipboard."))
+                            }
+
+                            ToolbarBtn {
+                                label: qsTr("Clear")
+                                btnEnabled: backend.commandOutput.length > 0
+                                onClicked: backend.clearCommandOutput()
+                            }
+
+                            IconBtn {
+                                implicitWidth: 22
+                                implicitHeight: 22
+                                iconKind: "close"
+                                tooltipText: qsTr("Hide output drawer (Ctrl+O / Esc)")
+                                onClicked: {
+                                    win.commandDrawerOpen = false;
+                                    currentListView().forceActiveFocus();
+                                }
+                            }
+                        }
+
+                        Rectangle {
+                            anchors.bottom: parent.bottom
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            height: 1
+                            color: p.borderSubtle
+                        }
+                    }
+
+                    ScrollView {
+                        id: cmdDrawerScroll
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        clip: true
+
+                        TextEdit {
+                            id: cmdDrawerText
+                            width: cmdDrawerScroll.availableWidth
+                            text: backend.commandOutput.length > 0
+                                  ? backend.commandOutput
+                                  : qsTr("No command output yet. Type a command below (Up/Down for history, Ctrl+Enter to insert filename).")
+                            readOnly: true
+                            selectByMouse: true
+                            wrapMode: TextEdit.WrapAnywhere
+                            font.family: "monospace"
+                            font.pixelSize: 11
+                            color: backend.commandOutput.length > 0 ? p.textSecondary : p.textDim
+                            leftPadding: 10
+                            rightPadding: 10
+                            topPadding: 6
+                            bottomPadding: 6
+                            onTextChanged: {
+                                if (cmdDrawerScroll.ScrollBar.vertical)
+                                    cmdDrawerScroll.ScrollBar.vertical.position = Math.max(0, 1.0 - cmdDrawerScroll.ScrollBar.vertical.size);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Mini Command Line Bar (Total Commander style — Async + History + Built-in cd)
             Rectangle {
                 Layout.fillWidth: true
                 height: 34
@@ -5944,7 +6452,7 @@ ApplicationWindow {
                 RowLayout {
                     anchors.fill: parent
                     anchors.leftMargin: 12
-                    anchors.rightMargin: 12
+                    anchors.rightMargin: 8
                     spacing: 8
 
                     Text {
@@ -5962,19 +6470,38 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         Layout.preferredHeight: 26
                         monospace: true
-                        placeholderText: qsTr("Run command in active folder (e.g. git status, chmod +x ...)")
+                        placeholderText: qsTr("Run command (Ctrl+E focus, ↑/↓ history, Ctrl+Enter insert name, cd <dir>)")
+                        onTextEdited: win.cmdHistoryIndex = -1
+                        onUpPressed: win.navigateCmdHistory(-1)
+                        onDownPressed: win.navigateCmdHistory(1)
                         onAccepted: {
-                            if (cmdLineInput.text.trim().length > 0) {
-                                var res = backend.runCommand(cmdLineInput.text);
+                            var cmd = cmdLineInput.text.trim();
+                            if (cmd.length > 0) {
                                 cmdLineInput.text = "";
-                                if (res.output && res.output.indexOf("\n") !== -1) {
-                                    win.commandOutputText = res.output;
-                                    win.commandOutputOpen = true;
-                                }
+                                win.cmdHistoryIndex = -1;
+                                win.cmdHistoryDraft = "";
+                                var isSimpleCd = (cmd === "cd" || (cmd.indexOf("cd ") === 0 && cmd.indexOf("&&") === -1 && cmd.indexOf(";") === -1 && cmd.indexOf("|") === -1));
+                                if (!isSimpleCd)
+                                    win.commandDrawerOpen = true;
+                                backend.runCommandAsync(cmd);
                                 currentListView().forceActiveFocus();
                             }
                         }
                         onEscaped: currentListView().forceActiveFocus()
+                    }
+
+                    ToolbarBtn {
+                        visible: backend.commandRunning
+                        label: qsTr("Stop")
+                        tooltipText: qsTr("Cancel running command")
+                        onClicked: backend.cancelCommand()
+                    }
+
+                    ToolbarBtn {
+                        label: qsTr("Output")
+                        active: win.commandDrawerOpen
+                        tooltipText: qsTr("Toggle Command Output Drawer (Ctrl+O)")
+                        onClicked: win.commandDrawerOpen = !win.commandDrawerOpen
                     }
                 }
             }
@@ -6265,18 +6792,21 @@ ApplicationWindow {
     AppDialog {
         id: deleteDialog
         visible: win.confirmDeleteOpen
-        title: qsTr("Delete Files (F8)")
+        title: currentModel().isTrashView ? qsTr("Delete Permanently from Trash (F8)") : qsTr("Delete Files (F8)")
         standardButtons: Dialog.Yes | Dialog.No
 
         ColumnLayout {
             spacing: 10
             Text {
-                text: qsTr("Are you sure you want to delete %1 selected item(s)?").arg(getSelectedOrCurrentPaths().length)
+                text: currentModel().isTrashView
+                      ? qsTr("Permanently delete %1 selected item(s) from Trash? This cannot be undone.").arg(getSelectedOrCurrentPaths().length)
+                      : qsTr("Are you sure you want to delete %1 selected item(s)?").arg(getSelectedOrCurrentPaths().length)
                 color: p.textSecondary
                 font.pixelSize: 13
             }
             CheckBox {
                 id: permDeleteCheck
+                visible: !currentModel().isTrashView
                 text: qsTr("Permanent delete (bypass trash)")
                 checked: false
             }
@@ -6284,9 +6814,36 @@ ApplicationWindow {
 
         onAccepted: {
             win.confirmDeleteOpen = false;
-            backend.deleteItems(getSelectedOrCurrentPaths(), permDeleteCheck.checked);
+            if (currentModel().isTrashView)
+                backend.deleteFromTrashPermanently(getSelectedOrCurrentPaths());
+            else
+                backend.deleteItems(getSelectedOrCurrentPaths(), permDeleteCheck.checked);
         }
         onRejected: win.confirmDeleteOpen = false
+    }
+
+    // Confirm Empty Trash Dialog
+    AppDialog {
+        id: emptyTrashDialog
+        visible: win.confirmEmptyTrashOpen
+        title: qsTr("Empty Trash")
+        standardButtons: Dialog.Yes | Dialog.No
+
+        ColumnLayout {
+            spacing: 10
+            Text {
+                text: qsTr("Permanently delete all %1 item(s) in Trash? This cannot be undone.").arg(backend.trashCount)
+                color: p.textSecondary
+                font.pixelSize: 13
+            }
+        }
+
+        onAccepted: {
+            win.confirmEmptyTrashOpen = false;
+            backend.emptyTrash();
+            currentListView().forceActiveFocus();
+        }
+        onRejected: win.confirmEmptyTrashOpen = false
     }
 
     // New Folder Dialog
@@ -6505,6 +7062,426 @@ ApplicationWindow {
         }
 
         onRejected: win.bookmarksOpen = false
+    }
+
+    // Workspaces Dialog (Ctrl+Shift+L) — Save & Restore Dual-Panel Layouts
+    AppDialog {
+        id: workspacesDialog
+        visible: win.workspacesOpen
+        title: qsTr("Workspaces (Ctrl+Shift+L)")
+        width: 580
+        height: 420
+        standardButtons: Dialog.Close
+
+        onOpened: {
+            workspaceNameField.text = backend.activeWorkspaceName || "";
+            workspaceNameField.forceFieldFocus();
+        }
+
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: 10
+
+            Text {
+                text: qsTr("Save both panels' tabs, lock states, and sort order as a named workspace.")
+                color: p.textMuted
+                font.pixelSize: 12
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+
+                CompactField {
+                    id: workspaceNameField
+                    Layout.fillWidth: true
+                    placeholderText: qsTr("Workspace name (e.g. Web Dev, Media, Server)...")
+                    onAccepted: {
+                        if (workspaceNameField.text.trim().length > 0) {
+                            backend.saveWorkspace(workspaceNameField.text);
+                            workspaceNameField.text = "";
+                        }
+                    }
+                    onEscaped: win.workspacesOpen = false
+                }
+
+                ToolbarBtn {
+                    label: qsTr("Save Layout")
+                    accentHighlight: true
+                    btnEnabled: workspaceNameField.text.trim().length > 0
+                    onClicked: {
+                        backend.saveWorkspace(workspaceNameField.text);
+                        workspaceNameField.text = "";
+                    }
+                }
+            }
+
+            Item {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+
+                Text {
+                    anchors.centerIn: parent
+                    visible: backend.workspaces.length === 0
+                    text: qsTr("No workspaces saved yet.")
+                    color: p.textDim
+                    font.pixelSize: 12
+                }
+
+                ListView {
+                    anchors.fill: parent
+                    visible: backend.workspaces.length > 0
+                    clip: true
+                    spacing: 4
+                    model: backend.workspaces
+
+                    delegate: Rectangle {
+                        width: ListView.view.width
+                        height: 46
+                        radius: win.smallRadius
+                        color: wsMouse.containsMouse ? p.rowHoverBg : (index % 2 === 0 ? p.rowAltBg : "transparent")
+                        border.width: modelData.name === backend.activeWorkspaceName ? 1 : 0
+                        border.color: Qt.alpha(p.accent, 0.55)
+
+                        MouseArea {
+                            id: wsMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onDoubleClicked: {
+                                backend.loadWorkspace(modelData.id || modelData.name);
+                                win.workspacesOpen = false;
+                                currentListView().forceActiveFocus();
+                            }
+                        }
+
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: 10
+                            anchors.rightMargin: 8
+                            spacing: 8
+
+                            VectorIcon {
+                                width: 16
+                                height: 16
+                                kind: "workspace"
+                                iconColor: modelData.name === backend.activeWorkspaceName ? p.accent : p.textMuted
+                            }
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 2
+
+                                RowLayout {
+                                    spacing: 6
+                                    Text {
+                                        text: modelData.name || ""
+                                        color: p.textPrimary
+                                        font.pixelSize: 12
+                                        font.bold: true
+                                        elide: Text.ElideRight
+                                    }
+                                    Rectangle {
+                                        visible: modelData.name === backend.activeWorkspaceName
+                                        implicitHeight: 16
+                                        implicitWidth: activeWsBadge.implicitWidth + 8
+                                        radius: 3
+                                        color: Qt.alpha(p.accent, 0.18)
+                                        Text {
+                                            id: activeWsBadge
+                                            anchors.centerIn: parent
+                                            text: qsTr("Active")
+                                            font.pixelSize: 9
+                                            font.bold: true
+                                            color: p.accent
+                                        }
+                                    }
+                                }
+
+                                Text {
+                                    text: qsTr("Left: %1 tab(s) · Right: %2 tab(s)")
+                                          .arg((modelData.leftTabs || []).length)
+                                          .arg((modelData.rightTabs || []).length)
+                                    color: p.textMuted
+                                    font.pixelSize: 10
+                                    font.family: "monospace"
+                                    elide: Text.ElideRight
+                                    Layout.fillWidth: true
+                                }
+                            }
+
+                            ToolbarBtn {
+                                label: qsTr("Load")
+                                accentHighlight: true
+                                onClicked: {
+                                    backend.loadWorkspace(modelData.id || modelData.name);
+                                    win.workspacesOpen = false;
+                                    currentListView().forceActiveFocus();
+                                }
+                            }
+
+                            ToolbarBtn {
+                                label: qsTr("Update")
+                                tooltipText: qsTr("Overwrite this workspace with the current dual-panel layout")
+                                onClicked: backend.saveWorkspace(modelData.name)
+                            }
+
+                            IconBtn {
+                                implicitWidth: 24
+                                implicitHeight: 24
+                                iconKind: "close"
+                                tooltipText: qsTr("Delete workspace")
+                                onClicked: backend.deleteWorkspace(modelData.id || modelData.name)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        onRejected: {
+            win.workspacesOpen = false;
+            currentListView().forceActiveFocus();
+        }
+    }
+
+    // Split / Combine File Dialog (Ctrl+Alt+S) — .001/.002... + .crc SHA-256 verification
+    AppDialog {
+        id: splitCombineDialog
+        visible: win.splitCombineOpen
+        title: (win.splitSourceInfo.mode === "combine")
+               ? qsTr("Combine Split Files (Ctrl+Alt+S)")
+               : qsTr("Split File (Ctrl+Alt+S)")
+        width: 540
+        standardButtons: Dialog.NoButton
+
+        property double customSizeMb: 100
+        property string lastResultMsg: ""
+        property bool lastResultOk: true
+
+        onOpened: {
+            lastResultMsg = "";
+            splitPartSizeField.text = String(customSizeMb);
+        }
+
+        Connections {
+            target: backend
+            function onSplitOperationFinished(result) {
+                splitCombineDialog.lastResultMsg = result.message || "";
+                splitCombineDialog.lastResultOk = result.success === true;
+            }
+        }
+
+        ColumnLayout {
+            width: parent.width
+            spacing: 10
+
+            // Source info box
+            Rectangle {
+                Layout.fillWidth: true
+                implicitHeight: splitInfoCol.implicitHeight + 14
+                radius: win.smallRadius
+                color: p.rowAltBg
+                border.width: 1
+                border.color: p.borderSubtle
+
+                ColumnLayout {
+                    id: splitInfoCol
+                    anchors.fill: parent
+                    anchors.margins: 8
+                    spacing: 4
+
+                    Text {
+                        text: (win.splitSourceInfo.mode === "combine")
+                              ? qsTr("Combine: %1 (%2 parts, %3)")
+                                .arg(win.splitSourceInfo.fileName || "")
+                                .arg(win.splitSourceInfo.partCount || 0)
+                                .arg(win.splitSourceInfo.formattedSize || "")
+                              : qsTr("Split: %1 (%2)")
+                                .arg(win.splitSourceInfo.fileName || "")
+                                .arg(win.splitSourceInfo.formattedSize || "")
+                        color: p.textPrimary
+                        font.pixelSize: 12
+                        font.bold: true
+                        elide: Text.ElideMiddle
+                        Layout.fillWidth: true
+                    }
+
+                    Text {
+                        visible: win.splitSourceInfo.mode === "combine"
+                        text: win.splitSourceInfo.hasCrc
+                              ? qsTr(".crc manifest detected — SHA-256 integrity will be verified automatically.")
+                              : qsTr("No .crc manifest found — parts will be concatenated sequentially.")
+                        color: win.splitSourceInfo.hasCrc ? p.accent : p.textMuted
+                        font.pixelSize: 11
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                    }
+                }
+            }
+
+            // Split part size controls (Split mode only)
+            ColumnLayout {
+                visible: win.splitSourceInfo.mode !== "combine"
+                Layout.fillWidth: true
+                spacing: 6
+
+                Text {
+                    text: qsTr("Part size (MB):")
+                    color: p.textSecondary
+                    font.pixelSize: 12
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 6
+
+                    CompactField {
+                        id: splitPartSizeField
+                        Layout.preferredWidth: 110
+                        monospace: true
+                        text: "100"
+                        onTextEdited: {
+                            var v = parseFloat(text);
+                            if (!isNaN(v) && v > 0)
+                                splitCombineDialog.customSizeMb = v;
+                        }
+                    }
+
+                    Repeater {
+                        model: [
+                            { label: "10 MB", mb: 10 },
+                            { label: "100 MB", mb: 100 },
+                            { label: "700 MB", mb: 700 },
+                            { label: "4 GB", mb: 4096 }
+                        ]
+                        delegate: FilterPill {
+                            label: modelData.label
+                            active: Math.abs(splitCombineDialog.customSizeMb - modelData.mb) < 0.01
+                            onClicked: {
+                                splitCombineDialog.customSizeMb = modelData.mb;
+                                splitPartSizeField.text = String(modelData.mb);
+                            }
+                        }
+                    }
+                }
+
+                Text {
+                    readonly property real partBytes: Math.max(1, splitCombineDialog.customSizeMb * 1024 * 1024)
+                    readonly property int estParts: Math.max(1, Math.ceil((win.splitSourceInfo.totalBytes || 0) / partBytes))
+                    text: qsTr("Estimated output: %1 part(s)").arg(estParts)
+                    color: p.textMuted
+                    font.pixelSize: 11
+                    font.family: "monospace"
+                }
+
+                CheckBox {
+                    id: splitWriteCrcCheck
+                    text: qsTr("Write .crc verification manifest (SHA-256)")
+                    checked: true
+                }
+            }
+
+            // Target directory
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 4
+                Text {
+                    text: qsTr("Destination folder:")
+                    color: p.textSecondary
+                    font.pixelSize: 12
+                }
+                CompactField {
+                    id: splitTargetDirField
+                    Layout.fillWidth: true
+                    monospace: true
+                    placeholderText: qsTr("Target directory...")
+                }
+            }
+
+            // Progress bar when running
+            ColumnLayout {
+                visible: backend.splitOpRunning
+                Layout.fillWidth: true
+                spacing: 4
+
+                ProgressBar {
+                    Layout.fillWidth: true
+                    from: 0
+                    to: 1
+                    value: backend.splitOpProgress
+                }
+                Text {
+                    text: backend.splitOpDetail
+                    color: p.accent
+                    font.pixelSize: 11
+                    elide: Text.ElideRight
+                    Layout.fillWidth: true
+                }
+            }
+
+            // Outcome banner
+            Text {
+                visible: !backend.splitOpRunning && splitCombineDialog.lastResultMsg.length > 0
+                text: splitCombineDialog.lastResultMsg
+                color: splitCombineDialog.lastResultOk ? p.accent : p.dangerText
+                font.pixelSize: 11
+                font.bold: true
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+            }
+
+            // Action buttons
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+
+                Item { Layout.fillWidth: true }
+
+                ToolbarBtn {
+                    visible: backend.splitOpRunning
+                    label: qsTr("Cancel")
+                    onClicked: backend.cancelSplitOperation()
+                }
+
+                ToolbarBtn {
+                    visible: !backend.splitOpRunning
+                    label: (win.splitSourceInfo.mode === "combine") ? qsTr("Combine Files") : qsTr("Split File")
+                    accentHighlight: true
+                    onClicked: {
+                        splitCombineDialog.lastResultMsg = "";
+                        if (win.splitSourceInfo.mode === "combine") {
+                            backend.startCombineFiles(win.splitSourcePath, splitTargetDirField.text);
+                        } else {
+                            var mb = parseFloat(splitPartSizeField.text);
+                            if (isNaN(mb) || mb <= 0)
+                                mb = 100;
+                            var bytes = Math.max(1024, Math.round(mb * 1024 * 1024));
+                            backend.startSplitFile(win.splitSourcePath, splitTargetDirField.text, bytes, splitWriteCrcCheck.checked);
+                        }
+                    }
+                }
+
+                ToolbarBtn {
+                    label: qsTr("Close")
+                    onClicked: {
+                        if (backend.splitOpRunning)
+                            backend.cancelSplitOperation();
+                        win.splitCombineOpen = false;
+                        currentListView().forceActiveFocus();
+                    }
+                }
+            }
+        }
+
+        onRejected: {
+            if (backend.splitOpRunning)
+                backend.cancelSplitOperation();
+            win.splitCombineOpen = false;
+            currentListView().forceActiveFocus();
+        }
     }
 
     // Multi-Rename Tool Dialog (Ctrl+M) — RegEx, Dynamic Tags & Presets
@@ -6822,7 +7799,7 @@ ApplicationWindow {
 
         onAccepted: {
             win.packArchiveOpen = false;
-            backend.packArchive(getSelectedOrCurrentPaths(), packArchiveField.text);
+            backend.packArchiveAsync(getSelectedOrCurrentPaths(), packArchiveField.text);
         }
         onRejected: win.packArchiveOpen = false
     }
@@ -6866,13 +7843,24 @@ ApplicationWindow {
             anchors.fill: parent
             spacing: 8
 
-            Text {
-                text: qsTr("Path: %1 | Size: %2 | Modified: %3").arg(previewData.path || "").arg(previewData.formattedSize || "").arg(previewData.modified || "")
-                font.pixelSize: 11
-                font.family: "monospace"
-                color: p.textMuted
+            RowLayout {
                 Layout.fillWidth: true
-                elide: Text.ElideMiddle
+                spacing: 8
+                Text {
+                    text: qsTr("Path: %1 | Size: %2 | Modified: %3").arg(previewData.path || "").arg(previewData.formattedSize || "").arg(previewData.modified || "")
+                    font.pixelSize: 11
+                    font.family: "monospace"
+                    color: p.textMuted
+                    Layout.fillWidth: true
+                    elide: Text.ElideMiddle
+                }
+                Text {
+                    visible: backend.previewLoading
+                    text: qsTr("Loading…")
+                    font.pixelSize: 11
+                    font.bold: true
+                    color: p.accent
+                }
             }
 
             RichPreviewSurface {
@@ -6881,12 +7869,15 @@ ApplicationWindow {
                 previewItem: win.previewData
                 onRequestPage: function(page) {
                     if (win.previewData && win.previewData.path)
-                        win.previewData = backend.getPreview(win.previewData.path, page);
+                        backend.requestPreview(win.previewData.path, page, "modal");
                 }
             }
         }
 
-        onRejected: win.previewOpen = false
+        onRejected: {
+            backend.cancelPreview("modal");
+            win.previewOpen = false;
+        }
     }
 
     // Operation Queue & Transfer Monitor Dialog (Ctrl+Shift+Q)
@@ -7059,29 +8050,48 @@ ApplicationWindow {
         onRejected: win.queueDialogOpen = false
     }
 
-    // Remote Connections Manager Dialog (SFTP / SMB / SSHFS via GVFS / sshfs)
+    // Remote Connections Manager Dialog (Google Drive / rclone / SFTP / SMB / SSHFS)
     AppDialog {
         id: remoteConnectionsDialog
         visible: win.remoteConnectionsOpen
-        title: qsTr("Remote Connections — SFTP / SMB / SSHFS (Ctrl+Shift+M)")
-        width: Math.min(820, win.width - 40)
-        height: Math.min(540, win.height - 40)
+        title: qsTr("Remote Connections — Google Drive / SFTP / SMB (Ctrl+Shift+M)")
+        width: Math.min(860, win.width - 40)
+        height: Math.min(600, win.height - 40)
         standardButtons: Dialog.NoButton
 
         property string editingId: ""
-        property string protocol: "sftp"
+        property string protocol: "gdrive"
+        readonly property bool isCloudProto: protocol === "gdrive" || protocol === "rclone"
+
+        function selectProtocol(newProto) {
+            protocol = newProto;
+            if (!rcPortField) return;
+            if (newProto === "smb")
+                rcPortField.text = "445";
+            else if (newProto === "sftp" || newProto === "sshfs")
+                rcPortField.text = "22";
+            else
+                rcPortField.text = "";
+        }
 
         function resetForm() {
             editingId = "";
-            protocol = "sftp";
+            var defaultProto = backend.rcloneAvailable ? "gdrive" : "sftp";
+            protocol = defaultProto;
             if (!rcUriField) return;
             rcUriField.text = "";
             rcNameField.text = "";
             rcHostField.text = "";
-            rcPortField.text = "22";
+            rcPortField.text = (defaultProto === "sftp") ? "22" : "";
             rcUserField.text = "";
             rcPathField.text = "/";
             rcDomainField.text = "";
+            if (defaultProto === "gdrive" && backend.rcloneRemotes.length > 0) {
+                var first = backend.rcloneRemotes[0];
+                rcHostField.text = first.name || "gdrive";
+                rcNameField.text = first.label || "";
+                rcUriField.text = first.uri || "";
+            }
             rcHostField.forceFieldFocus();
         }
 
@@ -7092,7 +8102,7 @@ ApplicationWindow {
             rcUriField.text = m.uri || "";
             rcNameField.text = m.name || "";
             rcHostField.text = m.host || "";
-            rcPortField.text = String(m.port || (protocol === "smb" ? 445 : 22));
+            rcPortField.text = isCloudProto ? "" : String(m.port || (protocol === "smb" ? 445 : 22));
             rcUserField.text = m.user || "";
             rcPathField.text = m.remotePath || (protocol === "smb" ? "/share" : "/");
             rcDomainField.text = m.domain || "";
@@ -7112,12 +8122,12 @@ ApplicationWindow {
         function parseFromUriBar() {
             var parsed = backend.parseRemoteUri(rcUriField.text);
             if (!parsed || !parsed.host) {
-                backend.showStatus(qsTr("Enter a valid URI like sftp://user@host/path or smb://server/share"));
+                backend.showStatus(qsTr("Enter a valid URI like gdrive://gdrive or sftp://user@host/path"));
                 return;
             }
             protocol = parsed.protocol || "sftp";
             rcHostField.text = parsed.host || "";
-            rcPortField.text = String(parsed.port || (protocol === "smb" ? 445 : 22));
+            rcPortField.text = isCloudProto ? "" : String(parsed.port || (protocol === "smb" ? 445 : 22));
             rcUserField.text = parsed.user || "";
             rcPathField.text = parsed.remotePath || "/";
             rcDomainField.text = parsed.domain || "";
@@ -7126,20 +8136,35 @@ ApplicationWindow {
         }
 
         function buildFormMap() {
-            var portNum = parseInt(rcPortField.text, 10);
-            if (isNaN(portNum) || portNum <= 0)
-                portNum = (protocol === "smb") ? 445 : 22;
+            var portNum = 0;
+            if (!isCloudProto) {
+                portNum = parseInt(rcPortField.text, 10);
+                if (isNaN(portNum) || portNum <= 0)
+                    portNum = (protocol === "smb") ? 445 : 22;
+            }
             return {
                 id: editingId,
                 name: rcNameField.text.trim(),
                 protocol: protocol,
                 host: rcHostField.text.trim(),
                 port: portNum,
-                user: rcUserField.text.trim(),
+                user: isCloudProto ? "" : rcUserField.text.trim(),
                 remotePath: rcPathField.text.trim(),
-                domain: rcDomainField.text.trim(),
+                domain: isCloudProto ? "" : rcDomainField.text.trim(),
                 uri: rcUriField.text.trim()
             };
+        }
+
+        Connections {
+            target: backend
+            function onGdriveAuthFinished(ok, remoteName, msg) {
+                if (!ok || !rcHostField) return;
+                remoteConnectionsDialog.protocol = "gdrive";
+                rcHostField.text = remoteName;
+                rcNameField.text = "Google Drive (" + remoteName + ")";
+                rcPathField.text = "/";
+                rcUriField.text = "gdrive://" + remoteName + "/";
+            }
         }
 
         contentItem: RowLayout {
@@ -7247,11 +8272,10 @@ ApplicationWindow {
                                 ToolbarBtn {
                                     implicitHeight: 24
                                     label: (modelData && modelData.isMounted) ? qsTr("Open") : qsTr("Connect")
+                                    btnEnabled: !backend.remoteOpRunning
                                     onClicked: {
-                                        if (modelData && backend.connectRemote(modelData.id).length > 0) {
-                                            win.remoteConnectionsOpen = false;
-                                            currentListView().forceActiveFocus();
-                                        }
+                                        if (modelData)
+                                            backend.connectRemoteAsync(modelData.id);
                                     }
                                 }
                             }
@@ -7264,10 +8288,8 @@ ApplicationWindow {
                                 cursorShape: Qt.PointingHandCursor
                                 onClicked: if (modelData) remoteConnectionsDialog.loadConnectionMap(modelData)
                                 onDoubleClicked: {
-                                    if (modelData && backend.connectRemote(modelData.id).length > 0) {
-                                        win.remoteConnectionsOpen = false;
-                                        currentListView().forceActiveFocus();
-                                    }
+                                    if (modelData && !backend.remoteOpRunning)
+                                        backend.connectRemoteAsync(modelData.id);
                                 }
                             }
                         }
@@ -7279,7 +8301,7 @@ ApplicationWindow {
                         width: parent.width - 24
                         wrapMode: Text.WordWrap
                         horizontalAlignment: Text.AlignHCenter
-                        text: qsTr("No saved servers yet.\nFill the form on the right to save SFTP, SMB, or SSHFS connections.")
+                        text: qsTr("No saved connections yet.\nPick Google Drive or configure SFTP, SMB, or SSHFS on the right.")
                         font.pixelSize: 11
                         color: p.textDim
                     }
@@ -7301,7 +8323,7 @@ ApplicationWindow {
                         id: rcUriField
                         monospace: true
                         Layout.fillWidth: true
-                        placeholderText: "sftp://user@server:22/var/www  |  smb://server/share"
+                        placeholderText: "gdrive://gdrive  |  sftp://user@server/var/www  |  smb://server/share"
                         onAccepted: remoteConnectionsDialog.parseFromUriBar()
                     }
                     ToolbarBtn {
@@ -7311,35 +8333,153 @@ ApplicationWindow {
                 }
 
                 // Protocol Pills
-                RowLayout {
+                Flow {
                     Layout.fillWidth: true
-                    spacing: 8
-                    Text { text: qsTr("Protocol:"); color: p.textMuted; font.pixelSize: 12 }
+                    spacing: 6
+                    FilterPill {
+                        label: "Google Drive (rclone)"
+                        active: remoteConnectionsDialog.protocol === "gdrive"
+                        onClicked: remoteConnectionsDialog.selectProtocol("gdrive")
+                    }
+                    FilterPill {
+                        label: "rclone (Cloud)"
+                        active: remoteConnectionsDialog.protocol === "rclone"
+                        onClicked: remoteConnectionsDialog.selectProtocol("rclone")
+                    }
                     FilterPill {
                         label: "SFTP / SSH (GVFS)"
                         active: remoteConnectionsDialog.protocol === "sftp"
-                        onClicked: {
-                            remoteConnectionsDialog.protocol = "sftp";
-                            if (rcPortField.text === "445" || rcPortField.text === "")
-                                rcPortField.text = "22";
-                        }
+                        onClicked: remoteConnectionsDialog.selectProtocol("sftp")
                     }
                     FilterPill {
                         label: "SMB / Samba (GVFS)"
                         active: remoteConnectionsDialog.protocol === "smb"
-                        onClicked: {
-                            remoteConnectionsDialog.protocol = "smb";
-                            if (rcPortField.text === "22" || rcPortField.text === "")
-                                rcPortField.text = "445";
-                        }
+                        onClicked: remoteConnectionsDialog.selectProtocol("smb")
                     }
                     FilterPill {
                         label: "SSHFS (FUSE)"
                         active: remoteConnectionsDialog.protocol === "sshfs"
-                        onClicked: {
-                            remoteConnectionsDialog.protocol = "sshfs";
-                            if (rcPortField.text === "445" || rcPortField.text === "")
-                                rcPortField.text = "22";
+                        onClicked: remoteConnectionsDialog.selectProtocol("sshfs")
+                    }
+                }
+
+                // Discovered rclone remotes quick selector
+                Rectangle {
+                    Layout.fillWidth: true
+                    visible: remoteConnectionsDialog.isCloudProto && backend.rcloneRemotes.length > 0
+                    implicitHeight: rcloneChipsCol.implicitHeight + 14
+                    color: p.subBarBg
+                    radius: win.smallRadius
+                    border.width: 1
+                    border.color: p.borderSubtle
+
+                    ColumnLayout {
+                        id: rcloneChipsCol
+                        anchors.fill: parent
+                        anchors.margins: 7
+                        spacing: 6
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Text {
+                                text: qsTr("Detected rclone Remotes (%1):").arg(backend.rcloneRemotes.length)
+                                font.pixelSize: 11
+                                font.bold: true
+                                color: p.textSecondary
+                                Layout.fillWidth: true
+                            }
+                            ToolbarBtn {
+                                implicitHeight: 22
+                                label: qsTr("Refresh")
+                                onClicked: backend.refreshRcloneRemotes()
+                            }
+                        }
+
+                        Flow {
+                            Layout.fillWidth: true
+                            spacing: 6
+                            Repeater {
+                                model: backend.rcloneRemotes
+                                delegate: FilterPill {
+                                    label: (modelData.isMounted ? "● " : "") + (modelData.name + " (" + modelData.type + ")")
+                                    active: rcHostField.text.trim() === modelData.name
+                                    onClicked: {
+                                        remoteConnectionsDialog.editingId = "";
+                                        remoteConnectionsDialog.protocol = modelData.protocol || "gdrive";
+                                        rcHostField.text = modelData.name || "";
+                                        rcNameField.text = modelData.label || "";
+                                        rcPathField.text = "/";
+                                        rcUriField.text = modelData.uri || "";
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // New Google Drive Account OAuth Setup Card
+                Rectangle {
+                    Layout.fillWidth: true
+                    visible: remoteConnectionsDialog.protocol === "gdrive"
+                    implicitHeight: gdriveAuthCol.implicitHeight + 14
+                    color: Qt.alpha(p.accent, win.isDark ? 0.08 : 0.05)
+                    radius: win.smallRadius
+                    border.width: 1
+                    border.color: Qt.alpha(p.accent, 0.25)
+
+                    ColumnLayout {
+                        id: gdriveAuthCol
+                        anchors.fill: parent
+                        anchors.margins: 7
+                        spacing: 6
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+                            Text {
+                                text: qsTr("Add Google Account:")
+                                font.pixelSize: 11
+                                font.bold: true
+                                color: p.textSecondary
+                            }
+                            CompactField {
+                                id: gdriveNewAliasField
+                                monospace: true
+                                text: "gdrive"
+                                Layout.preferredWidth: 140
+                                placeholderText: "gdrive_work"
+                            }
+                            ToolbarBtn {
+                                implicitHeight: 26
+                                label: backend.gdriveAuthRunning ? qsTr("Authorizing...") : qsTr("Sign in with Google")
+                                accentHighlight: !backend.gdriveAuthRunning
+                                btnEnabled: !backend.gdriveAuthRunning && backend.rcloneAvailable
+                                onClicked: backend.startGoogleDriveAuth(gdriveNewAliasField.text.trim())
+                            }
+                            ToolbarBtn {
+                                implicitHeight: 26
+                                visible: backend.gdriveAuthRunning
+                                label: qsTr("Cancel")
+                                onClicked: backend.cancelGoogleDriveAuth()
+                            }
+                            Item { Layout.fillWidth: true }
+                            ToolbarBtn {
+                                implicitHeight: 26
+                                visible: backend.gdriveAuthUrl.length > 0
+                                label: qsTr("Open Link")
+                                onClicked: Qt.openUrlExternally(backend.gdriveAuthUrl)
+                            }
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            visible: backend.gdriveAuthStatus.length > 0 || !backend.rcloneAvailable
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: 10
+                            color: backend.rcloneAvailable ? p.textMuted : p.dangerText
+                            text: backend.rcloneAvailable
+                                  ? backend.gdriveAuthStatus
+                                  : qsTr("rclone is not installed. Install rclone to authorize and mount Google Drive.")
                         }
                     }
                 }
@@ -7355,49 +8495,74 @@ ApplicationWindow {
                         id: rcNameField
                         Layout.fillWidth: true
                         Layout.columnSpan: 3
-                        placeholderText: qsTr("Production Server / NAS Media")
+                        placeholderText: remoteConnectionsDialog.protocol === "gdrive"
+                                         ? qsTr("My Google Drive")
+                                         : qsTr("Production Server / NAS Media")
                     }
 
-                    Text { text: qsTr("Host / Server:"); color: p.textMuted; font.pixelSize: 12 }
+                    Text {
+                        text: remoteConnectionsDialog.isCloudProto ? qsTr("rclone Remote:") : qsTr("Host / Server:")
+                        color: p.textMuted
+                        font.pixelSize: 12
+                    }
                     CompactField {
                         id: rcHostField
                         monospace: true
                         Layout.fillWidth: true
-                        placeholderText: "192.168.1.50 / nas.local"
+                        Layout.columnSpan: remoteConnectionsDialog.isCloudProto ? 3 : 1
+                        placeholderText: remoteConnectionsDialog.isCloudProto
+                                         ? "gdrive"
+                                         : "192.168.1.50 / nas.local"
                     }
 
-                    Text { text: qsTr("Port:"); color: p.textMuted; font.pixelSize: 12 }
+                    Text { visible: !remoteConnectionsDialog.isCloudProto; text: qsTr("Port:"); color: p.textMuted; font.pixelSize: 12 }
                     CompactField {
                         id: rcPortField
+                        visible: !remoteConnectionsDialog.isCloudProto
                         monospace: true
                         text: "22"
                         Layout.preferredWidth: 82
                     }
 
-                    Text { text: qsTr("Username:"); color: p.textMuted; font.pixelSize: 12 }
+                    Text { visible: !remoteConnectionsDialog.isCloudProto; text: qsTr("Username:"); color: p.textMuted; font.pixelSize: 12 }
                     CompactField {
                         id: rcUserField
+                        visible: !remoteConnectionsDialog.isCloudProto
                         monospace: true
                         Layout.fillWidth: true
                         placeholderText: qsTr("user (optional for guest SMB)")
                     }
 
-                    Text { text: remoteConnectionsDialog.protocol === "smb" ? qsTr("Domain:") : qsTr("SSH Key:"); color: p.textMuted; font.pixelSize: 12 }
+                    Text {
+                        visible: !remoteConnectionsDialog.isCloudProto
+                        text: remoteConnectionsDialog.protocol === "smb" ? qsTr("Domain:") : qsTr("SSH Key:")
+                        color: p.textMuted
+                        font.pixelSize: 12
+                    }
                     CompactField {
                         id: rcDomainField
+                        visible: !remoteConnectionsDialog.isCloudProto
                         monospace: true
                         Layout.fillWidth: true
                         placeholderText: remoteConnectionsDialog.protocol === "smb" ? "WORKGROUP" : qsTr("~/.ssh/id_ed25519 (sshfs)")
                     }
 
-                    Text { text: remoteConnectionsDialog.protocol === "smb" ? qsTr("Share / Path:") : qsTr("Remote Path:"); color: p.textMuted; font.pixelSize: 12 }
+                    Text {
+                        text: remoteConnectionsDialog.protocol === "smb"
+                              ? qsTr("Share / Path:")
+                              : (remoteConnectionsDialog.isCloudProto ? qsTr("Drive Folder:") : qsTr("Remote Path:"))
+                        color: p.textMuted
+                        font.pixelSize: 12
+                    }
                     CompactField {
                         id: rcPathField
                         monospace: true
                         text: "/"
                         Layout.fillWidth: true
                         Layout.columnSpan: 3
-                        placeholderText: remoteConnectionsDialog.protocol === "smb" ? "/share/folder" : "/var/www"
+                        placeholderText: remoteConnectionsDialog.protocol === "smb"
+                                         ? "/share/folder"
+                                         : (remoteConnectionsDialog.isCloudProto ? "/ or /Documents" : "/var/www")
                     }
                 }
 
@@ -7416,9 +8581,11 @@ ApplicationWindow {
                         wrapMode: Text.WordWrap
                         font.pixelSize: 11
                         color: p.textMuted
-                        text: remoteConnectionsDialog.protocol === "sshfs"
-                              ? qsTr("SSHFS mounts via FUSE under ~/.cache/omapanel/mounts/ using key authentication.")
-                              : qsTr("GVFS mounts via 'gio mount' (uses SSH Agent / GNOME Keyring) and appears directly in your Drives bar.")
+                        text: remoteConnectionsDialog.isCloudProto
+                              ? qsTr("Mounts rclone remote via FUSE (--vfs-cache-mode writes) under ~/.cache/twinforge/mounts/ and appears in your Drives bar.")
+                              : (remoteConnectionsDialog.protocol === "sshfs"
+                                 ? qsTr("SSHFS mounts via FUSE under ~/.cache/twinforge/mounts/ using key authentication.")
+                                 : qsTr("GVFS mounts via 'gio mount' (uses SSH Agent / GNOME Keyring) and appears directly in your Drives bar."))
                     }
                 }
 
@@ -7447,7 +8614,22 @@ ApplicationWindow {
                         }
                     }
 
-                    Item { Layout.fillWidth: true }
+                    Text {
+                        visible: backend.remoteOpRunning
+                        text: backend.remoteOpDetail
+                        font.pixelSize: 11
+                        color: p.accent
+                        elide: Text.ElideRight
+                        Layout.fillWidth: true
+                    }
+
+                    Item { visible: !backend.remoteOpRunning; Layout.fillWidth: true }
+
+                    ToolbarBtn {
+                        visible: backend.remoteOpRunning
+                        label: qsTr("Cancel")
+                        onClicked: backend.cancelRemoteOperation()
+                    }
 
                     ToolbarBtn {
                         label: qsTr("Close")
@@ -7457,7 +8639,7 @@ ApplicationWindow {
                     ToolbarBtn {
                         label: qsTr("Save & Connect")
                         accentHighlight: true
-                        btnEnabled: rcHostField.text.trim().length > 0 || rcUriField.text.trim().length > 0
+                        btnEnabled: !backend.remoteOpRunning && (rcHostField.text.trim().length > 0 || rcUriField.text.trim().length > 0)
                         onClicked: {
                             if (rcHostField.text.trim().length === 0 && rcUriField.text.trim().length > 0)
                                 remoteConnectionsDialog.parseFromUriBar();
@@ -7465,10 +8647,7 @@ ApplicationWindow {
                             if (form.host.length === 0) return;
                             backend.saveRemoteConnection(form);
                             var uri = backend.buildRemoteUri(form);
-                            if (backend.connectRemote(uri).length > 0) {
-                                win.remoteConnectionsOpen = false;
-                                currentListView().forceActiveFocus();
-                            }
+                            backend.connectRemoteAsync(uri);
                         }
                     }
                 }
@@ -8389,8 +9568,8 @@ ApplicationWindow {
                     spacing: 10
 
                     VectorIcon {
-                        width: 20
-                        height: 20
+                        width: 30
+                        height: 30
                         kind: win.propData.isDir ? "folder" : "file"
                         iconColor: win.propData.isDir ? p.iconFolder : p.accent
                     }
@@ -8949,6 +10128,39 @@ ApplicationWindow {
 
             Rectangle { Layout.fillWidth: true; height: 1; color: p.borderSubtle }
 
+            // Async checksum progress bar + cancel
+            RowLayout {
+                Layout.fillWidth: true
+                visible: backend.checksumRunning
+                spacing: 8
+
+                Text {
+                    text: qsTr("Computing hashes… %1%").arg(Math.round(backend.checksumProgress * 100))
+                    font.pixelSize: 11
+                    font.bold: true
+                    color: p.accent
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 6
+                    radius: 3
+                    color: p.borderDefault
+                    Rectangle {
+                        width: parent.width * Math.max(0, Math.min(1, backend.checksumProgress))
+                        height: parent.height
+                        radius: 3
+                        color: p.accent
+                    }
+                }
+
+                ToolbarBtn {
+                    implicitHeight: 22
+                    label: qsTr("Cancel")
+                    onClicked: backend.cancelChecksumCalculation()
+                }
+            }
+
             // Computed Hashes
             GridLayout {
                 Layout.fillWidth: true
@@ -9216,7 +10428,10 @@ ApplicationWindow {
             }
         }
 
-        onRejected: win.checksumOpen = false
+        onRejected: {
+            backend.cancelChecksumCalculation();
+            win.checksumOpen = false;
+        }
     }
 
     // Visual File Diff Dialog
@@ -9415,7 +10630,7 @@ ApplicationWindow {
     AppDialog {
         id: helpDialog
         visible: win.helpOpen
-        title: qsTr("AeroCommander — Keyboard Shortcuts")
+        title: qsTr("TwinForge — Keyboard Shortcuts")
         width: 640
         height: 580
 
@@ -9436,12 +10651,20 @@ ApplicationWindow {
                         { key: "Ctrl + Shift + S", desc: qsTr("Synchronize Directories recursively between panels") },
                         { key: "Ctrl + Shift + F7", desc: qsTr("Find Duplicate Files by size and SHA-256 hash") },
                         { key: "Ctrl + Shift + Q", desc: qsTr("Open Operation Queue & Pause / Speed / ETA monitor") },
-                        { key: "Ctrl + Shift + M", desc: qsTr("Connect & manage Remote SFTP / SMB / SSHFS servers") },
+                        { key: "Ctrl + Shift + M", desc: qsTr("Connect & manage Google Drive (rclone), SFTP, SMB & SSHFS servers") },
                         { key: "Ctrl + Shift + O", desc: qsTr("Open With compatible apps & manage Custom Actions") },
                         { key: "Enter (on archive)", desc: qsTr("Browse inside .zip / .tar.* / .7z archive as virtual folder") },
                         { key: "Tab", desc: qsTr("Switch active panel (Left / Right)") },
                         { key: "Ctrl + Shift + T", desc: qsTr("Toggle between Light and Dark theme") },
                         { key: "Ctrl + T / Ctrl + W", desc: qsTr("Open new tab / Close active tab in panel") },
+                        { key: "Ctrl + Shift + W", desc: qsTr("Reopen last closed tab in active panel") },
+                        { key: "Ctrl + Alt + L", desc: qsTr("Lock / unlock active tab (right-click tab for strict mode & actions)") },
+                        { key: "Ctrl + Shift + L", desc: qsTr("Open Workspaces manager (save & restore dual-panel layouts)") },
+                        { key: "Ctrl + Shift + Backspace", desc: qsTr("Open Trash Manager (trash://) to restore or empty") },
+                        { key: "Ctrl + E / Ctrl + O", desc: qsTr("Focus command bar (↑/↓ history, built-in cd) / Toggle live output drawer") },
+                        { key: "Ctrl + Enter / Ctrl+Shift+Enter", desc: qsTr("Insert highlighted filename / full path into command bar") },
+                        { key: "Ctrl + Alt + S", desc: qsTr("Split large file into .001 parts (+ .crc) or combine parts back") },
+                        { key: "Type letters", desc: qsTr("Multi-character Type-Ahead quick jump inside active panel") },
                         { key: "Ctrl + Tab", desc: qsTr("Switch between open tabs in active panel") },
                         { key: "Ctrl + 1 / Ctrl + 2", desc: qsTr("Toggle List / Grid thumbnail view mode") },
                         { key: "Ctrl + C / X / V", desc: qsTr("Copy / Cut / Paste files via system clipboard") },
@@ -9472,7 +10695,7 @@ ApplicationWindow {
                         { key: "Ctrl + F3..F6", desc: qsTr("Sort by Name, Ext, Date, or Size") },
                         { key: "Ctrl + A / Ctrl + D", desc: qsTr("Select all / Deselect all") },
                         { key: "Ctrl + H", desc: qsTr("Toggle show/hide hidden dotfiles") },
-                        { key: "F10 / Esc", desc: qsTr("Quit omapanel / Close dialog") }
+                        { key: "F10 / Esc", desc: qsTr("Quit TwinForge / Close dialog") }
                     ]
 
                     delegate: Rectangle {
@@ -9531,10 +10754,10 @@ ApplicationWindow {
         }
     }
 
-    // About AeroCommander Dialog
+    // About TwinForge Dialog
     AppDialog {
         id: aboutDialog
-        title: qsTr("About AeroCommander")
+        title: qsTr("About TwinForge")
         visible: win.aboutOpen
         width: Math.min(460, win.width - 40)
 
@@ -9561,7 +10784,7 @@ ApplicationWindow {
                     RowLayout {
                         spacing: 8
                         Text {
-                            text: "AeroCommander"
+                            text: "TwinForge"
                             font.bold: true
                             font.pixelSize: 18
                             color: p.textPrimary
@@ -9585,7 +10808,7 @@ ApplicationWindow {
                     }
 
                     Text {
-                        text: qsTr("Total Commander for Linux & Omarchy")
+                        text: qsTr("Modern Dual-Panel File Manager for Linux")
                         font.pixelSize: 12
                         color: p.textMuted
                     }
@@ -9713,7 +10936,9 @@ ApplicationWindow {
                         && !win.checksumOpen && !win.diffOpen && !win.symlinkOpen
                         && !win.maskOpen && !win.helpOpen && !win.aboutOpen && !win.previewOpen
                         && !win.syncDirsOpen && !win.duplicateFinderOpen && !win.queueDialogOpen
-                        && !win.remoteConnectionsOpen && !win.openWithOpen)
+                        && !win.remoteConnectionsOpen && !win.openWithOpen
+                        && !win.workspacesOpen && !win.confirmEmptyTrashOpen
+                        && !win.splitCombineOpen && !cmdLineInput.input.activeFocus)
                     currentListView().forceActiveFocus();
             }
         }
@@ -10072,18 +11297,11 @@ ApplicationWindow {
         property int equalCount: 0
         property int conflictCount: 0
 
-        function refreshCompare() {
-            if (backend.leftPanel.isArchiveView || backend.rightPanel.isArchiveView) {
-                allItems = [];
-                rebuildVisible();
-                return;
-            }
-            var raw = backend.compareDirectoriesRecursive(
-                backend.leftPanel.path, backend.rightPanel.path, compareMode, includeHidden
-            );
+        function applyCompareResults(raw) {
+            var list = raw || [];
             var indexed = [];
-            for (var i = 0; i < raw.length; i++) {
-                var r = raw[i];
+            for (var i = 0; i < list.length; i++) {
+                var r = list[i];
                 indexed.push({
                     syncIdx: i,
                     relPath: r.relPath,
@@ -10101,6 +11319,18 @@ ApplicationWindow {
             }
             allItems = indexed;
             rebuildVisible();
+        }
+
+        function refreshCompare() {
+            if (backend.leftPanel.isArchiveView || backend.rightPanel.isArchiveView) {
+                backend.cancelSyncOperation();
+                allItems = [];
+                rebuildVisible();
+                return;
+            }
+            backend.startDirectoryCompare(
+                backend.leftPanel.path, backend.rightPanel.path, compareMode, includeHidden
+            );
         }
 
         function rebuildVisible() {
@@ -10155,11 +11385,11 @@ ApplicationWindow {
         function applySync() {
             if (copyRightCount === 0 && copyLeftCount === 0)
                 return;
-            backend.executeDirectorySync(backend.leftPanel.path, backend.rightPanel.path, allItems);
-            refreshCompare();
+            backend.startDirectorySync(backend.leftPanel.path, backend.rightPanel.path, allItems);
         }
 
         onRejected: {
+            backend.cancelSyncOperation();
             win.syncDirsOpen = false;
             currentListView().forceActiveFocus();
         }
@@ -10204,9 +11434,49 @@ ApplicationWindow {
                 Item { Layout.fillWidth: true }
 
                 ToolbarBtn {
-                    label: qsTr("Compare")
+                    label: backend.syncRunning ? qsTr("Cancel") : qsTr("Compare")
                     accentHighlight: true
-                    onClicked: syncDirsDialog.refreshCompare()
+                    onClicked: {
+                        if (backend.syncRunning)
+                            backend.cancelSyncOperation();
+                        else
+                            syncDirsDialog.refreshCompare();
+                    }
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                visible: backend.syncRunning
+                spacing: 8
+
+                Text {
+                    text: backend.syncDetail || qsTr("Working…")
+                    font.pixelSize: 11
+                    font.family: "monospace"
+                    color: p.accent
+                    Layout.fillWidth: true
+                    elide: Text.ElideMiddle
+                }
+
+                Text {
+                    text: Math.round(backend.syncProgress * 100) + "%"
+                    font.pixelSize: 11
+                    font.family: "monospace"
+                    color: p.textSecondary
+                }
+
+                Rectangle {
+                    Layout.preferredWidth: 140
+                    Layout.preferredHeight: 6
+                    radius: 3
+                    color: p.borderDefault
+                    Rectangle {
+                        width: parent.width * Math.max(0, Math.min(1, backend.syncProgress))
+                        height: parent.height
+                        radius: 3
+                        color: p.accent
+                    }
                 }
             }
 
@@ -10327,11 +11597,13 @@ ApplicationWindow {
                 Text {
                     anchors.centerIn: parent
                     visible: syncDirsDialog.visibleItems.length === 0
-                    text: (backend.leftPanel.isArchiveView || backend.rightPanel.isArchiveView)
-                          ? qsTr("Directory synchronization is not supported inside archive views.")
-                          : qsTr("No differences match current filter.")
+                    text: backend.syncRunning
+                          ? (backend.syncDetail || qsTr("Comparing directories…"))
+                          : ((backend.leftPanel.isArchiveView || backend.rightPanel.isArchiveView)
+                              ? qsTr("Directory synchronization is not supported inside archive views.")
+                              : qsTr("No differences match current filter."))
                     font.pixelSize: 12
-                    color: p.textDim
+                    color: backend.syncRunning ? p.accent : p.textDim
                 }
             }
 
@@ -10352,7 +11624,7 @@ ApplicationWindow {
                 ToolbarBtn {
                     label: qsTr("Synchronize")
                     accentHighlight: true
-                    btnEnabled: syncDirsDialog.copyRightCount + syncDirsDialog.copyLeftCount > 0
+                    btnEnabled: !backend.syncRunning && (syncDirsDialog.copyRightCount + syncDirsDialog.copyLeftCount > 0)
                     onClicked: syncDirsDialog.applySync()
                 }
 
@@ -10405,13 +11677,11 @@ ApplicationWindow {
             reclaimableFormatted = formatBytes(reclaim);
         }
 
-        function runScan() {
-            var r1 = currentModel().isArchiveView ? "" : currentModel().path;
-            var r2 = (bothPanels && !targetModel().isArchiveView) ? targetModel().path : "";
-            var raw = backend.findDuplicateFiles(r1, r2, minSizeBytes, includeHidden);
+        function applyDuplicateResults(raw) {
+            var list = raw || [];
             var out = [];
-            for (var i = 0; i < raw.length; i++) {
-                var r = raw[i];
+            for (var i = 0; i < list.length; i++) {
+                var r = list[i];
                 out.push({
                     idx: i,
                     groupIndex: r.groupIndex,
@@ -10429,6 +11699,12 @@ ApplicationWindow {
             }
             dupItems = out;
             recalcSummary();
+        }
+
+        function runScan() {
+            var r1 = currentModel().isArchiveView ? "" : currentModel().path;
+            var r2 = (bothPanels && !targetModel().isArchiveView) ? targetModel().path : "";
+            backend.startDuplicateScan(r1, r2, minSizeBytes, includeHidden);
         }
 
         function toggleRowSelected(rowIdx) {
@@ -10481,6 +11757,7 @@ ApplicationWindow {
         }
 
         onRejected: {
+            backend.cancelDuplicateScan();
             win.duplicateFinderOpen = false;
             currentListView().forceActiveFocus();
         }
@@ -10506,9 +11783,36 @@ ApplicationWindow {
 
                 Item { Layout.fillWidth: true }
                 ToolbarBtn {
-                    label: qsTr("Scan Duplicates")
+                    label: backend.duplicateScanRunning ? qsTr("Cancel") : qsTr("Scan Duplicates")
                     accentHighlight: true
-                    onClicked: duplicateFinderDialog.runScan()
+                    onClicked: {
+                        if (backend.duplicateScanRunning)
+                            backend.cancelDuplicateScan();
+                        else
+                            duplicateFinderDialog.runScan();
+                    }
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                visible: backend.duplicateScanRunning
+                spacing: 8
+
+                Text {
+                    text: qsTr("Scanning… %1 file(s)").arg(backend.duplicateScanScannedCount)
+                    font.pixelSize: 11
+                    font.bold: true
+                    color: p.accent
+                }
+
+                Text {
+                    text: backend.duplicateScanDetail || ""
+                    font.pixelSize: 11
+                    font.family: "monospace"
+                    color: p.textMuted
+                    Layout.fillWidth: true
+                    elide: Text.ElideMiddle
                 }
             }
 
@@ -10661,9 +11965,11 @@ ApplicationWindow {
                 Text {
                     anchors.centerIn: parent
                     visible: duplicateFinderDialog.dupItems.length === 0
-                    text: qsTr("No duplicate files found for current filter.")
+                    text: backend.duplicateScanRunning
+                          ? qsTr("Scanning for duplicate files… (%1 scanned)").arg(backend.duplicateScanScannedCount)
+                          : qsTr("No duplicate files found for current filter.")
                     font.pixelSize: 12
-                    color: p.textDim
+                    color: backend.duplicateScanRunning ? p.accent : p.textDim
                 }
             }
 

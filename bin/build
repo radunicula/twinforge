@@ -5,7 +5,13 @@ ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 mkdir -p "$ROOT/build"
 cd "$ROOT/build"
 
-qmake6 "$ROOT/omapanel.pro"
-make -j"$(nproc)"
+# Clean stale Makefile generated for omapanel.pro if present
+if [ -f Makefile ] && grep -q "omapanel\.pro" Makefile 2>/dev/null; then
+  rm -f Makefile .qmake.stash
+fi
 
-echo "Built $ROOT/build/omapanel"
+qmake6 "$ROOT/twinforge.pro"
+make -j"$(nproc)"
+ln -sf twinforge "$ROOT/build/tf"
+
+echo "Built $ROOT/build/twinforge (alias: $ROOT/build/tf)"

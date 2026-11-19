@@ -5,10 +5,13 @@
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QImage>
+#include <QImageReader>
 #include <QMimeData>
 #include <QProcess>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
+#include <QQuickItem>
+#include <QQuickWindow>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QUrl>
@@ -17,9 +20,12 @@
 #include <sys/stat.h>
 
 #include "backend.h"
+#include "cli.h"
 #include "fileoperation.h"
 #include "panelmodel.h"
+#include "singleinstance.h"
 #include "theme.h"
+#include "thumbnailprovider.h"
 #include "translator.h"
 
 static void writeFile(const QString &path, const QByteArray &data)
@@ -124,10 +130,10 @@ private slots:
         // Before pressing Space, folder shows <DIR>
         QCOMPARE(model.data(model.index(folderIdx, 0), PanelModel::FormattedSizeRole).toString(), QString("<DIR>"));
 
-        // Pressing Space (toggleSelection) on folder calculates its size and selects it
+        // Pressing Space (toggleSelection) on folder selects it and triggers async size calculation
         model.toggleSelection(folderIdx);
         QCOMPARE(model.selectedCount(), 1);
-        QCOMPARE(model.data(model.index(folderIdx, 0), PanelModel::SizeRole).toLongLong(), 2048LL);
+        QTRY_COMPARE(model.data(model.index(folderIdx, 0), PanelModel::SizeRole).toLongLong(), 2048LL);
         QCOMPARE(model.data(model.index(folderIdx, 0), PanelModel::FormattedSizeRole).toString(), QString("2.0 KB"));
     }
 
@@ -799,9 +805,9 @@ private slots:
 
         PanelModel model;
         model.setPath(dir.path());
-        QVERIFY(model.isGitRepo());
-        QVERIFY(!model.gitBranch().isEmpty());
-        QVERIFY(model.gitModifiedCount() >= 1 || model.gitUntrackedCount() >= 1);
+        QTRY_VERIFY(model.isGitRepo());
+        QTRY_VERIFY(!model.gitBranch().isEmpty());
+        QTRY_VERIFY(model.gitModifiedCount() >= 1 || model.gitUntrackedCount() >= 1);
     }
 
     void viewModeToggle()
@@ -1516,6 +1522,7 @@ private slots:
         Backend backend(cfg.filePath("bookmarks.json"));
 
         QQmlApplicationEngine engine;
+        engine.addImageProvider(QStringLiteral("thumb"), new ThumbnailProvider());
         engine.rootContext()->setContextProperty("theme", &theme);
         engine.rootContext()->setContextProperty("backend", &backend);
         engine.rootContext()->setContextProperty("i18n", &translator);
@@ -1537,6 +1544,67 @@ private slots:
         QCOMPARE(backend.themeMode(), QStringLiteral("dark"));
         QCOMPARE(root->property("isDark").toBool(), true);
         QCOMPARE(palette->property("windowBg").value<QColor>(), QColor("#09090b"));
+
+        // Exercise full-box breadcrumb click target & path-editor right-side Copy button
+        auto *win = qobject_cast<QQuickWindow *>(root);
+        auto *crumbBox = root->findChild<QQuickItem *>(QStringLiteral("crumbBox_0"));
+        auto *crumbBgMouse = root->findChild<QQuickItem *>(QStringLiteral("crumbBgMouse_0"));
+        auto *pathEditField = root->findChild<QQuickItem *>(QStringLiteral("pathEditField_0"));
+        auto *copyPathBtn = root->findChild<QQuickItem *>(QStringLiteral("copyPathBtn_0"));
+        QVERIFY(win != nullptr);
+        QVERIFY(crumbBox != nullptr);
+        QVERIFY(crumbBgMouse != nullptr);
+        QVERIFY(pathEditField != nullptr);
+        QVERIFY(copyPathBtn != nullptr);
+
+        QVERIFY(QTest::qWaitForWindowExposed(win));
+        QTRY_VERIFY(crumbBox->width() > 120.0);
+        QCOMPARE(crumbBgMouse->width(), crumbBox->width());
+        QCOMPARE(crumbBgMouse->height(), crumbBox->height());
+        QCOMPARE(crumbBox->isVisible(), true);
+        QCOMPARE(pathEditField->isVisible(), false);
+
+        // Real mouse click in the far-right empty area of the address box (just left of the bookmark star)
+        const QPoint emptyClickPos = crumbBox->mapToScene(QPointF(crumbBox->width() - 36.0, crumbBox->height() * 0.5)).toPoint();
+        QTest::mouseClick(win, Qt::LeftButton, Qt::NoModifier, emptyClickPos);
+        QCOMPARE(crumbBox->isVisible(), false);
+        QCOMPARE(pathEditField->isVisible(), true);
+        QCOMPARE(copyPathBtn->isVisible(), true);
+        QCOMPARE(pathEditField->property("text").toString(), backend.leftPanel()->path());
+
+        // Real mouse click on the right-side Copy button keeps editor open and copies the path
+        QTRY_VERIFY(copyPathBtn->x() > 50.0);
+        const QPoint copyClickPos = copyPathBtn->mapToScene(QPointF(copyPathBtn->width() * 0.5, copyPathBtn->height() * 0.5)).toPoint();
+        QTest::mouseClick(win, Qt::LeftButton, Qt::NoModifier, copyClickPos);
+        QCOMPARE(QGuiApplication::clipboard()->text(), backend.leftPanel()->path());
+        QCOMPARE(pathEditField->isVisible(), true);
+
+        // Verify HD SVG icon inside Copy button loaded at 3x supersampled resolution
+        QObject *hdIcon = nullptr;
+        for (QObject *child : copyPathBtn->children()) {
+            if (child->property("kind").isValid() && child->property("sourceSize").isValid()) {
+                hdIcon = child;
+                break;
+            }
+        }
+        QVERIFY(hdIcon != nullptr);
+        QTRY_COMPARE(hdIcon->property("status").toInt(), 1); // Image.Ready
+        QCOMPARE(hdIcon->property("sourceSize").toSize(), QSize(68, 68));
+        QVERIFY(hdIcon->property("source").toUrl().toString().startsWith(QStringLiteral("data:image/svg+xml;utf8,")));
+
+        // Verify modern icon-type detection covers rich file categories
+        QCOMPARE(PanelModel::detectIconTypeForName(QStringLiteral("manual.pdf"), false, false), QStringLiteral("pdf"));
+        QCOMPARE(PanelModel::detectIconTypeForName(QStringLiteral("README.md"), false, false), QStringLiteral("markdown"));
+        QCOMPARE(PanelModel::detectIconTypeForName(QStringLiteral("budget.csv"), false, false), QStringLiteral("sheet"));
+        QCOMPARE(PanelModel::detectIconTypeForName(QStringLiteral("settings.json"), false, false), QStringLiteral("config"));
+        QCOMPARE(PanelModel::detectIconTypeForName(QStringLiteral("deploy.sh"), false, true), QStringLiteral("script"));
+        QCOMPARE(PanelModel::detectIconTypeForName(QStringLiteral("app.sqlite3"), false, false), QStringLiteral("database"));
+        QCOMPARE(PanelModel::detectIconTypeForName(QStringLiteral("Inter.ttf"), false, false), QStringLiteral("font"));
+        QCOMPARE(PanelModel::detectIconTypeForName(QStringLiteral("id_ed25519"), false, false), QStringLiteral("lock"));
+        QCOMPARE(PanelModel::detectIconTypeForName(QStringLiteral("src"), true, false), QStringLiteral("folder"));
+        QVERIFY(QMetaObject::invokeMethod(pathEditField, "escaped"));
+        QCOMPARE(crumbBox->isVisible(), true);
+        QCOMPARE(pathEditField->isVisible(), false);
 
         // Exercise Command Palette & Quick Jump modes and Flat View QML bindings
         QCOMPARE(root->property("commandPaletteOpen").toBool(), false);
@@ -2107,6 +2175,877 @@ private slots:
         }
         QVERIFY(persistedFound);
         QVERIFY(backendReloaded.deleteCustomAction(QStringLiteral("count_bytes_md")));
+    }
+
+    void googleDriveRcloneDiscoveryMountAndAuth()
+    {
+        QTemporaryDir mountsDir, cfg, binDir;
+        const QString remotesStateFile = cfg.filePath("mock_remotes.txt");
+        writeFile(remotesStateFile, "gdrive: drive\nmycloud: s3\n");
+
+        const QString mockRclone = binDir.filePath("rclone");
+        const QString script = QStringLiteral(
+            "#!/bin/sh\n"
+            "STATE_FILE=\"%1\"\n"
+            "cmd=\"$1\"\n"
+            "if [ \"$cmd\" = \"listremotes\" ]; then\n"
+            "  cat \"$STATE_FILE\"\n"
+            "  exit 0\n"
+            "fi\n"
+            "if [ \"$cmd\" = \"mount\" ]; then\n"
+            "  target=\"$3\"\n"
+            "  mkdir -p \"$target\"\n"
+            "  echo \"Drive content\" > \"$target/DriveReadme.txt\"\n"
+            "  exit 0\n"
+            "fi\n"
+            "if [ \"$cmd\" = \"config\" ]; then\n"
+            "  sub=\"$2\"\n"
+            "  name=\"$3\"\n"
+            "  if [ \"$sub\" = \"create\" ]; then\n"
+            "    echo \"NOTICE: Link: http://127.0.0.1:53682/auth?state=mock1\" >&2\n"
+            "    echo '{\"State\":\"teamdrive_ok\",\"Option\":{\"DefaultStr\":\"false\"}}'\n"
+            "    exit 0\n"
+            "  elif [ \"$sub\" = \"update\" ]; then\n"
+            "    echo \"${name}: drive\" >> \"$STATE_FILE\"\n"
+            "    echo '{\"State\":\"\"}'\n"
+            "    exit 0\n"
+            "  fi\n"
+            "fi\n"
+            "exit 1\n").arg(remotesStateFile);
+        writeFile(mockRclone, script.toUtf8());
+        QFile::setPermissions(mockRclone, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner
+                                              | QFile::ReadGroup | QFile::ExeGroup);
+
+        qputenv("TWINFORGE_RCLONE_BIN", mockRclone.toUtf8());
+        qputenv("TWINFORGE_MOUNTS_DIR", mountsDir.path().toUtf8());
+        qputenv("TWINFORGE_RCLONE_CONF", cfg.filePath("rclone.conf").toUtf8());
+        struct EnvCleanup {
+            ~EnvCleanup() {
+                qunsetenv("TWINFORGE_RCLONE_BIN");
+                qunsetenv("TWINFORGE_MOUNTS_DIR");
+                qunsetenv("TWINFORGE_RCLONE_CONF");
+            }
+        } cleanup;
+
+        Backend backend(cfg.filePath("bookmarks.json"));
+
+        // URI parsing and normalization
+        const QVariantMap parsedGdrive = backend.parseRemoteUri(QStringLiteral("google-drive://personal/Docs"));
+        QCOMPARE(parsedGdrive.value(QStringLiteral("protocol")).toString(), QStringLiteral("gdrive"));
+        QCOMPARE(parsedGdrive.value(QStringLiteral("host")).toString(), QStringLiteral("personal"));
+        QCOMPARE(parsedGdrive.value(QStringLiteral("port")).toInt(), 0);
+        QCOMPARE(parsedGdrive.value(QStringLiteral("remotePath")).toString(), QStringLiteral("/Docs"));
+        QCOMPARE(backend.buildRemoteUri(parsedGdrive), QStringLiteral("gdrive://personal/Docs"));
+
+        const QVariantMap parsedRclone = backend.parseRemoteUri(QStringLiteral("rclone://mycloud/Backups"));
+        QCOMPARE(parsedRclone.value(QStringLiteral("protocol")).toString(), QStringLiteral("rclone"));
+        QCOMPARE(parsedRclone.value(QStringLiteral("host")).toString(), QStringLiteral("mycloud"));
+        QCOMPARE(backend.buildRemoteUri(parsedRclone), QStringLiteral("rclone://mycloud/Backups"));
+
+        // Discovered rclone remotes + automatic Drive bar entry
+        QVERIFY(backend.rcloneAvailable());
+        QCOMPARE(backend.rcloneRemotes().size(), 2);
+        QCOMPARE(backend.rcloneRemotes().first().toMap().value(QStringLiteral("name")).toString(), QStringLiteral("gdrive"));
+        QCOMPARE(backend.rcloneRemotes().first().toMap().value(QStringLiteral("isGoogleDrive")).toBool(), true);
+
+        auto findDriveChip = [&backend](const QString &uri) -> QVariantMap {
+            for (const QVariant &v : backend.drives()) {
+                const QVariantMap d = v.toMap();
+                if (d.value(QStringLiteral("remoteUri")).toString() == uri)
+                    return d;
+            }
+            return {};
+        };
+
+        const QVariantMap chipBefore = findDriveChip(QStringLiteral("gdrive://gdrive"));
+        QCOMPARE(chipBefore.value(QStringLiteral("isRemote")).toBool(), true);
+        QCOMPARE(chipBefore.value(QStringLiteral("free")).toString(), QStringLiteral("GDRIVE"));
+        QCOMPARE(chipBefore.value(QStringLiteral("isMounted")).toBool(), false);
+
+        // Mount Google Drive remote and navigate active panel
+        const QString mountedPath = backend.connectRemote(QStringLiteral("gdrive://gdrive"));
+        QVERIFY(!mountedPath.isEmpty());
+        QVERIFY(QFileInfo::exists(QDir(mountedPath).filePath(QStringLiteral("DriveReadme.txt"))));
+        QCOMPARE(backend.activeModel()->path(), mountedPath);
+
+        const QVariantMap chipAfter = findDriveChip(QStringLiteral("gdrive://gdrive"));
+        QCOMPARE(chipAfter.value(QStringLiteral("isMounted")).toBool(), true);
+        QCOMPARE(chipAfter.value(QStringLiteral("canUnmount")).toBool(), true);
+
+        // Disconnect mount cleanly
+        QVERIFY(backend.disconnectRemote(QStringLiteral("gdrive://gdrive")));
+        const QVariantMap chipDisconnected = findDriveChip(QStringLiteral("gdrive://gdrive"));
+        QCOMPARE(chipDisconnected.value(QStringLiteral("isMounted")).toBool(), false);
+
+        // Async Google OAuth flow (mock create + continue update)
+        QSignalSpy authSpy(&backend, &Backend::gdriveAuthFinished);
+        backend.startGoogleDriveAuth(QStringLiteral("work_drive"));
+        QTRY_COMPARE_WITH_TIMEOUT(authSpy.count(), 1, 5000);
+        QCOMPARE(authSpy.first().at(0).toBool(), true);
+        QCOMPARE(authSpy.first().at(1).toString(), QStringLiteral("work_drive"));
+        QCOMPARE(backend.rcloneRemotes().size(), 3);
+
+        bool workSaved = false;
+        for (const QVariant &v : backend.remoteConnections()) {
+            if (v.toMap().value(QStringLiteral("host")).toString() == QStringLiteral("work_drive"))
+                workSaved = true;
+        }
+        QVERIFY(workSaved);
+    }
+
+    void asyncGitStatusAndDirectorySwitchCancellation()
+    {
+        QTemporaryDir repoDir;
+        QTemporaryDir plainDir;
+        QProcess proc;
+        proc.setWorkingDirectory(repoDir.path());
+        proc.start(QStringLiteral("git"), {QStringLiteral("init")});
+        if (!proc.waitForFinished(3000) || proc.exitCode() != 0)
+            return;
+
+        writeFile(repoDir.filePath("file.txt"), "initial");
+        proc.start(QStringLiteral("git"), {QStringLiteral("add"), QStringLiteral("file.txt")});
+        proc.waitForFinished(2000);
+        proc.start(QStringLiteral("git"), {QStringLiteral("-c"), QStringLiteral("user.name=Test"),
+                                           QStringLiteral("-c"), QStringLiteral("user.email=test@example.com"),
+                                           QStringLiteral("commit"), QStringLiteral("-m"), QStringLiteral("init")});
+        proc.waitForFinished(2000);
+        writeFile(repoDir.filePath("file.txt"), "edited");
+        writeFile(plainDir.filePath("note.txt"), "not a git repo");
+
+        PanelModel model;
+        // Rapid switch: enter git repo, then immediately leave to plainDir.
+        model.setPath(repoDir.path());
+        model.setPath(plainDir.path());
+        QTRY_COMPARE(model.gitStatusLoading(), false);
+        QCOMPARE(model.isGitRepo(), false);
+        QVERIFY(model.gitBranch().isEmpty());
+
+        // Now navigate back into git repo and verify async status resolves cleanly.
+        model.setPath(repoDir.path());
+        QTRY_VERIFY(model.isGitRepo());
+        QTRY_VERIFY(!model.gitBranch().isEmpty());
+        QTRY_VERIFY(model.gitModifiedCount() >= 1);
+    }
+
+    void asyncHeavyOperationsAndCancellation()
+    {
+        QTemporaryDir leftDir;
+        QTemporaryDir rightDir;
+        QTemporaryDir dupDir;
+        QTemporaryDir arcDir;
+        QTemporaryDir cfg;
+        QVERIFY(QDir().mkpath(dupDir.filePath("d1")));
+        QVERIFY(QDir().mkpath(dupDir.filePath("d2")));
+
+        const QString sampleFile = leftDir.filePath("hello.md");
+        writeFile(sampleFile, "# Async Preview\n\nTwinForge background worker test.");
+        writeFile(leftDir.filePath("only_left.txt"), "left payload");
+        writeFile(rightDir.filePath("only_right.txt"), "right payload");
+        writeFile(dupDir.filePath("d1/dup.bin"), QByteArray(4096, 'X'));
+        writeFile(dupDir.filePath("d2/dup_copy.bin"), QByteArray(4096, 'X'));
+
+        Backend backend(cfg.filePath("bookmarks.json"));
+
+        // 1. Async checksum
+        QSignalSpy checksumSpy(&backend, &Backend::checksumFinished);
+        backend.startChecksumCalculation(sampleFile);
+        QTRY_COMPARE_WITH_TIMEOUT(checksumSpy.count(), 1, 5000);
+        const QVariantMap hashes = checksumSpy.first().at(0).toMap();
+        QCOMPARE(hashes.value(QStringLiteral("sha256")).toString().length(), 64);
+        QCOMPARE(hashes.value(QStringLiteral("md5")).toString().length(), 32);
+
+        // 2. Async preview (modal + quickview)
+        QSignalSpy previewSpy(&backend, &Backend::previewReady);
+        backend.requestPreview(sampleFile, 1, QStringLiteral("modal"));
+        backend.requestPreview(sampleFile, 1, QStringLiteral("quickview"));
+        QTRY_COMPARE_WITH_TIMEOUT(previewSpy.count(), 2, 5000);
+        bool sawModal = false, sawQuick = false;
+        for (const QList<QVariant> &sig : previewSpy) {
+            const QString target = sig.at(0).toString();
+            const QVariantMap data = sig.at(1).toMap();
+            QCOMPARE(data.value(QStringLiteral("isMarkdown")).toBool(), true);
+            if (target == QLatin1String("modal")) sawModal = true;
+            if (target == QLatin1String("quickview")) sawQuick = true;
+        }
+        QVERIFY(sawModal);
+        QVERIFY(sawQuick);
+
+        // 3. Async directory compare & sync
+        QSignalSpy syncFinishedSpy(&backend, &Backend::directorySyncFinished);
+        backend.startDirectoryCompare(leftDir.path(), rightDir.path(), QStringLiteral("date_size"), false);
+        QTRY_VERIFY_WITH_TIMEOUT(!backend.syncRunning() && backend.syncCompareResults().size() >= 2, 5000);
+        backend.startDirectorySync(leftDir.path(), rightDir.path(), backend.syncCompareResults());
+        QTRY_COMPARE_WITH_TIMEOUT(syncFinishedSpy.count(), 1, 5000);
+        QVERIFY(QFile::exists(rightDir.filePath("only_left.txt")));
+        QVERIFY(QFile::exists(leftDir.filePath("only_right.txt")));
+
+        // 4. Async duplicate finder
+        backend.startDuplicateScan(dupDir.path(), QString(), 1, false);
+        QTRY_VERIFY_WITH_TIMEOUT(!backend.duplicateScanRunning() && backend.duplicateResults().size() == 2, 5000);
+
+        // 5. Async archive pack & extract
+        const QString tarPath = arcDir.filePath("bundle.tar.gz");
+        const QString extractDir = arcDir.filePath("out");
+        QSignalSpy arcSpy(&backend, &Backend::archiveOperationFinished);
+        backend.packArchiveAsync({sampleFile}, tarPath);
+        QTRY_COMPARE_WITH_TIMEOUT(arcSpy.count(), 1, 8000);
+        QCOMPARE(arcSpy.first().at(0).toBool(), true);
+        QVERIFY(QFile::exists(tarPath));
+
+        backend.extractArchiveAsync(tarPath, extractDir);
+        QTRY_COMPARE_WITH_TIMEOUT(arcSpy.count(), 2, 8000);
+        QCOMPARE(arcSpy.at(1).at(0).toBool(), true);
+        QVERIFY(QFile::exists(QDir(extractDir).filePath("hello.md")));
+
+        // 6. Async remote connect (pre-mounted GVFS mock)
+        QTemporaryDir gvfsDir;
+        QVERIFY(QDir().mkpath(gvfsDir.filePath("sftp:host=async.local,user=dev")));
+        qputenv("TWINFORGE_GVFS_DIR", gvfsDir.path().toUtf8());
+        auto cleanupEnv = qScopeGuard([] { qunsetenv("TWINFORGE_GVFS_DIR"); });
+        QSignalSpy remoteSpy(&backend, &Backend::remoteOperationFinished);
+        backend.connectRemoteAsync(QStringLiteral("sftp://dev@async.local/"));
+        QTRY_COMPARE_WITH_TIMEOUT(remoteSpy.count(), 1, 5000);
+        QCOMPARE(remoteSpy.first().at(0).toBool(), true);
+        QVERIFY(!remoteSpy.first().at(1).toString().isEmpty());
+    }
+
+    void freedesktopThumbnailCacheSpec()
+    {
+        QTemporaryDir mediaDir;
+        QTemporaryDir cacheDir;
+        qputenv("TWINFORGE_THUMBNAIL_CACHE_DIR", cacheDir.path().toUtf8());
+        auto cleanupEnv = qScopeGuard([] { qunsetenv("TWINFORGE_THUMBNAIL_CACHE_DIR"); });
+
+        // Create a 400x300 PNG image
+        const QString imgPath = mediaDir.filePath("photo sample.png");
+        QImage srcImg(400, 300, QImage::Format_ARGB32);
+        srcImg.fill(QColor("#2288ee"));
+        QVERIFY(srcImg.save(imgPath, "PNG"));
+
+        // Verify PanelModel exposes image://thumb/... URL for Grid view
+        PanelModel model(mediaDir.path());
+        const int idx = model.findIndexByPrefix("photo sample.png");
+        QVERIFY(idx >= 0);
+        const QString thumbUrl = model.data(model.index(idx, 0), PanelModel::ThumbnailUrlRole).toString();
+        QVERIFY(thumbUrl.startsWith(QStringLiteral("image://thumb/")));
+        QVERIFY(thumbUrl.contains(QStringLiteral("photo%20sample.png")));
+        QCOMPARE(ThumbnailProvider::decodeRequestPath(thumbUrl.mid(QStringLiteral("image://thumb/").size())),
+                 QFileInfo(imgPath).absoluteFilePath());
+
+        // 1. First generation: cache miss, creates Freedesktop large/MD5.png with spec metadata
+        bool fromCache = true;
+        const QImage first = ThumbnailProvider::loadOrGenerateThumbnail(imgPath, QSize(192, 192), nullptr, &fromCache);
+        QVERIFY(!first.isNull());
+        QCOMPARE(fromCache, false);
+        QVERIFY(first.width() <= 192 && first.height() <= 192);
+
+        const QString expectedCacheFile = ThumbnailProvider::cacheFilePathFor(imgPath, true);
+        QVERIFY(QFileInfo::exists(expectedCacheFile));
+        QVERIFY(expectedCacheFile.contains(QStringLiteral("/large/")));
+        QVERIFY(expectedCacheFile.endsWith(QStringLiteral(".png")));
+
+        QImage cachedImg(expectedCacheFile);
+        QVERIFY(!cachedImg.isNull());
+        QCOMPARE(cachedImg.text(QStringLiteral("Thumb::URI")), ThumbnailProvider::canonicalUriForPath(imgPath));
+        QCOMPARE(cachedImg.text(QStringLiteral("Thumb::MTime")),
+                 QString::number(QFileInfo(imgPath).lastModified().toSecsSinceEpoch()));
+        QCOMPARE(cachedImg.text(QStringLiteral("Thumb::Size")),
+                 QString::number(QFileInfo(imgPath).size()));
+
+        // 2. Second load: cache hit!
+        fromCache = false;
+        const QImage second = ThumbnailProvider::loadOrGenerateThumbnail(imgPath, QSize(192, 192), nullptr, &fromCache);
+        QVERIFY(!second.isNull());
+        QCOMPARE(fromCache, true);
+
+        // 3. Normal (<= 128) size uses /normal/ bucket
+        const QImage normalThumb = ThumbnailProvider::loadOrGenerateThumbnail(imgPath, QSize(96, 96), nullptr, &fromCache);
+        QVERIFY(!normalThumb.isNull());
+        QCOMPARE(fromCache, false);
+        QVERIFY(QFileInfo::exists(ThumbnailProvider::cacheFilePathFor(imgPath, false)));
+        QVERIFY(ThumbnailProvider::cacheFilePathFor(imgPath, false).contains(QStringLiteral("/normal/")));
+
+        // 4. Modifying source file (new mtime/size) invalidates cache cleanly
+        QImage updatedImg(500, 250, QImage::Format_ARGB32);
+        updatedImg.fill(QColor("#ee4422"));
+        QVERIFY(updatedImg.save(imgPath, "PNG"));
+        {
+            QFile f(imgPath);
+            QVERIFY(f.open(QIODevice::ReadWrite));
+            QVERIFY(f.setFileTime(QDateTime::currentDateTime().addSecs(10), QFileDevice::FileModificationTime));
+        }
+        fromCache = true;
+        const QImage refreshed = ThumbnailProvider::loadOrGenerateThumbnail(imgPath, QSize(192, 192), nullptr, &fromCache);
+        QVERIFY(!refreshed.isNull());
+        QCOMPARE(fromCache, false);
+
+        // 5. Files inside thumbnail cache directory must never be thumbnailed (Freedesktop spec)
+        const QImage selfThumb = ThumbnailProvider::loadOrGenerateThumbnail(expectedCacheFile, QSize(128, 128));
+        QVERIFY(selfThumb.isNull());
+    }
+
+    void cliArgumentsParsingAndShellInit()
+    {
+        QTemporaryDir root;
+        QVERIFY(QDir().mkpath(root.filePath("left_dir")));
+        QVERIFY(QDir().mkpath(root.filePath("right_dir")));
+        const QString sampleFile = root.filePath("left_dir/readme.txt");
+        writeFile(sampleFile, "cli test");
+
+        QString err, out;
+        bool exitOk = false;
+
+        // 1. Two positional paths (one relative, one file:// URI)
+        const CliRequest twoPanels = parseCliArguments(
+            {QStringLiteral("tf"), QStringLiteral("left_dir"),
+             QUrl::fromLocalFile(root.filePath("right_dir")).toString()},
+            root.path(), QStringLiteral("0.1.0"), &err, &exitOk, &out);
+        QVERIFY(err.isEmpty());
+        QCOMPARE(exitOk, false);
+        QCOMPARE(twoPanels.leftPath, QDir::cleanPath(root.filePath("left_dir")));
+        QCOMPARE(twoPanels.rightPath, QDir::cleanPath(root.filePath("right_dir")));
+        QCOMPARE(twoPanels.shouldUseSingleInstance(), true);
+
+        // 2. Passing a file highlights it inside its parent directory
+        const CliRequest fileArg = parseCliArguments(
+            {QStringLiteral("tf"), QStringLiteral("--new-tab"), sampleFile},
+            root.path(), QStringLiteral("0.1.0"), &err, &exitOk, &out);
+        QVERIFY(err.isEmpty());
+        QCOMPARE(fileArg.leftPath, QDir::cleanPath(root.filePath("left_dir")));
+        QCOMPARE(fileArg.selectPath, QDir::cleanPath(sampleFile));
+        QCOMPARE(fileArg.newTab, true);
+
+        // 3. --select + --new-window disables single-instance handoff
+        const CliRequest selArg = parseCliArguments(
+            {QStringLiteral("tf"), QStringLiteral("-n"), QStringLiteral("-s"), sampleFile},
+            root.path(), QStringLiteral("0.1.0"), &err, &exitOk, &out);
+        QVERIFY(err.isEmpty());
+        QCOMPARE(selArg.newWindow, true);
+        QCOMPARE(selArg.shouldUseSingleInstance(), false);
+        QCOMPARE(selArg.leftPath, QDir::cleanPath(root.filePath("left_dir")));
+        QCOMPARE(selArg.selectPath, QDir::cleanPath(sampleFile));
+
+        // 4. --last-dir-file & --print-last-dir disable single-instance handoff and write cleanly
+        const QString lastDirPath = root.filePath("last_dir.txt");
+        const CliRequest lastDirReq = parseCliArguments(
+            {QStringLiteral("tf"), QStringLiteral("--last-dir-file"), lastDirPath, QStringLiteral("--print-last-dir")},
+            root.path(), QStringLiteral("0.1.0"), &err, &exitOk, &out);
+        QVERIFY(err.isEmpty());
+        QCOMPARE(lastDirReq.shouldUseSingleInstance(), false);
+        QCOMPARE(lastDirReq.printLastDir, true);
+        QCOMPARE(lastDirReq.lastDirFile, QDir::cleanPath(lastDirPath));
+        QVERIFY(writeLastDirFile(lastDirReq.lastDirFile, root.filePath("right_dir")));
+        QCOMPARE(QString::fromUtf8(readFile(lastDirPath)).trimmed(), root.filePath("right_dir"));
+
+        // 5. --version and --shell-init (bash, zsh, fish, invalid)
+        parseCliArguments({QStringLiteral("tf"), QStringLiteral("--version")},
+                          root.path(), QStringLiteral("0.1.0"), &err, &exitOk, &out);
+        QVERIFY(err.isEmpty());
+        QCOMPARE(exitOk, true);
+        QVERIFY(out.contains(QStringLiteral("twinforge 0.1.0")));
+
+        for (const QString &sh : {QStringLiteral("bash"), QStringLiteral("zsh"), QStringLiteral("fish")}) {
+            parseCliArguments({QStringLiteral("tf"), QStringLiteral("--shell-init"), sh},
+                              root.path(), QStringLiteral("0.1.0"), &err, &exitOk, &out);
+            QVERIFY(err.isEmpty());
+            QCOMPARE(exitOk, true);
+            QVERIFY(out.contains(QStringLiteral("tfcd")));
+            QVERIFY(out.contains(QStringLiteral("--last-dir-file")));
+        }
+
+        parseCliArguments({QStringLiteral("tf"), QStringLiteral("--shell-init"), QStringLiteral("powershell")},
+                          root.path(), QStringLiteral("0.1.0"), &err, &exitOk, &out);
+        QVERIFY(!err.isEmpty());
+        QCOMPARE(exitOk, false);
+    }
+
+    void singleInstanceIpcAndNavigationRequest()
+    {
+        QTemporaryDir root;
+        QTemporaryDir cfg;
+        QVERIFY(QDir().mkpath(root.filePath("alpha")));
+        QVERIFY(QDir().mkpath(root.filePath("beta")));
+        const QString hiddenFile = root.filePath("beta/.secret_cfg");
+        writeFile(hiddenFile, "secret=1");
+
+        const QString sockName = QStringLiteral("twinforge-test-ipc-%1-%2")
+                                     .arg(QCoreApplication::applicationPid())
+                                     .arg(QDateTime::currentMSecsSinceEpoch());
+
+        SingleInstance primary(sockName);
+        QVERIFY(primary.startListening());
+        QVERIFY(primary.isListening());
+
+        Backend backend(cfg.filePath("bookmarks.json"));
+        QSignalSpy focusSpy(&backend, &Backend::focusAndSelectRequested);
+        QSignalSpy activateSpy(&backend, &Backend::windowActivateRequested);
+
+        CliRequest received;
+        bool gotRequest = false;
+        QObject::connect(&primary, &SingleInstance::requestReceived, &backend,
+                         [&](const CliRequest &req) {
+                             received = req;
+                             gotRequest = true;
+                             backend.applyNavigationRequest(req.leftPath, req.rightPath, req.selectPath, req.newTab);
+                         });
+
+        CliRequest outbound;
+        outbound.leftPath = root.filePath("alpha");
+        outbound.rightPath = root.filePath("beta");
+        outbound.selectPath = hiddenFile;
+        outbound.newTab = true;
+
+        std::atomic<bool> sendOk{false};
+        QThread *senderThread = QThread::create([sockName, outbound, &sendOk]() {
+            SingleInstance client(sockName);
+            sendOk.store(client.sendToRunningInstance(outbound, 1500));
+        });
+        senderThread->start();
+
+        QTRY_VERIFY_WITH_TIMEOUT(gotRequest, 3000);
+        senderThread->wait(3000);
+        delete senderThread;
+
+        QCOMPARE(sendOk.load(), true);
+        QCOMPARE(received.leftPath, outbound.leftPath);
+        QCOMPARE(received.rightPath, outbound.rightPath);
+        QCOMPARE(received.selectPath, outbound.selectPath);
+        QCOMPARE(received.newTab, true);
+
+        QCOMPARE(backend.leftPanel()->path(), QDir::cleanPath(root.filePath("alpha")));
+        QCOMPARE(backend.rightPanel()->path(), QDir::cleanPath(root.filePath("beta")));
+        QCOMPARE(backend.leftPanel()->tabCount(), 2);
+        QCOMPARE(backend.rightPanel()->tabCount(), 2);
+        QCOMPARE(backend.activePanel(), 1); // selectPath is inside rightPath
+        QCOMPARE(backend.rightPanel()->showHidden(), true); // auto-revealed hidden target
+        QVERIFY(backend.rightPanel()->findIndexByPath(hiddenFile) >= 0);
+        QCOMPARE(focusSpy.count(), 1);
+        QCOMPARE(focusSpy.first().at(0).toInt(), 1);
+        QCOMPARE(focusSpy.first().at(1).toString(), QFileInfo(hiddenFile).absoluteFilePath());
+        QVERIFY(activateSpy.count() >= 1);
+        QCOMPARE(backend.activeFilesystemPath(), QDir::cleanPath(root.filePath("beta")));
+    }
+
+    void lockedTabsAndTabManagement()
+    {
+        QTemporaryDir root;
+        QTemporaryDir cfg;
+        const QString dirA = root.filePath("dirA");
+        const QString dirB = root.filePath("dirB");
+        const QString dirSub = root.filePath("dirA/sub");
+        QVERIFY(QDir().mkpath(dirSub));
+        QVERIFY(QDir().mkpath(dirB));
+
+        {
+            Backend backend(cfg.filePath("bookmarks.json"));
+            PanelModel *left = backend.leftPanel();
+            PanelModel *right = backend.rightPanel();
+
+            left->setPath(dirA);
+            left->addTab(dirB);
+            QCOMPARE(left->tabCount(), 2);
+            QCOMPARE(left->activeTab(), 1);
+
+            // 1. Lock tab 0 in strict mode (TabLocked = 1)
+            left->setTabLockMode(0, PanelModel::TabLocked);
+            left->setActiveTab(0);
+            QCOMPARE(left->activeTabLockMode(), static_cast<int>(PanelModel::TabLocked));
+
+            // Attempting to close a locked tab must be blocked
+            left->closeTab(0);
+            QCOMPARE(left->tabCount(), 2);
+
+            // Navigating from a strictly locked tab opens a new tab instead of changing the locked tab
+            left->setPath(dirSub);
+            QCOMPARE(left->tabCount(), 3);
+            QCOMPARE(left->path(), QDir::cleanPath(dirSub));
+            QCOMPARE(left->tabPaths().at(0), QDir::cleanPath(dirA));
+
+            // 2. Lock tab 1 in allow-navigation mode (TabLockedAllowNav = 2)
+            left->setActiveTab(1);
+            left->setTabLockMode(1, PanelModel::TabLockedAllowNav);
+            QCOMPARE(left->activeTabLockMode(), static_cast<int>(PanelModel::TabLockedAllowNav));
+            left->setPath(dirSub);
+            QCOMPARE(left->tabCount(), 3); // stayed on same tab
+            QCOMPARE(left->path(), QDir::cleanPath(dirSub));
+            // Resetting returns to lockedRootPath
+            left->resetLockedTab(1);
+            QCOMPARE(left->path(), QDir::cleanPath(dirB));
+
+            // 3. Duplicate tab, move tab, closeOtherTabs (preserves locked tabs!), reopenClosedTab
+            left->setActiveTab(2); // unlocked tab at dirSub
+            left->duplicateTab(2);
+            QCOMPARE(left->tabCount(), 4);
+            left->moveTab(3, 2);
+            QCOMPARE(left->activeTab(), 2);
+
+            // Close tab 3 -> pushes to closed-tabs stack
+            left->closeTab(3);
+            QCOMPARE(left->tabCount(), 3);
+            QVERIFY(left->canReopenClosedTab());
+            QVERIFY(left->reopenClosedTab());
+            QCOMPARE(left->tabCount(), 4);
+
+            // Close other tabs keeping tab 2 -> locked tabs (0 & 1) stay protected!
+            left->closeOtherTabs(2);
+            QCOMPARE(left->tabCount(), 3); // tabs 0 (strict), 1 (allow-nav), and kept tab 2
+
+            // Move unlocked tab to opposite panel
+            const int rightBefore = right->tabCount();
+            QVERIFY(backend.moveTabToOppositePanel(0, 2));
+            QCOMPARE(right->tabCount(), rightBefore + 1);
+            QCOMPARE(right->path(), QDir::cleanPath(dirSub));
+            QCOMPARE(left->tabCount(), 2); // only the 2 locked tabs remain on left
+
+            backend.saveSession();
+        }
+
+        // 4. Verify locked tab state persists cleanly across sessions
+        {
+            Backend reloaded(cfg.filePath("bookmarks.json"));
+            const QVariantList tabs = reloaded.leftPanel()->tabs();
+            QCOMPARE(tabs.size(), 2);
+            QCOMPARE(tabs.at(0).toMap().value("lockMode").toInt(), static_cast<int>(PanelModel::TabLocked));
+            QCOMPARE(tabs.at(0).toMap().value("lockedRootPath").toString(), QDir::cleanPath(dirA));
+            QCOMPARE(tabs.at(1).toMap().value("lockMode").toInt(), static_cast<int>(PanelModel::TabLockedAllowNav));
+            QCOMPARE(tabs.at(1).toMap().value("lockedRootPath").toString(), QDir::cleanPath(dirB));
+        }
+    }
+
+    void workspacesSaveLoadAndPersistence()
+    {
+        QTemporaryDir root;
+        QTemporaryDir cfg;
+        const QString d1 = root.filePath("proj1");
+        const QString d2 = root.filePath("proj2");
+        const QString d3 = root.filePath("media");
+        const QString d4 = root.filePath("other");
+        QVERIFY(QDir().mkpath(d1));
+        QVERIFY(QDir().mkpath(d2));
+        QVERIFY(QDir().mkpath(d3));
+        QVERIFY(QDir().mkpath(d4));
+
+        {
+            Backend backend(cfg.filePath("bookmarks.json"));
+            backend.leftPanel()->setPath(d1);
+            backend.leftPanel()->setTabLockMode(0, PanelModel::TabLockedAllowNav);
+            backend.leftPanel()->addTab(d2);
+            backend.rightPanel()->setPath(d3);
+            backend.rightPanel()->setShowHidden(true);
+            backend.setActivePanel(1);
+
+            QVERIFY(backend.saveWorkspace(QStringLiteral("Dev Layout")));
+            QCOMPARE(backend.workspaces().size(), 1);
+            QCOMPARE(backend.activeWorkspaceName(), QStringLiteral("Dev Layout"));
+
+            // Mutate panels completely
+            backend.leftPanel()->setTabLockMode(0, PanelModel::TabUnlocked);
+            backend.leftPanel()->restoreTabs({d4}, 0);
+            backend.rightPanel()->restoreTabs({d4}, 0);
+            backend.rightPanel()->setShowHidden(false);
+            backend.setActivePanel(0);
+            QCOMPARE(backend.leftPanel()->tabCount(), 1);
+            QCOMPARE(backend.leftPanel()->path(), QDir::cleanPath(d4));
+
+            // Reload workspace and verify full dual-panel restoration
+            QVERIFY(backend.loadWorkspace(QStringLiteral("Dev Layout")));
+            QCOMPARE(backend.leftPanel()->tabCount(), 2);
+            QCOMPARE(backend.leftPanel()->tabPaths().at(0), QDir::cleanPath(d1));
+            QCOMPARE(backend.leftPanel()->tabPaths().at(1), QDir::cleanPath(d2));
+            QCOMPARE(backend.leftPanel()->tabs().at(0).toMap().value("lockMode").toInt(),
+                     static_cast<int>(PanelModel::TabLockedAllowNav));
+            QCOMPARE(backend.rightPanel()->path(), QDir::cleanPath(d3));
+            QCOMPARE(backend.rightPanel()->showHidden(), true);
+            QCOMPARE(backend.activePanel(), 1);
+        }
+
+        // Verify workspaces.json persistence across restarts & deletion
+        {
+            Backend fresh(cfg.filePath("bookmarks.json"));
+            QCOMPARE(fresh.workspaces().size(), 1);
+            QCOMPARE(fresh.workspaces().first().toMap().value("name").toString(), QStringLiteral("Dev Layout"));
+            QVERIFY(fresh.deleteWorkspace(QStringLiteral("Dev Layout")));
+            QCOMPARE(fresh.workspaces().size(), 0);
+        }
+    }
+
+    void trashViewRestoreDeleteAndEmpty()
+    {
+        QTemporaryDir root;
+        QTemporaryDir trashDir;
+        QTemporaryDir cfg;
+
+        const QByteArray prevTrashEnv = qgetenv("TWINFORGE_TRASH_DIR");
+        qputenv("TWINFORGE_TRASH_DIR", trashDir.path().toUtf8());
+        auto restoreEnv = qScopeGuard([&]() {
+            if (prevTrashEnv.isEmpty())
+                qunsetenv("TWINFORGE_TRASH_DIR");
+            else
+                qputenv("TWINFORGE_TRASH_DIR", prevTrashEnv);
+        });
+
+        const QString filesDir = trashDir.filePath("files");
+        const QString infoDir = trashDir.filePath("info");
+        QVERIFY(QDir().mkpath(filesDir));
+        QVERIFY(QDir().mkpath(infoDir));
+
+        const QString origDir = root.filePath("docs");
+        QVERIFY(QDir().mkpath(origDir));
+
+        // 1. Trashed file with spaces (percent-encoded Path in .trashinfo)
+        const QString trashedNote = QDir(filesDir).filePath("my report.txt");
+        writeFile(trashedNote, "hello trash");
+        const QString origNote = QDir(origDir).filePath("my report.txt");
+        const QByteArray encodedNote = QUrl::toPercentEncoding(origNote, "/");
+        writeFile(QDir(infoDir).filePath("my report.txt.trashinfo"),
+                  QByteArray("[Trash Info]\nPath=") + encodedNote + QByteArray("\nDeletionDate=2026-11-19T14:25:00\n"));
+
+        // 2. Trashed file whose original path ALREADY has a conflicting file (test collision safety)
+        const QString trashedDup = QDir(filesDir).filePath("dup.txt");
+        writeFile(trashedDup, "from-trash");
+        const QString origDup = QDir(origDir).filePath("dup.txt");
+        writeFile(origDup, "existing-file");
+        writeFile(QDir(infoDir).filePath("dup.txt.trashinfo"),
+                  QByteArray("[Trash Info]\nPath=") + QUrl::toPercentEncoding(origDup, "/") + QByteArray("\nDeletionDate=2026-11-19T14:26:00\n"));
+
+        // 3. Trashed folder to delete permanently & another file for emptyTrash
+        const QString trashedFolder = QDir(filesDir).filePath("old_dir");
+        QVERIFY(QDir().mkpath(trashedFolder));
+        writeFile(QDir(trashedFolder).filePath("inside.txt"), "nested");
+        writeFile(QDir(infoDir).filePath("old_dir.trashinfo"),
+                  QByteArray("[Trash Info]\nPath=") + QUrl::toPercentEncoding(root.filePath("old_dir"), "/") + QByteArray("\nDeletionDate=2026-11-19T14:27:00\n"));
+
+        const QString trashedLeftover = QDir(filesDir).filePath("leftover.bin");
+        writeFile(trashedLeftover, "12345");
+        writeFile(QDir(infoDir).filePath("leftover.bin.trashinfo"),
+                  QByteArray("[Trash Info]\nPath=") + QUrl::toPercentEncoding(root.filePath("leftover.bin"), "/") + QByteArray("\nDeletionDate=2026-11-19T14:28:00\n"));
+
+        Backend backend(cfg.filePath("bookmarks.json"));
+        QCOMPARE(backend.trashCount(), 4);
+
+        // Navigate active panel to trash://
+        backend.openTrash();
+        PanelModel *panel = backend.activeModel();
+        QVERIFY(panel->isTrashView());
+        QCOMPARE(panel->path(), QStringLiteral("trash://"));
+        QCOMPARE(panel->itemCount(), 4);
+        QCOMPARE(backend.activeFilesystemPath(), QDir::homePath());
+
+        // Verify OriginalPathRole and DeletionDateRole metadata
+        const int noteIdx = panel->findIndexByPath(trashedNote);
+        QVERIFY(noteIdx >= 0);
+        const QModelIndex mIdx = panel->index(noteIdx, 0);
+        QCOMPARE(panel->data(mIdx, PanelModel::OriginalPathRole).toString(), QDir::cleanPath(origNote));
+        QCOMPARE(panel->data(mIdx, PanelModel::DeletionDateRole).toString(), QStringLiteral("2026-11-19 14:25"));
+
+        // Verify Drives bar contains the Trash chip with count "4"
+        bool foundTrashChip = false;
+        for (const QVariant &v : backend.drives()) {
+            const QVariantMap d = v.toMap();
+            if (d.value("isTrash").toBool()) {
+                foundTrashChip = true;
+                QCOMPARE(d.value("path").toString(), QStringLiteral("trash://"));
+                QCOMPARE(d.value("free").toString(), QStringLiteral("4"));
+            }
+        }
+        QVERIFY(foundTrashChip);
+
+        // Restore both normal and colliding file
+        QCOMPARE(backend.restoreFromTrash({trashedNote, trashedDup}), 2);
+        QVERIFY(QFileInfo::exists(origNote));
+        QVERIFY(!QFileInfo::exists(trashedNote));
+        QVERIFY(!QFileInfo::exists(QDir(infoDir).filePath("my report.txt.trashinfo")));
+        // Existing file untouched; colliding restore gets " (restored)" suffix
+        const QString restoredDup = QDir(origDir).filePath("dup (restored).txt");
+        QVERIFY(QFileInfo::exists(restoredDup));
+        QFile fExisting(origDup);
+        QVERIFY(fExisting.open(QIODevice::ReadOnly));
+        QCOMPARE(fExisting.readAll(), QByteArray("existing-file"));
+        QFile fRestored(restoredDup);
+        QVERIFY(fRestored.open(QIODevice::ReadOnly));
+        QCOMPARE(fRestored.readAll(), QByteArray("from-trash"));
+        QCOMPARE(backend.trashCount(), 2);
+
+        // Permanently delete trashed folder (and verify safety guard refuses paths outside trash)
+        QCOMPARE(backend.deleteFromTrashPermanently({origNote}), 0);
+        QVERIFY(QFileInfo::exists(origNote));
+        QCOMPARE(backend.deleteFromTrashPermanently({trashedFolder}), 1);
+        QVERIFY(!QFileInfo::exists(trashedFolder));
+        QVERIFY(!QFileInfo::exists(QDir(infoDir).filePath("old_dir.trashinfo")));
+        QCOMPARE(backend.trashCount(), 1);
+
+        // Empty remaining trash
+        QCOMPARE(backend.emptyTrash(), 1);
+        QCOMPARE(backend.trashCount(), 0);
+        QCOMPARE(panel->itemCount(), 0);
+    }
+
+    void typeAheadMultiCharQuickSearch()
+    {
+        QTemporaryDir root;
+        writeFile(root.filePath("alpha.txt"), "1");
+        writeFile(root.filePath("beta_one.txt"), "2");
+        writeFile(root.filePath("beta_two.txt"), "3");
+        writeFile(root.filePath("my_special_report.md"), "4");
+
+        PanelModel model(root.path());
+        // Multi-char prefix match
+        const int idxTwo = model.findIndexByQuery(QStringLiteral("beta_t"), 0, true);
+        QVERIFY(idxTwo >= 0);
+        QCOMPARE(model.itemName(idxTwo), QStringLiteral("beta_two.txt"));
+
+        // Cycling on single letter
+        const int firstB = model.findIndexByQuery(QStringLiteral("b"), 0, false);
+        QVERIFY(firstB >= 0);
+        const int secondB = model.findIndexByQuery(QStringLiteral("b"), firstB + 1, false);
+        QVERIFY(secondB >= 0);
+        QVERIFY(secondB != firstB);
+        QVERIFY(model.itemName(secondB).startsWith(QStringLiteral("beta_")));
+
+        // Substring fallback when no prefix matches
+        const int subIdx = model.findIndexByQuery(QStringLiteral("special"), 0, true);
+        QVERIFY(subIdx >= 0);
+        QCOMPARE(model.itemName(subIdx), QStringLiteral("my_special_report.md"));
+
+        // Prefix-only mode must not match substring
+        QCOMPARE(model.findIndexByQuery(QStringLiteral("special"), 0, false), -1);
+    }
+
+    void asyncCommandRunnerBuiltinCdAndHistory()
+    {
+        QTemporaryDir root;
+        QTemporaryDir cfg;
+        const QString subDir = root.filePath("sub folder");
+        QVERIFY(QDir().mkpath(subDir));
+
+        {
+            Backend backend(cfg.filePath("bookmarks.json"));
+            backend.leftPanel()->setPath(root.path());
+            backend.setActivePanel(0);
+
+            // Shell quoting helper
+            QCOMPARE(backend.shellQuote(QStringLiteral("plain.txt")), QStringLiteral("plain.txt"));
+            QCOMPARE(backend.shellQuote(QStringLiteral("my file.txt")), QStringLiteral("'my file.txt'"));
+            QCOMPARE(backend.shellQuote(QStringLiteral("it's.txt")), QStringLiteral("'it'\\''s.txt'"));
+
+            // Built-in cd with quoted spaces + cd -
+            QSignalSpy doneSpy(&backend, &Backend::commandFinished);
+            backend.runCommandAsync(QStringLiteral("cd \"sub folder\""));
+            QCOMPARE(doneSpy.count(), 1);
+            QCOMPARE(doneSpy.first().at(0).toBool(), true);
+            QCOMPARE(backend.leftPanel()->path(), QDir::cleanPath(subDir));
+
+            backend.runCommandAsync(QStringLiteral("cd -"));
+            QCOMPARE(backend.leftPanel()->path(), QDir::cleanPath(root.path()));
+
+            // Async shell command streaming output
+            doneSpy.clear();
+            backend.runCommandAsync(QStringLiteral("printf 'line1\\nline2\\n'"));
+            QTRY_COMPARE_WITH_TIMEOUT(doneSpy.count(), 1, 3000);
+            QCOMPARE(doneSpy.first().at(0).toBool(), true);
+            QCOMPARE(backend.commandRunning(), false);
+            QCOMPARE(backend.commandLastExitCode(), 0);
+            QVERIFY(backend.commandOutput().contains(QStringLiteral("line1")));
+            QVERIFY(backend.commandOutput().contains(QStringLiteral("line2")));
+
+            // Cancel a long-running async command
+            doneSpy.clear();
+            backend.runCommandAsync(QStringLiteral("sleep 10"));
+            QVERIFY(backend.commandRunning());
+            backend.cancelCommand();
+            QCOMPARE(backend.commandRunning(), false);
+            QCOMPARE(doneSpy.count(), 1);
+            QCOMPARE(doneSpy.first().at(0).toBool(), false);
+            QVERIFY(backend.commandOutput().contains(QStringLiteral("[Cancelled]")));
+
+            QVERIFY(backend.commandHistory().contains(QStringLiteral("cd \"sub folder\"")));
+            QVERIFY(backend.commandHistory().contains(QStringLiteral("printf 'line1\\nline2\\n'")));
+            backend.saveSession();
+        }
+
+        // Verify command history persists across restarts
+        {
+            Backend fresh(cfg.filePath("bookmarks.json"));
+            QVERIFY(fresh.commandHistory().contains(QStringLiteral("cd \"sub folder\"")));
+            QVERIFY(fresh.commandHistory().contains(QStringLiteral("printf 'line1\\nline2\\n'")));
+        }
+    }
+
+    void fileSplitAndCombineWithSha256Verification()
+    {
+        QTemporaryDir root;
+        QTemporaryDir cfg;
+        const QString srcDir = root.filePath("src");
+        const QString partsDir = root.filePath("parts");
+        const QString outDir = root.filePath("out");
+        QVERIFY(QDir().mkpath(srcDir));
+        QVERIFY(QDir().mkpath(partsDir));
+        QVERIFY(QDir().mkpath(outDir));
+
+        // Create deterministic 2500-byte binary payload
+        QByteArray payload;
+        payload.reserve(2500);
+        for (int i = 0; i < 2500; ++i)
+            payload.append(static_cast<char>((i * 31 + 7) & 0xFF));
+        const QString srcFile = QDir(srcDir).filePath("archive.bin");
+        writeFile(srcFile, payload);
+
+        Backend backend(cfg.filePath("bookmarks.json"));
+
+        // 1. Inspect regular file -> split mode
+        const QVariantMap splitInspect = backend.inspectSplitSource(srcFile);
+        QCOMPARE(splitInspect.value("valid").toBool(), true);
+        QCOMPARE(splitInspect.value("mode").toString(), QStringLiteral("split"));
+        QCOMPARE(splitInspect.value("totalBytes").toLongLong(), 2500LL);
+
+        // 2. Split into 1000-byte parts -> 3 parts (.001, .002, .003) + .crc
+        const QVariantMap splitRes = backend.splitFile(srcFile, partsDir, 1000, true);
+        QCOMPARE(splitRes.value("success").toBool(), true);
+        QCOMPARE(splitRes.value("partCount").toInt(), 3);
+        const QString part1 = QDir(partsDir).filePath("archive.bin.001");
+        const QString part2 = QDir(partsDir).filePath("archive.bin.002");
+        const QString part3 = QDir(partsDir).filePath("archive.bin.003");
+        const QString crcFile = QDir(partsDir).filePath("archive.bin.crc");
+        QCOMPARE(QFileInfo(part1).size(), 1000LL);
+        QCOMPARE(QFileInfo(part2).size(), 1000LL);
+        QCOMPARE(QFileInfo(part3).size(), 500LL);
+        QVERIFY(QFileInfo::exists(crcFile));
+
+        // 3. Inspect .001 / .crc -> combine mode with hasCrc = true
+        const QVariantMap combInspect = backend.inspectSplitSource(part1);
+        QCOMPARE(combInspect.value("valid").toBool(), true);
+        QCOMPARE(combInspect.value("mode").toString(), QStringLiteral("combine"));
+        QCOMPARE(combInspect.value("partCount").toInt(), 3);
+        QCOMPARE(combInspect.value("hasCrc").toBool(), true);
+
+        // 4. Async combine + SHA-256 verification
+        QSignalSpy splitSpy(&backend, &Backend::splitOperationFinished);
+        backend.startCombineFiles(crcFile, outDir);
+        QTRY_COMPARE_WITH_TIMEOUT(splitSpy.count(), 1, 3000);
+        const QVariantMap combRes = splitSpy.first().at(0).toMap();
+        QCOMPARE(combRes.value("success").toBool(), true);
+        QCOMPARE(combRes.value("verified").toBool(), true);
+        const QString combinedPath = QDir(outDir).filePath("archive.bin");
+        QFile fOut(combinedPath);
+        QVERIFY(fOut.open(QIODevice::ReadOnly));
+        QCOMPARE(fOut.readAll(), payload);
+        fOut.close();
+
+        // 5. Corrupt 1 byte in .002 -> combine must flag SHA-256 mismatch!
+        QFile fCorrupt(part2);
+        QVERIFY(fCorrupt.open(QIODevice::ReadWrite));
+        char ch = 0;
+        QCOMPARE(fCorrupt.read(&ch, 1), 1LL);
+        fCorrupt.seek(0);
+        ch ^= 0xFF;
+        QCOMPARE(fCorrupt.write(&ch, 1), 1LL);
+        fCorrupt.close();
+
+        const QVariantMap badRes = backend.combineFiles(part1, outDir);
+        QCOMPARE(badRes.value("hasCrc").toBool(), true);
+        QCOMPARE(badRes.value("verified").toBool(), false);
+        QCOMPARE(badRes.value("success").toBool(), false);
     }
 };
 

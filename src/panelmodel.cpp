@@ -10,8 +10,12 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QLocale>
+#include <QMetaObject>
+#include <QPointer>
 #include <QProcess>
 #include <QRegularExpression>
+#include <QRunnable>
+#include <QThreadPool>
 #include <QUrl>
 #include <QVariantMap>
 
@@ -78,6 +82,12 @@ PanelModel::PanelModel(const QString &initialPath, QObject *parent)
     setPath(target);
 }
 
+PanelModel::~PanelModel()
+{
+    cancelGitStatus();
+    cancelFolderSizeCalculation();
+}
+
 int PanelModel::rowCount(const QModelIndex &parent) const
 {
     if (parent.isValid())
@@ -114,10 +124,19 @@ QVariant PanelModel::data(const QModelIndex &index, int role) const
         return item.iconType;
     case GitStatusRole:
         return item.gitStatus;
-    case ThumbnailUrlRole:
-        return (item.iconType == QLatin1String("image") && !item.isParent)
-                   ? QUrl::fromLocalFile(item.path).toString()
-                   : QString();
+    case ThumbnailUrlRole: {
+        if (item.isParent || item.isDir || isArchiveView())
+            return QString();
+        if (item.iconType == QLatin1String("image")
+            || item.iconType == QLatin1String("video")
+            || item.iconType == QLatin1String("pdf")) {
+            const QByteArray encoded = QUrl::toPercentEncoding(item.path, "/");
+            return QStringLiteral("image://thumb/") + QString::fromLatin1(encoded)
+                   + QStringLiteral("?m=") + QString::number(item.modified.toSecsSinceEpoch())
+                   + QStringLiteral("&s=") + QString::number(item.size);
+        }
+        return QString();
+    }
     case IsSelectedRole:
         return item.isSelected;
     case SizeRatioRole:
@@ -128,6 +147,10 @@ QVariant PanelModel::data(const QModelIndex &index, int role) const
         return (!item.isParent && (!item.isDir || item.dirSizeCalculated) && m_totalItemsSize > 0)
                    ? (static_cast<double>(item.size) * 100.0 / static_cast<double>(m_totalItemsSize))
                    : 0.0;
+    case OriginalPathRole:
+        return item.originalPath;
+    case DeletionDateRole:
+        return item.deletionDate;
     default:
         return {};
     }
@@ -151,6 +174,8 @@ QHash<int, QByteArray> PanelModel::roleNames() const
     roles[IsSelectedRole] = "isSelected";
     roles[SizeRatioRole] = "sizeRatio";
     roles[SizePercentRole] = "sizePercent";
+    roles[OriginalPathRole] = "originalPath";
+    roles[DeletionDateRole] = "deletionDate";
     return roles;
 }
 
@@ -282,8 +307,39 @@ QList<ArchiveEntryInfo> PanelModel::readArchiveEntries(const QString &archivePat
     return result;
 }
 
+QString PanelModel::trashRootDir()
+{
+    const QByteArray envOverride = qgetenv("TWINFORGE_TRASH_DIR");
+    if (!envOverride.isEmpty())
+        return QDir::cleanPath(QString::fromUtf8(envOverride));
+
+    const QByteArray xdgData = qgetenv("XDG_DATA_HOME");
+    if (!xdgData.isEmpty())
+        return QDir(QString::fromUtf8(xdgData)).filePath(QStringLiteral("Trash"));
+
+    return QDir(QDir::homePath()).filePath(QStringLiteral(".local/share/Trash"));
+}
+
+bool PanelModel::isTrashUri(const QString &rawPath)
+{
+    const QString trimmed = rawPath.trimmed().toLower();
+    return trimmed == QLatin1String("trash://") || trimmed == QLatin1String("trash:/")
+           || trimmed == QLatin1String("trash:");
+}
+
+int PanelModel::trashItemCount() const
+{
+    const QDir filesDir(QDir(trashRootDir()).filePath(QStringLiteral("files")));
+    if (!filesDir.exists())
+        return 0;
+    return static_cast<int>(filesDir.entryList(QDir::AllEntries | QDir::Hidden | QDir::NoDotAndDotDot).size());
+}
+
 QString PanelModel::resolveDirectoryPath(const QString &rawPath)
 {
+    if (isTrashUri(rawPath))
+        return QStringLiteral("trash://");
+
     const QString expanded = expandUserTilde(rawPath);
     if (expanded.isEmpty())
         return {};
@@ -305,6 +361,8 @@ QString PanelModel::resolveDirectoryPath(const QString &rawPath)
 
 QString PanelModel::tabTitleForPath(const QString &path)
 {
+    if (isTrashUri(path))
+        return QObject::tr("Trash");
     if (path.isEmpty() || path == "/")
         return QStringLiteral("/");
     const QString name = QFileInfo(path).fileName();
@@ -324,17 +382,31 @@ void PanelModel::syncActiveTabState()
     }
 }
 
+int PanelModel::activeTabLockMode() const
+{
+    if (m_activeTab >= 0 && m_activeTab < m_tabs.size())
+        return m_tabs.at(m_activeTab).lockMode;
+    return TabUnlocked;
+}
+
 QVariantList PanelModel::tabs() const
 {
     QVariantList out;
     out.reserve(m_tabs.size());
     for (int i = 0; i < m_tabs.size(); ++i) {
-        const QString p = (i == m_activeTab && !m_path.isEmpty()) ? m_path : m_tabs.at(i).path;
-        const bool isCol = (i == m_activeTab) ? m_isCollectionView : m_tabs.at(i).isCollection;
-        const QString colTitle = (i == m_activeTab) ? m_collectionTitle : m_tabs.at(i).collectionTitle;
+        const PanelTab &t = m_tabs.at(i);
+        const QString p = (i == m_activeTab && !m_path.isEmpty()) ? m_path : t.path;
+        const bool isCol = (i == m_activeTab) ? m_isCollectionView : t.isCollection;
+        const QString colTitle = (i == m_activeTab) ? m_collectionTitle : t.collectionTitle;
+        const QString rootPath = (t.lockMode != TabUnlocked && !t.lockedRootPath.isEmpty()) ? t.lockedRootPath : p;
         QVariantMap entry;
         entry["path"] = p;
         entry["title"] = (isCol && !colTitle.isEmpty()) ? colTitle : tabTitleForPath(p);
+        entry["lockMode"] = t.lockMode;
+        entry["isLocked"] = (t.lockMode != TabUnlocked);
+        entry["lockedRootPath"] = rootPath;
+        entry["lockedRootTitle"] = tabTitleForPath(rootPath);
+        entry["isTrash"] = isTrashUri(p);
         out.append(entry);
     }
     return out;
@@ -393,7 +465,7 @@ int PanelModel::addTab(const QString &path)
     if (target.isEmpty())
         target = m_path.isEmpty() ? QDir::homePath() : m_path;
 
-    m_tabs.append(PanelTab{target, {}, {}, false, {}, {}, {}});
+    m_tabs.append(PanelTab{target, {}, {}, false, {}, {}, {}, TabUnlocked, {}});
     m_activeTab = m_tabs.size() - 1;
     m_backStack.clear();
     m_forwardStack.clear();
@@ -430,7 +502,14 @@ void PanelModel::closeTab(int index)
     if (targetIdx < 0 || targetIdx >= m_tabs.size())
         return;
 
+    // Locked / pinned tabs cannot be closed until unlocked.
+    if (m_tabs.at(targetIdx).lockMode != TabUnlocked)
+        return;
+
     syncActiveTabState();
+    m_closedTabs.append(m_tabs.at(targetIdx));
+    if (m_closedTabs.size() > 20)
+        m_closedTabs.removeFirst();
     m_tabs.removeAt(targetIdx);
 
     if (targetIdx < m_activeTab) {
@@ -484,6 +563,186 @@ void PanelModel::prevTab()
         setActiveTab((m_activeTab - 1 + m_tabs.size()) % m_tabs.size());
 }
 
+void PanelModel::setTabLockMode(int index, int lockMode)
+{
+    const int targetIdx = (index < 0) ? m_activeTab : index;
+    if (targetIdx < 0 || targetIdx >= m_tabs.size())
+        return;
+
+    syncActiveTabState();
+    const int clamped = std::clamp(lockMode, static_cast<int>(TabUnlocked), static_cast<int>(TabLockedAllowNav));
+    PanelTab &tab = m_tabs[targetIdx];
+    tab.lockMode = clamped;
+    if (clamped == TabUnlocked) {
+        tab.lockedRootPath.clear();
+    } else if (tab.lockedRootPath.isEmpty()) {
+        tab.lockedRootPath = tab.path;
+    }
+    emit tabsChanged();
+}
+
+void PanelModel::toggleTabLock(int index)
+{
+    const int targetIdx = (index < 0) ? m_activeTab : index;
+    if (targetIdx < 0 || targetIdx >= m_tabs.size())
+        return;
+
+    const int cur = m_tabs.at(targetIdx).lockMode;
+    int next = TabLockedAllowNav;
+    if (cur == TabLockedAllowNav)
+        next = TabLocked;
+    else if (cur == TabLocked)
+        next = TabUnlocked;
+    setTabLockMode(targetIdx, next);
+}
+
+void PanelModel::resetLockedTab(int index)
+{
+    const int targetIdx = (index < 0) ? m_activeTab : index;
+    if (targetIdx < 0 || targetIdx >= m_tabs.size())
+        return;
+
+    const PanelTab &tab = m_tabs.at(targetIdx);
+    if (tab.lockMode == TabUnlocked || tab.lockedRootPath.isEmpty())
+        return;
+
+    const QString root = tab.lockedRootPath;
+    if (targetIdx != m_activeTab)
+        setActiveTab(targetIdx);
+    if (m_path != root) {
+        m_switchingTab = true;
+        setPath(root);
+        m_switchingTab = false;
+        emit tabsChanged();
+    }
+}
+
+int PanelModel::duplicateTab(int index)
+{
+    syncActiveTabState();
+    const int srcIdx = (index < 0) ? m_activeTab : index;
+    const QString srcPath = (srcIdx >= 0 && srcIdx < m_tabs.size()) ? m_tabs.at(srcIdx).path : m_path;
+    return addTab(srcPath);
+}
+
+bool PanelModel::reopenClosedTab()
+{
+    if (m_closedTabs.isEmpty())
+        return false;
+    const PanelTab restored = m_closedTabs.takeLast();
+    const QString target = resolveDirectoryPath(restored.path);
+    if (target.isEmpty()) {
+        emit tabsChanged();
+        return false;
+    }
+    addTab(target);
+    return true;
+}
+
+void PanelModel::closeOtherTabs(int keepIndex)
+{
+    if (m_tabs.size() <= 1)
+        return;
+
+    syncActiveTabState();
+    const int keep = (keepIndex < 0) ? m_activeTab : keepIndex;
+    if (keep < 0 || keep >= m_tabs.size())
+        return;
+
+    // Close unlocked tabs from back to front so indices stay valid.
+    for (int i = m_tabs.size() - 1; i >= 0; --i) {
+        if (i == keep || m_tabs.at(i).lockMode != TabUnlocked)
+            continue;
+        if (m_tabs.size() <= 1)
+            break;
+        m_closedTabs.append(m_tabs.at(i));
+        if (m_closedTabs.size() > 20)
+            m_closedTabs.removeFirst();
+        m_tabs.removeAt(i);
+        if (i < m_activeTab)
+            --m_activeTab;
+    }
+    m_activeTab = std::clamp(m_activeTab, 0, static_cast<int>(m_tabs.size()) - 1);
+    emit tabsChanged();
+}
+
+void PanelModel::moveTab(int fromIndex, int toIndex)
+{
+    if (fromIndex < 0 || fromIndex >= m_tabs.size()
+        || toIndex < 0 || toIndex >= m_tabs.size()
+        || fromIndex == toIndex) {
+        return;
+    }
+
+    syncActiveTabState();
+    m_tabs.move(fromIndex, toIndex);
+    if (m_activeTab == fromIndex) {
+        m_activeTab = toIndex;
+    } else if (fromIndex < m_activeTab && toIndex >= m_activeTab) {
+        --m_activeTab;
+    } else if (fromIndex > m_activeTab && toIndex <= m_activeTab) {
+        ++m_activeTab;
+    }
+    emit tabsChanged();
+}
+
+QVariantList PanelModel::serializeTabs() const
+{
+    QVariantList out;
+    out.reserve(m_tabs.size());
+    for (int i = 0; i < m_tabs.size(); ++i) {
+        const PanelTab &t = m_tabs.at(i);
+        const QString p = (i == m_activeTab && !m_path.isEmpty()) ? m_path : t.path;
+        QVariantMap obj;
+        obj[QStringLiteral("path")] = p;
+        obj[QStringLiteral("lockMode")] = t.lockMode;
+        obj[QStringLiteral("lockedRootPath")] = (t.lockMode != TabUnlocked && !t.lockedRootPath.isEmpty())
+                                                    ? t.lockedRootPath
+                                                    : QString();
+        out.append(obj);
+    }
+    return out;
+}
+
+void PanelModel::restoreTabsState(const QVariantList &tabsState, int activeIndex)
+{
+    QList<PanelTab> validTabs;
+    for (const QVariant &v : tabsState) {
+        const QVariantMap m = v.toMap();
+        const QString resolved = resolveDirectoryPath(m.value(QStringLiteral("path")).toString());
+        if (resolved.isEmpty())
+            continue;
+        const int lockMode = std::clamp(m.value(QStringLiteral("lockMode")).toInt(),
+                                        static_cast<int>(TabUnlocked),
+                                        static_cast<int>(TabLockedAllowNav));
+        QString lockedRoot = resolveDirectoryPath(m.value(QStringLiteral("lockedRootPath")).toString());
+        if (lockMode != TabUnlocked && lockedRoot.isEmpty())
+            lockedRoot = resolved;
+        validTabs.append(PanelTab{resolved, {}, {}, false, {}, {}, {}, lockMode, lockedRoot});
+    }
+    if (validTabs.isEmpty())
+        return;
+
+    m_tabs = validTabs;
+    m_activeTab = std::clamp(activeIndex, 0, static_cast<int>(m_tabs.size()) - 1);
+    m_backStack.clear();
+    m_forwardStack.clear();
+    m_isCollectionView = false;
+    m_collectionTitle.clear();
+    m_collectionBasePath.clear();
+    m_collectionPaths.clear();
+
+    const QString target = m_tabs.at(m_activeTab).path;
+    m_switchingTab = true;
+    if (m_path != target)
+        setPath(target);
+    else
+        loadDirectory();
+    m_switchingTab = false;
+    emit historyChanged();
+    emit tabsChanged();
+}
+
 QStringList PanelModel::tabPaths() const
 {
     QStringList out;
@@ -498,7 +757,7 @@ void PanelModel::restoreTabs(const QStringList &paths, int activeIndex)
     for (const QString &raw : paths) {
         const QString resolved = resolveDirectoryPath(raw);
         if (!resolved.isEmpty())
-            validTabs.append(PanelTab{resolved, {}, {}, false, {}, {}, {}});
+            validTabs.append(PanelTab{resolved, {}, {}, false, {}, {}, {}, TabUnlocked, {}});
     }
     if (validTabs.isEmpty())
         return;
@@ -527,6 +786,15 @@ void PanelModel::setPath(const QString &newPath)
 
     if (m_path == cleanPath && !m_isCollectionView)
         return;
+
+    // Strict Locked Tab: navigating to a different directory opens it in a new tab instead.
+    if (!m_switchingTab && !m_tabs.isEmpty() && m_activeTab >= 0 && m_activeTab < m_tabs.size()) {
+        const PanelTab &curTab = m_tabs.at(m_activeTab);
+        if (curTab.lockMode == TabLocked && !curTab.lockedRootPath.isEmpty() && cleanPath != curTab.lockedRootPath) {
+            addTab(cleanPath);
+            return;
+        }
+    }
 
     if (!m_path.isEmpty() && !m_navigatingHistory && !m_switchingTab && !m_isCollectionView) {
         m_backStack.append(m_path);
@@ -557,7 +825,7 @@ void PanelModel::setPath(const QString &newPath)
 
     QString archiveFile;
     QString archiveInternal;
-    if (QFileInfo(m_path).isDir()) {
+    if (isTrashView() || QFileInfo(m_path).isDir()) {
         m_archiveFile.clear();
         m_archiveInternalPath.clear();
     } else if (splitArchivePath(m_path, &archiveFile, &archiveInternal)) {
@@ -568,12 +836,19 @@ void PanelModel::setPath(const QString &newPath)
         m_archiveInternalPath.clear();
     }
 
-    const QString watchTarget = isArchiveView() ? m_archiveFile : m_path;
+    QString watchTarget;
+    if (isTrashView()) {
+        const QString trashFilesDir = QDir(trashRootDir()).filePath(QStringLiteral("files"));
+        QDir().mkpath(trashFilesDir);
+        watchTarget = trashFilesDir;
+    } else {
+        watchTarget = isArchiveView() ? m_archiveFile : m_path;
+    }
     if (!watchTarget.isEmpty() && QFileInfo::exists(watchTarget))
         m_dirWatcher.addPath(watchTarget);
 
     if (m_tabs.isEmpty()) {
-        m_tabs.append(PanelTab{m_path, m_backStack, m_forwardStack, false, {}, {}, {}});
+        m_tabs.append(PanelTab{m_path, m_backStack, m_forwardStack, false, {}, {}, {}, TabUnlocked, {}});
         m_activeTab = 0;
     } else if (m_activeTab >= 0 && m_activeTab < m_tabs.size()) {
         m_tabs[m_activeTab].path = m_path;
@@ -750,6 +1025,15 @@ void PanelModel::cd(const QString &nameOrPath)
         return;
     }
 
+    if (isTrashView()) {
+        QFileInfo info(nameOrPath);
+        if (!info.isAbsolute())
+            info.setFile(QDir(trashRootDir()).filePath(QStringLiteral("files/") + nameOrPath));
+        if (info.isDir())
+            setPath(info.absoluteFilePath());
+        return;
+    }
+
     if (isArchiveView()) {
         if (QFileInfo(nameOrPath).isAbsolute())
             setPath(nameOrPath);
@@ -773,6 +1057,14 @@ void PanelModel::cdUp()
         exitCollectionView();
         return;
     }
+    if (isTrashView()) {
+        if (canGoBack())
+            goBack();
+        else
+            setPath(QDir::homePath());
+        return;
+    }
+
     if (isArchiveView()) {
         if (!m_archiveInternalPath.isEmpty()) {
             const int lastSlash = m_archiveInternalPath.lastIndexOf('/');
@@ -823,15 +1115,20 @@ void PanelModel::refresh()
     emit freeSpaceChanged();
 }
 
-qint64 PanelModel::computeDirectorySize(const QString &dirPath)
+qint64 PanelModel::computeDirectorySize(const QString &dirPath, const std::atomic<bool> *cancelFlag)
 {
     qint64 total = 0;
+    int iterCount = 0;
     QDirIterator it(dirPath, QDir::Files | QDir::Hidden | QDir::System | QDir::NoSymLinks,
                     QDirIterator::Subdirectories);
     while (it.hasNext()) {
+        if (cancelFlag && (++iterCount & 0x7F) == 0 && cancelFlag->load(std::memory_order_relaxed))
+            return -1;
         it.next();
         total += it.fileInfo().size();
     }
+    if (cancelFlag && cancelFlag->load(std::memory_order_relaxed))
+        return -1;
     return total;
 }
 
@@ -853,66 +1150,137 @@ void PanelModel::recalculateSizeMetrics()
     m_totalItemsSize = totalSz;
 }
 
-void PanelModel::calculateFolderSizeInternal(int index, bool deferMetrics)
+void PanelModel::cancelFolderSizeCalculation()
 {
-    if (isArchiveView() || index < 0 || index >= m_items.size())
-        return;
+    m_sizeCalcGeneration.fetch_add(1, std::memory_order_relaxed);
+    if (m_sizeCalcCancel) {
+        m_sizeCalcCancel->store(true, std::memory_order_relaxed);
+        m_sizeCalcCancel.reset();
+    }
+    if (m_calculatingFolderSizes || m_folderSizeTotal != 0 || m_folderSizeDone != 0) {
+        m_calculatingFolderSizes = false;
+        m_folderSizeTotal = 0;
+        m_folderSizeDone = 0;
+        emit folderSizeCalculationChanged();
+    }
+}
 
-    PanelItem &item = m_items[index];
-    if (!item.isDir || item.isParent)
-        return;
+void PanelModel::applyCalculatedFolderSize(const QString &dirPath, qint64 bytes)
+{
+    m_calculatedDirSizes.insert(dirPath, bytes);
+    const QString formatted = formatSize(bytes, false);
 
-    const qint64 bytes = computeDirectorySize(item.path);
-    m_calculatedDirSizes.insert(item.path, bytes);
-    item.size = bytes;
-    item.dirSizeCalculated = true;
-    item.formattedSize = formatSize(bytes, false);
-
+    bool changed = false;
+    for (PanelItem &item : m_items) {
+        if (item.path == dirPath) {
+            item.size = bytes;
+            item.dirSizeCalculated = true;
+            item.formattedSize = formatted;
+            changed = true;
+            break;
+        }
+    }
     for (PanelItem &allItem : m_allItems) {
-        if (allItem.path == item.path) {
+        if (allItem.path == dirPath) {
             allItem.size = bytes;
             allItem.dirSizeCalculated = true;
-            allItem.formattedSize = item.formattedSize;
+            allItem.formattedSize = formatted;
             break;
         }
     }
 
-    if (!deferMetrics) {
+    if (changed) {
         recalculateSizeMetrics();
-        if (!m_items.isEmpty())
+        if (!m_items.isEmpty()) {
             emit dataChanged(createIndex(0, 0), createIndex(m_items.size() - 1, 0),
                              {SizeRole, FormattedSizeRole, SizeRatioRole, SizePercentRole});
+        }
         emit countChanged();
-    } else {
-        QModelIndex idx = createIndex(index, 0);
-        emit dataChanged(idx, idx, {SizeRole, FormattedSizeRole});
+        emit selectionChanged();
     }
-    emit selectionChanged();
+}
+
+void PanelModel::startFolderSizeCalculation(const QStringList &dirPaths, bool sortWhenDone)
+{
+    cancelFolderSizeCalculation();
+    if (isArchiveView() || dirPaths.isEmpty())
+        return;
+
+    const quint64 gen = m_sizeCalcGeneration.fetch_add(1, std::memory_order_relaxed) + 1;
+    auto cancelFlag = std::make_shared<std::atomic<bool>>(false);
+    m_sizeCalcCancel = cancelFlag;
+
+    m_calculatingFolderSizes = true;
+    m_folderSizeTotal = dirPaths.size();
+    m_folderSizeDone = 0;
+    emit folderSizeCalculationChanged();
+
+    const QString expectedPath = m_path;
+    QPointer<PanelModel> self(this);
+
+    auto *task = QRunnable::create([self, gen, expectedPath, dirPaths, sortWhenDone, cancelFlag]() {
+        int done = 0;
+        const int total = dirPaths.size();
+        for (const QString &dirPath : dirPaths) {
+            if (cancelFlag->load(std::memory_order_relaxed))
+                return;
+
+            const qint64 bytes = PanelModel::computeDirectorySize(dirPath, cancelFlag.get());
+            if (bytes < 0 || cancelFlag->load(std::memory_order_relaxed))
+                return;
+
+            ++done;
+            const bool isLast = (done >= total);
+            QMetaObject::invokeMethod(
+                self,
+                [self, gen, expectedPath, dirPath, bytes, done, isLast, sortWhenDone]() {
+                    if (!self || self->m_sizeCalcGeneration.load(std::memory_order_relaxed) != gen
+                        || self->m_path != expectedPath) {
+                        return;
+                    }
+                    self->applyCalculatedFolderSize(dirPath, bytes);
+                    self->m_folderSizeDone = done;
+                    if (isLast) {
+                        if (sortWhenDone && self->m_sortField == SortBySize)
+                            self->sortItems();
+                        self->m_calculatingFolderSizes = false;
+                        self->m_sizeCalcCancel.reset();
+                    }
+                    emit self->folderSizeCalculationChanged();
+                },
+                Qt::QueuedConnection);
+        }
+    });
+    task->setAutoDelete(true);
+    QThreadPool::globalInstance()->start(task);
 }
 
 void PanelModel::calculateFolderSize(int index)
 {
-    calculateFolderSizeInternal(index, false);
+    if (isArchiveView() || index < 0 || index >= m_items.size())
+        return;
+    const PanelItem &item = m_items.at(index);
+    if (!item.isDir || item.isParent)
+        return;
+    startFolderSizeCalculation({item.path}, false);
 }
 
 void PanelModel::calculateAllFolderSizes()
 {
-    bool computedAny = false;
+    if (isArchiveView())
+        return;
+    QStringList dirs;
+    dirs.reserve(m_items.size());
     for (int i = 0; i < m_items.size(); ++i) {
-        if (m_items[i].isDir && !m_items[i].isParent) {
-            calculateFolderSizeInternal(i, true);
-            computedAny = true;
-        }
+        if (m_items[i].isDir && !m_items[i].isParent)
+            dirs.append(m_items[i].path);
     }
-    if (m_sortField == SortBySize) {
-        sortItems();
-    } else if (computedAny) {
-        recalculateSizeMetrics();
-        if (!m_items.isEmpty())
-            emit dataChanged(createIndex(0, 0), createIndex(m_items.size() - 1, 0),
-                             {SizeRole, FormattedSizeRole, SizeRatioRole, SizePercentRole});
-        emit countChanged();
+    if (dirs.isEmpty()) {
+        if (m_sortField == SortBySize)
+            sortItems();
+        return;
     }
+    startFolderSizeCalculation(dirs, true);
 }
 
 void PanelModel::toggleSelection(int index)
@@ -1146,112 +1514,196 @@ void PanelModel::toggleViewMode()
     setViewMode(m_viewMode == ViewModeList ? ViewModeGrid : ViewModeList);
 }
 
+void PanelModel::cancelGitStatus()
+{
+    m_gitGeneration.fetch_add(1, std::memory_order_relaxed);
+    if (m_gitCancel) {
+        m_gitCancel->store(true, std::memory_order_relaxed);
+        m_gitCancel.reset();
+    }
+    if (m_gitStatusLoading) {
+        m_gitStatusLoading = false;
+        emit gitChanged();
+    }
+}
+
 void PanelModel::updateGitStatus()
 {
+    cancelGitStatus();
+
     m_isGitRepo = false;
     m_gitBranch.clear();
     m_gitModifiedCount = 0;
     m_gitUntrackedCount = 0;
 
-    if (isArchiveView() || m_path.isEmpty() || !QDir(m_path).exists()) {
+    if (isArchiveView() || isTrashView() || m_path.isEmpty()) {
         emit gitChanged();
         return;
     }
 
-    QDir checkDir(m_path);
-    bool foundGit = false;
-    while (true) {
-        if (checkDir.exists(".git")) {
-            foundGit = true;
-            break;
-        }
-        if (!checkDir.cdUp())
-            break;
-    }
+    const quint64 gen = m_gitGeneration.fetch_add(1, std::memory_order_relaxed) + 1;
+    auto cancelFlag = std::make_shared<std::atomic<bool>>(false);
+    m_gitCancel = cancelFlag;
+    m_gitStatusLoading = true;
+    emit gitChanged();
 
-    if (!foundGit) {
-        emit gitChanged();
-        return;
-    }
+    const QString targetPath = m_path;
+    QPointer<PanelModel> self(this);
 
-    m_isGitRepo = true;
+    auto *task = QRunnable::create([self, gen, targetPath, cancelFlag]() {
+        auto waitCancelable = [&cancelFlag](QProcess &proc, int timeoutMs) -> bool {
+            int elapsed = 0;
+            constexpr int stepMs = 40;
+            while (proc.state() != QProcess::NotRunning && elapsed < timeoutMs) {
+                if (cancelFlag->load(std::memory_order_relaxed)) {
+                    proc.kill();
+                    proc.waitForFinished(200);
+                    return false;
+                }
+                if (proc.waitForFinished(stepMs))
+                    return true;
+                elapsed += stepMs;
+            }
+            if (proc.state() != QProcess::NotRunning) {
+                proc.kill();
+                proc.waitForFinished(200);
+                return false;
+            }
+            return true;
+        };
 
-    QProcess branchProc;
-    branchProc.setWorkingDirectory(m_path);
-    branchProc.start("git", {"branch", "--show-current"});
-    if (branchProc.waitForFinished(1000) && branchProc.exitCode() == 0) {
-        m_gitBranch = QString::fromUtf8(branchProc.readAllStandardOutput()).trimmed();
-    }
-    if (m_gitBranch.isEmpty()) {
-        QProcess headProc;
-        headProc.setWorkingDirectory(m_path);
-        headProc.start("git", {"rev-parse", "--short", "HEAD"});
-        if (headProc.waitForFinished(1000) && headProc.exitCode() == 0) {
-            m_gitBranch = QString::fromUtf8(headProc.readAllStandardOutput()).trimmed();
-        }
-    }
-
-    QProcess statusProc;
-    statusProc.setWorkingDirectory(m_path);
-    statusProc.start("git", {"status", "--porcelain=v1", "."});
-    if (statusProc.waitForFinished(2000) && statusProc.exitCode() == 0) {
-        const QByteArray rawOut = statusProc.readAllStandardOutput();
-        const QList<QByteArray> lines = rawOut.split('\n');
+        bool isRepo = false;
+        QString branch;
+        int modifiedCount = 0;
+        int untrackedCount = 0;
         QHash<QString, QString> statusMap;
 
-        for (const QByteArray &line : lines) {
-            if (line.size() < 4)
-                continue;
-            const char x = line.at(0);
-            const char y = line.at(1);
-            QByteArray relPath = line.mid(3).trimmed();
-            const int arrow = relPath.indexOf(" -> ");
-            if (arrow != -1)
-                relPath = relPath.mid(arrow + 4);
-
-            if (relPath.startsWith('"') && relPath.endsWith('"'))
-                relPath = relPath.mid(1, relPath.size() - 2);
-
-            QString fileName = QString::fromUtf8(relPath);
-            const int slash = fileName.indexOf('/');
-            if (slash != -1)
-                fileName = fileName.left(slash);
-
-            QString status;
-            if (x == '?' && y == '?') {
-                status = QStringLiteral("untracked");
-                ++m_gitUntrackedCount;
-            } else if (x == 'A' || y == 'A') {
-                status = QStringLiteral("staged");
-                ++m_gitModifiedCount;
-            } else if (x == 'D' || y == 'D') {
-                status = QStringLiteral("deleted");
-                ++m_gitModifiedCount;
-            } else {
-                status = QStringLiteral("modified");
-                ++m_gitModifiedCount;
-            }
-
-            if (!statusMap.contains(fileName) || status == "modified") {
-                statusMap.insert(fileName, status);
+        if (!cancelFlag->load(std::memory_order_relaxed) && QDir(targetPath).exists()) {
+            QDir checkDir(targetPath);
+            while (!cancelFlag->load(std::memory_order_relaxed)) {
+                if (checkDir.exists(QStringLiteral(".git"))) {
+                    isRepo = true;
+                    break;
+                }
+                if (!checkDir.cdUp())
+                    break;
             }
         }
 
-        for (PanelItem &item : m_allItems) {
-            if (!item.isParent && statusMap.contains(item.name))
-                item.gitStatus = statusMap.value(item.name);
-            else
-                item.gitStatus.clear();
-        }
-        for (PanelItem &item : m_items) {
-            if (!item.isParent && statusMap.contains(item.name))
-                item.gitStatus = statusMap.value(item.name);
-            else
-                item.gitStatus.clear();
-        }
-    }
+        if (isRepo && !cancelFlag->load(std::memory_order_relaxed)) {
+            QProcess statusProc;
+            statusProc.setWorkingDirectory(targetPath);
+            statusProc.start(QStringLiteral("git"),
+                             {QStringLiteral("status"), QStringLiteral("--porcelain=v1"),
+                              QStringLiteral("--branch"), QStringLiteral(".")});
+            if (waitCancelable(statusProc, 3000) && statusProc.exitCode() == 0) {
+                const QByteArray rawOut = statusProc.readAllStandardOutput();
+                const QList<QByteArray> lines = rawOut.split('\n');
 
-    emit gitChanged();
+                for (const QByteArray &line : lines) {
+                    if (cancelFlag->load(std::memory_order_relaxed))
+                        return;
+                    if (line.startsWith("## ")) {
+                        QString hdr = QString::fromUtf8(line.mid(3)).trimmed();
+                        if (hdr.startsWith(QLatin1String("No commits yet on "))) {
+                            branch = hdr.mid(18).trimmed();
+                        } else if (hdr.startsWith(QLatin1String("Initial commit on "))) {
+                            branch = hdr.mid(18).trimmed();
+                        } else if (!hdr.startsWith(QLatin1String("HEAD (no branch)"))) {
+                            const int dots = hdr.indexOf(QLatin1String("..."));
+                            branch = (dots != -1) ? hdr.left(dots).trimmed() : hdr;
+                        }
+                        continue;
+                    }
+                    if (line.size() < 4)
+                        continue;
+                    const char x = line.at(0);
+                    const char y = line.at(1);
+                    QByteArray relPath = line.mid(3).trimmed();
+                    const int arrow = relPath.indexOf(" -> ");
+                    if (arrow != -1)
+                        relPath = relPath.mid(arrow + 4);
+
+                    if (relPath.startsWith('"') && relPath.endsWith('"'))
+                        relPath = relPath.mid(1, relPath.size() - 2);
+
+                    QString fileName = QString::fromUtf8(relPath);
+                    const int slash = fileName.indexOf('/');
+                    if (slash != -1)
+                        fileName = fileName.left(slash);
+
+                    QString status;
+                    if (x == '?' && y == '?') {
+                        status = QStringLiteral("untracked");
+                        ++untrackedCount;
+                    } else if (x == 'A' || y == 'A') {
+                        status = QStringLiteral("staged");
+                        ++modifiedCount;
+                    } else if (x == 'D' || y == 'D') {
+                        status = QStringLiteral("deleted");
+                        ++modifiedCount;
+                    } else {
+                        status = QStringLiteral("modified");
+                        ++modifiedCount;
+                    }
+
+                    if (!statusMap.contains(fileName) || status == QLatin1String("modified")) {
+                        statusMap.insert(fileName, status);
+                    }
+                }
+            }
+
+            if (branch.isEmpty() && !cancelFlag->load(std::memory_order_relaxed)) {
+                QProcess headProc;
+                headProc.setWorkingDirectory(targetPath);
+                headProc.start(QStringLiteral("git"),
+                               {QStringLiteral("rev-parse"), QStringLiteral("--short"), QStringLiteral("HEAD")});
+                if (waitCancelable(headProc, 1200) && headProc.exitCode() == 0) {
+                    branch = QString::fromUtf8(headProc.readAllStandardOutput()).trimmed();
+                }
+            }
+        }
+
+        if (cancelFlag->load(std::memory_order_relaxed))
+            return;
+
+        QMetaObject::invokeMethod(
+            self,
+            [self, gen, targetPath, isRepo, branch, modifiedCount, untrackedCount, statusMap]() {
+                if (!self || self->m_gitGeneration.load(std::memory_order_relaxed) != gen
+                    || self->m_path != targetPath) {
+                    return;
+                }
+                self->m_gitStatusLoading = false;
+                self->m_gitCancel.reset();
+                self->m_isGitRepo = isRepo;
+                self->m_gitBranch = branch;
+                self->m_gitModifiedCount = modifiedCount;
+                self->m_gitUntrackedCount = untrackedCount;
+
+                for (PanelItem &item : self->m_allItems) {
+                    if (!item.isParent && statusMap.contains(item.name))
+                        item.gitStatus = statusMap.value(item.name);
+                    else
+                        item.gitStatus.clear();
+                }
+                for (PanelItem &item : self->m_items) {
+                    if (!item.isParent && statusMap.contains(item.name))
+                        item.gitStatus = statusMap.value(item.name);
+                    else
+                        item.gitStatus.clear();
+                }
+                if (!self->m_items.isEmpty()) {
+                    emit self->dataChanged(self->createIndex(0, 0),
+                                           self->createIndex(self->m_items.size() - 1, 0),
+                                           {GitStatusRole});
+                }
+                emit self->gitChanged();
+            },
+            Qt::QueuedConnection);
+    });
+    task->setAutoDelete(true);
+    QThreadPool::globalInstance()->start(task);
 }
 
 QString PanelModel::itemGitStatus(int index) const
@@ -1380,7 +1832,7 @@ QStringList PanelModel::allItemPaths(bool excludeParent) const
 
 bool PanelModel::isWritable() const
 {
-    if (isArchiveView())
+    if (isArchiveView() || isTrashView())
         return false;
     const QString checkPath = m_isCollectionView && !m_collectionBasePath.isEmpty() ? m_collectionBasePath : m_path;
     return QFileInfo(checkPath).isWritable();
@@ -1408,7 +1860,9 @@ QString PanelModel::totalSelectedSizeFormatted() const
 
 QString PanelModel::freeSpaceFormatted() const
 {
-    const QString target = isArchiveView() ? QFileInfo(m_archiveFile).absolutePath() : m_path;
+    const QString target = isTrashView()
+                               ? trashRootDir()
+                               : (isArchiveView() ? QFileInfo(m_archiveFile).absolutePath() : m_path);
     QStorageInfo storage(target);
     if (!storage.isValid() || !storage.isReady())
         return {};
@@ -1417,17 +1871,59 @@ QString PanelModel::freeSpaceFormatted() const
 
 int PanelModel::findIndexByPrefix(const QString &prefix, int startIndex) const
 {
-    if (prefix.isEmpty() || m_items.isEmpty())
+    return findIndexByQuery(prefix, startIndex, false);
+}
+
+int PanelModel::findIndexByQuery(const QString &query, int startIndex, bool allowSubstringFallback) const
+{
+    if (query.isEmpty() || m_items.isEmpty())
         return -1;
 
-    const QString lower = prefix.toLower();
-    for (int i = startIndex; i < m_items.size(); ++i) {
-        if (m_items.at(i).name.toLower().startsWith(lower))
+    const int n = m_items.size();
+    const int start = std::clamp(startIndex, 0, n);
+    const QString lower = query.toLower();
+    const bool matchParent = lower.startsWith(QLatin1Char('.'));
+
+    auto search = [&](bool substring) -> int {
+        for (int pass = 0; pass < 2; ++pass) {
+            const int from = (pass == 0) ? start : 0;
+            const int to = (pass == 0) ? n : start;
+            for (int i = from; i < to; ++i) {
+                const PanelItem &item = m_items.at(i);
+                if (item.isParent && !matchParent)
+                    continue;
+                const QString nameLower = item.name.toLower();
+                if (substring ? nameLower.contains(lower) : nameLower.startsWith(lower))
+                    return i;
+            }
+        }
+        return -1;
+    };
+
+    const int prefixMatch = search(false);
+    if (prefixMatch >= 0 || !allowSubstringFallback)
+        return prefixMatch;
+    return search(true);
+}
+
+int PanelModel::findIndexByPath(const QString &path) const
+{
+    if (path.isEmpty() || m_items.isEmpty())
+        return -1;
+    const QString clean = QDir::cleanPath(path);
+    const QString targetName = QFileInfo(clean).fileName();
+    for (int i = 0; i < m_items.size(); ++i) {
+        const PanelItem &item = m_items.at(i);
+        if (item.isParent)
+            continue;
+        if (QDir::cleanPath(item.path) == clean)
             return i;
     }
-    for (int i = 0; i < startIndex; ++i) {
-        if (m_items.at(i).name.toLower().startsWith(lower))
-            return i;
+    if (!targetName.isEmpty()) {
+        for (int i = 0; i < m_items.size(); ++i) {
+            if (!m_items.at(i).isParent && m_items.at(i).name == targetName)
+                return i;
+        }
     }
     return -1;
 }
@@ -1451,21 +1947,56 @@ QString PanelModel::detectIconTypeForName(const QString &fileName, bool isDir, b
     if (isDir)
         return QStringLiteral("folder");
 
-    const QString ext = QFileInfo(fileName).suffix().toLower();
-    if (ext == "png" || ext == "jpg" || ext == "jpeg" || ext == "svg" || ext == "webp" || ext == "gif")
-        return QStringLiteral("image");
-    if (ext == "cpp" || ext == "h" || ext == "c" || ext == "py" || ext == "js" || ext == "ts" ||
-        ext == "json" || ext == "xml" || ext == "html" || ext == "css" || ext == "sh" || ext == "qml" || ext == "rs" || ext == "go")
+    const QString lowerName = QFileInfo(fileName).fileName().toLower();
+    if (lowerName.startsWith(QLatin1String(".env")) || lowerName == QLatin1String(".gitignore")
+        || lowerName == QLatin1String(".gitattributes") || lowerName == QLatin1String(".editorconfig"))
+        return QStringLiteral("config");
+    if (lowerName == QLatin1String("cmakelists.txt") || lowerName == QLatin1String("makefile")
+        || lowerName == QLatin1String("dockerfile"))
         return QStringLiteral("code");
-    if (ext == "zip" || ext == "tar" || ext == "gz" || ext == "xz" || ext == "bz2" || ext == "7z" || ext == "zst" || ext == "rar")
+    if (lowerName.startsWith(QLatin1String("id_rsa")) || lowerName.startsWith(QLatin1String("id_ed25519")))
+        return QStringLiteral("lock");
+
+    const QString ext = QFileInfo(fileName).suffix().toLower();
+    if (ext == "png" || ext == "jpg" || ext == "jpeg" || ext == "svg" || ext == "webp"
+        || ext == "gif" || ext == "avif" || ext == "bmp" || ext == "ico" || ext == "heic" || ext == "tiff")
+        return QStringLiteral("image");
+    if (ext == "pdf")
+        return QStringLiteral("pdf");
+    if (ext == "md" || ext == "mdx" || ext == "rst")
+        return QStringLiteral("markdown");
+    if (ext == "csv" || ext == "tsv" || ext == "xls" || ext == "xlsx" || ext == "ods")
+        return QStringLiteral("sheet");
+    if (ext == "txt" || ext == "log" || ext == "doc" || ext == "docx" || ext == "odt" || ext == "rtf" || ext == "tex")
+        return QStringLiteral("doc");
+    if (ext == "json" || ext == "yaml" || ext == "yml" || ext == "toml" || ext == "ini"
+        || ext == "conf" || ext == "cfg" || ext == "xml" || ext == "pro" || ext == "pri")
+        return QStringLiteral("config");
+    if (ext == "sh" || ext == "bash" || ext == "zsh" || ext == "fish" || ext == "ps1"
+        || ext == "bat" || ext == "desktop")
+        return QStringLiteral("script");
+    if (ext == "db" || ext == "sqlite" || ext == "sqlite3" || ext == "sql" || ext == "parquet")
+        return QStringLiteral("database");
+    if (ext == "ttf" || ext == "otf" || ext == "woff" || ext == "woff2")
+        return QStringLiteral("font");
+    if (ext == "key" || ext == "pem" || ext == "pub" || ext == "gpg" || ext == "asc"
+        || ext == "p12" || ext == "crt" || ext == "lock")
+        return QStringLiteral("lock");
+    if (ext == "cpp" || ext == "cc" || ext == "cxx" || ext == "hpp" || ext == "h" || ext == "c"
+        || ext == "py" || ext == "js" || ext == "jsx" || ext == "ts" || ext == "tsx" || ext == "mjs"
+        || ext == "html" || ext == "htm" || ext == "css" || ext == "scss" || ext == "qml"
+        || ext == "rs" || ext == "go" || ext == "java" || ext == "kt" || ext == "swift"
+        || ext == "rb" || ext == "php" || ext == "lua" || ext == "cmake")
+        return QStringLiteral("code");
+    if (ext == "zip" || ext == "tar" || ext == "gz" || ext == "tgz" || ext == "xz"
+        || ext == "bz2" || ext == "7z" || ext == "zst" || ext == "rar" || ext == "deb" || ext == "rpm" || ext == "iso")
         return QStringLiteral("archive");
-    if (ext == "mp3" || ext == "ogg" || ext == "wav" || ext == "flac")
+    if (ext == "mp3" || ext == "ogg" || ext == "wav" || ext == "flac" || ext == "m4a"
+        || ext == "aac" || ext == "opus")
         return QStringLiteral("audio");
-    if (ext == "mp4" || ext == "mkv" || ext == "avi" || ext == "webm" || ext == "mov")
+    if (ext == "mp4" || ext == "mkv" || ext == "avi" || ext == "webm" || ext == "mov" || ext == "m4v")
         return QStringLiteral("video");
-    if (ext == "txt" || ext == "md" || ext == "log" || ext == "csv")
-        return QStringLiteral("text");
-    if (isExec)
+    if (isExec || ext == "so" || ext == "a" || ext == "o" || ext == "bin" || ext == "exe" || ext == "appimage")
         return QStringLiteral("binary");
 
     return QStringLiteral("file");
@@ -1478,8 +2009,17 @@ QString PanelModel::detectIconType(const QFileInfo &info)
 
 void PanelModel::loadDirectory()
 {
+    cancelFolderSizeCalculation();
+
     if (m_isCollectionView) {
         loadCollectionItems();
+        sortItems();
+        updateGitStatus();
+        return;
+    }
+
+    if (isTrashView()) {
+        loadTrashDirectory();
         sortItems();
         updateGitStatus();
         return;
@@ -1563,6 +2103,61 @@ void PanelModel::loadDirectory()
 
     sortItems();
     updateGitStatus();
+}
+
+void PanelModel::loadTrashDirectory()
+{
+    m_allItems.clear();
+
+    const QDir trashRoot(trashRootDir());
+    const QDir filesDir(trashRoot.filePath(QStringLiteral("files")));
+    const QDir infoDir(trashRoot.filePath(QStringLiteral("info")));
+    if (!filesDir.exists())
+        return;
+
+    const QFileInfoList entries = filesDir.entryInfoList(
+        QDir::Files | QDir::Dirs | QDir::Hidden | QDir::NoDotAndDotDot | QDir::System);
+    for (const QFileInfo &fi : entries) {
+        PanelItem item;
+        item.name = fi.fileName();
+        item.path = fi.absoluteFilePath();
+        item.isDir = fi.isDir();
+        item.isParent = false;
+        item.size = fi.isDir() ? 0 : fi.size();
+        item.dirSizeCalculated = false;
+        item.formattedSize = formatSize(fi.size(), fi.isDir());
+        item.modified = fi.lastModified();
+        item.formattedModified = item.modified.toString(QStringLiteral("yyyy-MM-dd hh:mm"));
+        item.extension = fi.suffix();
+        item.iconType = detectIconType(fi);
+        item.isSelected = m_selectedPaths.contains(item.path);
+        item.permissions = formatPosixPermissions(toPosixMode(fi.permissions()));
+
+        // Parse Freedesktop .trashinfo metadata
+        QFile infoFile(infoDir.filePath(fi.fileName() + QStringLiteral(".trashinfo")));
+        if (infoFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            while (!infoFile.atEnd()) {
+                const QByteArray rawLine = infoFile.readLine().trimmed();
+                if (rawLine.startsWith("Path=")) {
+                    QString decoded = QUrl::fromPercentEncoding(rawLine.mid(5));
+                    if (!decoded.isEmpty() && !QDir::isAbsolutePath(decoded))
+                        decoded = QDir(QDir::homePath()).filePath(decoded);
+                    item.originalPath = QDir::cleanPath(decoded);
+                } else if (rawLine.startsWith("DeletionDate=")) {
+                    const QString rawDate = QString::fromUtf8(rawLine.mid(13)).trimmed();
+                    const QDateTime dt = QDateTime::fromString(rawDate, Qt::ISODate);
+                    if (dt.isValid()) {
+                        item.modified = dt;
+                        item.deletionDate = dt.toString(QStringLiteral("yyyy-MM-dd hh:mm"));
+                        item.formattedModified = item.deletionDate;
+                    } else {
+                        item.deletionDate = rawDate;
+                    }
+                }
+            }
+        }
+        m_allItems.append(item);
+    }
 }
 
 void PanelModel::loadCollectionItems()

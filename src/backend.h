@@ -9,11 +9,14 @@
 #include <QVariantMap>
 
 #include <atomic>
+#include <functional>
+#include <memory>
 
 #include "fileoperation.h"
 #include "panelmodel.h"
 
 class QMimeData;
+class QProcess;
 class QTemporaryDir;
 class QThread;
 
@@ -74,7 +77,41 @@ class Backend : public QObject {
     Q_PROPERTY(int searchScannedCount READ searchScannedCount NOTIFY searchProgressChanged)
     Q_PROPERTY(QVariantList searchResultItems READ searchResultItems NOTIFY searchResultsChanged)
     Q_PROPERTY(QVariantList remoteConnections READ remoteConnections NOTIFY remoteConnectionsChanged)
+    Q_PROPERTY(bool rcloneAvailable READ rcloneAvailable NOTIFY rcloneRemotesChanged)
+    Q_PROPERTY(QVariantList rcloneRemotes READ rcloneRemotes NOTIFY rcloneRemotesChanged)
+    Q_PROPERTY(bool gdriveAuthRunning READ gdriveAuthRunning NOTIFY gdriveAuthChanged)
+    Q_PROPERTY(QString gdriveAuthStatus READ gdriveAuthStatus NOTIFY gdriveAuthChanged)
+    Q_PROPERTY(QString gdriveAuthUrl READ gdriveAuthUrl NOTIFY gdriveAuthChanged)
     Q_PROPERTY(QVariantList customActions READ customActions NOTIFY customActionsChanged)
+    Q_PROPERTY(bool duplicateScanRunning READ duplicateScanRunning NOTIFY duplicateScanStateChanged)
+    Q_PROPERTY(int duplicateScanScannedCount READ duplicateScanScannedCount NOTIFY duplicateScanProgressChanged)
+    Q_PROPERTY(QString duplicateScanDetail READ duplicateScanDetail NOTIFY duplicateScanProgressChanged)
+    Q_PROPERTY(QVariantList duplicateResults READ duplicateResults NOTIFY duplicateResultsChanged)
+    Q_PROPERTY(bool syncRunning READ syncRunning NOTIFY syncStateChanged)
+    Q_PROPERTY(double syncProgress READ syncProgress NOTIFY syncProgressChanged)
+    Q_PROPERTY(QString syncDetail READ syncDetail NOTIFY syncProgressChanged)
+    Q_PROPERTY(QVariantList syncCompareResults READ syncCompareResults NOTIFY syncCompareResultsChanged)
+    Q_PROPERTY(bool checksumRunning READ checksumRunning NOTIFY checksumStateChanged)
+    Q_PROPERTY(double checksumProgress READ checksumProgress NOTIFY checksumProgressChanged)
+    Q_PROPERTY(QVariantMap checksumResult READ checksumResult NOTIFY checksumResultChanged)
+    Q_PROPERTY(bool previewLoading READ previewLoading NOTIFY previewLoadingChanged)
+    Q_PROPERTY(bool quickViewLoading READ quickViewLoading NOTIFY previewLoadingChanged)
+    Q_PROPERTY(bool archiveOpRunning READ archiveOpRunning NOTIFY archiveOpChanged)
+    Q_PROPERTY(QString archiveOpTitle READ archiveOpTitle NOTIFY archiveOpChanged)
+    Q_PROPERTY(QString archiveOpDetail READ archiveOpDetail NOTIFY archiveOpChanged)
+    Q_PROPERTY(bool remoteOpRunning READ remoteOpRunning NOTIFY remoteOpChanged)
+    Q_PROPERTY(QString remoteOpDetail READ remoteOpDetail NOTIFY remoteOpChanged)
+    Q_PROPERTY(QVariantList workspaces READ workspaces NOTIFY workspacesChanged)
+    Q_PROPERTY(QString activeWorkspaceName READ activeWorkspaceName NOTIFY workspacesChanged)
+    Q_PROPERTY(int trashCount READ trashCount NOTIFY trashChanged)
+    Q_PROPERTY(bool commandRunning READ commandRunning NOTIFY commandStateChanged)
+    Q_PROPERTY(QString commandOutput READ commandOutput NOTIFY commandOutputChanged)
+    Q_PROPERTY(QString commandRunningText READ commandRunningText NOTIFY commandStateChanged)
+    Q_PROPERTY(int commandLastExitCode READ commandLastExitCode NOTIFY commandStateChanged)
+    Q_PROPERTY(QStringList commandHistory READ commandHistory NOTIFY commandHistoryChanged)
+    Q_PROPERTY(bool splitOpRunning READ splitOpRunning NOTIFY splitOpChanged)
+    Q_PROPERTY(double splitOpProgress READ splitOpProgress NOTIFY splitOpChanged)
+    Q_PROPERTY(QString splitOpDetail READ splitOpDetail NOTIFY splitOpChanged)
 
 public:
     explicit Backend(const QString &bookmarksFile = {}, QObject *parent = nullptr);
@@ -157,6 +194,7 @@ public:
     Q_INVOKABLE QString copyNamesAsCsv(const QStringList &paths = {});
     Q_INVOKABLE QString copyPathsAsCsv(const QStringList &paths = {});
     Q_INVOKABLE QString copyFolderContentsAsCsv(const QString &dirPath = {}, bool fullPaths = false);
+    Q_INVOKABLE bool copyTextToClipboard(const QString &text, const QString &statusMsg = QString());
 
     // Symbolic link creation (Ctrl+Shift+F5)
     Q_INVOKABLE bool createSymlink(const QString &sourcePath, const QString &linkDir, const QString &linkName = QString());
@@ -167,6 +205,11 @@ public:
 
     // Checksum calculation and verification (MD5 / SHA1 / SHA256)
     Q_INVOKABLE QVariantMap calculateChecksums(const QString &filePath) const;
+    bool checksumRunning() const { return m_checksumRunning; }
+    double checksumProgress() const { return m_checksumProgress; }
+    QVariantMap checksumResult() const { return m_checksumResult; }
+    Q_INVOKABLE void startChecksumCalculation(const QString &filePath);
+    Q_INVOKABLE void cancelChecksumCalculation();
     Q_INVOKABLE bool verifyChecksum(const QString &filePath, const QString &expectedHash) const;
     Q_INVOKABLE bool saveChecksumFile(const QString &filePath, const QString &algorithm, const QString &targetFilePath = {}) const;
     Q_INVOKABLE QVariantMap verifyChecksumFile(const QString &checksumFilePath) const;
@@ -183,9 +226,23 @@ public:
     // USB / Block Device Mounting via udisksctl
     Q_INVOKABLE bool mountDevice(const QString &devPath);
     Q_INVOKABLE bool unmountDevice(const QString &mountOrDevPath);
+    Q_INVOKABLE void mountDeviceAsync(const QString &devPath);
+    Q_INVOKABLE void unmountDeviceAsync(const QString &mountOrDevPath);
 
-    // Remote Connections (SFTP / SMB / SSHFS via GVFS gio mount / sshfs)
+    // Remote Connections (Google Drive / Cloud via rclone, SFTP / SMB / SSHFS via GVFS / sshfs)
     QVariantList remoteConnections() const;
+    bool rcloneAvailable() const;
+    QVariantList rcloneRemotes() const { return m_rcloneRemotes; }
+    bool gdriveAuthRunning() const { return m_gdriveAuthRunning; }
+    QString gdriveAuthStatus() const { return m_gdriveAuthStatus; }
+    QString gdriveAuthUrl() const { return m_gdriveAuthUrl; }
+    bool remoteOpRunning() const { return m_remoteOpRunning; }
+    QString remoteOpDetail() const { return m_remoteOpDetail; }
+    Q_INVOKABLE void refreshRcloneRemotes();
+    Q_INVOKABLE void startGoogleDriveAuth(const QString &remoteName,
+                                            const QString &clientId = QString(),
+                                            const QString &clientSecret = QString());
+    Q_INVOKABLE void cancelGoogleDriveAuth();
     Q_INVOKABLE QString buildRemoteUri(const QVariantMap &connection) const;
     Q_INVOKABLE QVariantMap parseRemoteUri(const QString &uri) const;
     Q_INVOKABLE QString resolveRemoteMountPath(const QVariantMap &connection) const;
@@ -193,6 +250,9 @@ public:
     Q_INVOKABLE bool deleteRemoteConnection(const QString &idOrName);
     Q_INVOKABLE QString connectRemote(const QString &idOrUri);
     Q_INVOKABLE bool disconnectRemote(const QString &idOrMountPath);
+    Q_INVOKABLE void connectRemoteAsync(const QString &idOrUri);
+    Q_INVOKABLE void disconnectRemoteAsync(const QString &idOrMountPath);
+    Q_INVOKABLE void cancelRemoteOperation();
 
     // XDG MIME & Open With (.desktop applications) + Custom Actions
     Q_INVOKABLE QVariantMap getFileMimeInfo(const QString &path) const;
@@ -239,6 +299,12 @@ public:
     Q_INVOKABLE bool packArchive(const QStringList &sourcePaths, const QString &archivePath);
     Q_INVOKABLE bool extractArchive(const QString &archivePath, const QString &targetDir);
     Q_INVOKABLE bool extractArchiveItems(const QString &archivePath, const QStringList &sourcePaths, const QString &targetDir);
+    bool archiveOpRunning() const { return m_archiveOpRunning; }
+    QString archiveOpTitle() const { return m_archiveOpTitle; }
+    QString archiveOpDetail() const { return m_archiveOpDetail; }
+    Q_INVOKABLE void packArchiveAsync(const QStringList &sourcePaths, const QString &archivePath);
+    Q_INVOKABLE void extractArchiveAsync(const QString &archivePath, const QString &targetDir);
+    Q_INVOKABLE void cancelArchiveOperation();
 
     QStringList recentDirectories() const { return m_recentDirs; }
     Q_INVOKABLE void recordRecentDirectory(const QString &path);
@@ -251,6 +317,10 @@ public:
 
     Q_INVOKABLE QVariantMap runCommand(const QString &command);
     Q_INVOKABLE QVariantMap getPreview(const QString &path, int pdfPage = 1);
+    bool previewLoading() const { return m_previewLoading; }
+    bool quickViewLoading() const { return m_quickViewLoading; }
+    Q_INVOKABLE void requestPreview(const QString &path, int pdfPage = 1, const QString &target = QStringLiteral("modal"));
+    Q_INVOKABLE void cancelPreview(const QString &target = QString());
     Q_INVOKABLE QStringList searchFiles(const QString &rootPath, const QString &query, int maxResults = 200);
 
     bool searchRunning() const { return m_searchRunning; }
@@ -266,12 +336,79 @@ public:
                                                          bool includeHidden = false);
     Q_INVOKABLE QVariantMap executeDirectorySync(const QString &leftRoot, const QString &rightRoot,
                                                  const QVariantList &syncItems);
+    bool syncRunning() const { return m_syncRunning; }
+    double syncProgress() const { return m_syncProgress; }
+    QString syncDetail() const { return m_syncDetail; }
+    QVariantList syncCompareResults() const { return m_syncCompareResults; }
+    Q_INVOKABLE void startDirectoryCompare(const QString &leftRoot, const QString &rightRoot,
+                                           const QString &compareMode = QStringLiteral("date_size"),
+                                           bool includeHidden = false);
+    Q_INVOKABLE void startDirectorySync(const QString &leftRoot, const QString &rightRoot,
+                                        const QVariantList &syncItems);
+    Q_INVOKABLE void cancelSyncOperation();
+
     Q_INVOKABLE QVariantList findDuplicateFiles(const QString &rootPath,
                                                   const QString &secondaryRootPath = QString(),
                                                   qint64 minSizeBytes = 1,
                                                   bool includeHidden = false);
+    bool duplicateScanRunning() const { return m_duplicateScanRunning; }
+    int duplicateScanScannedCount() const { return m_duplicateScanScannedCount; }
+    QString duplicateScanDetail() const { return m_duplicateScanDetail; }
+    QVariantList duplicateResults() const { return m_duplicateResults; }
+    Q_INVOKABLE void startDuplicateScan(const QString &rootPath,
+                                        const QString &secondaryRootPath = QString(),
+                                        qint64 minSizeBytes = 1,
+                                        bool includeHidden = false);
+    Q_INVOKABLE void cancelDuplicateScan();
 
     Q_INVOKABLE void showStatus(const QString &message);
+    Q_INVOKABLE QString activeFilesystemPath() const;
+    Q_INVOKABLE void applyNavigationRequest(const QString &leftPath,
+                                            const QString &rightPath = QString(),
+                                            const QString &selectPath = QString(),
+                                            bool newTab = false);
+
+    // Tab power actions
+    Q_INVOKABLE bool moveTabToOppositePanel(int panelIndex, int tabIndex = -1);
+
+    // Saved Dual-Panel Workspaces (workspaces.json)
+    QVariantList workspaces() const { return m_workspaces; }
+    QString activeWorkspaceName() const { return m_activeWorkspaceName; }
+    Q_INVOKABLE bool saveWorkspace(const QString &name);
+    Q_INVOKABLE bool loadWorkspace(const QString &nameOrId);
+    Q_INVOKABLE bool deleteWorkspace(const QString &nameOrId);
+
+    // Freedesktop Trash Manager (trash://)
+    int trashCount() const;
+    Q_INVOKABLE void openTrash();
+    Q_INVOKABLE int restoreFromTrash(const QStringList &trashFilePaths);
+    Q_INVOKABLE int deleteFromTrashPermanently(const QStringList &trashFilePaths);
+    Q_INVOKABLE int emptyTrash();
+
+    // Async Interactive Command Runner & Persistent Command History
+    bool commandRunning() const { return m_commandRunning; }
+    QString commandOutput() const { return m_commandOutput; }
+    QString commandRunningText() const { return m_commandRunningText; }
+    int commandLastExitCode() const { return m_commandLastExitCode; }
+    QStringList commandHistory() const { return m_commandHistory; }
+    Q_INVOKABLE void runCommandAsync(const QString &command);
+    Q_INVOKABLE void cancelCommand();
+    Q_INVOKABLE void clearCommandOutput();
+    Q_INVOKABLE void clearCommandHistory();
+    Q_INVOKABLE QString shellQuote(const QString &text) const;
+
+    // File Split & Combine (.001 / .crc)
+    bool splitOpRunning() const { return m_splitOpRunning; }
+    double splitOpProgress() const { return m_splitOpProgress; }
+    QString splitOpDetail() const { return m_splitOpDetail; }
+    Q_INVOKABLE QVariantMap inspectSplitSource(const QString &path) const;
+    Q_INVOKABLE QVariantMap splitFile(const QString &sourcePath, const QString &targetDir,
+                                      qint64 partSizeBytes, bool writeCrc = true);
+    Q_INVOKABLE QVariantMap combineFiles(const QString &firstPartOrCrcPath, const QString &targetDir);
+    Q_INVOKABLE void startSplitFile(const QString &sourcePath, const QString &targetDir,
+                                    qint64 partSizeBytes, bool writeCrc = true);
+    Q_INVOKABLE void startCombineFiles(const QString &firstPartOrCrcPath, const QString &targetDir);
+    Q_INVOKABLE void cancelSplitOperation();
 
 signals:
     void activePanelChanged();
@@ -290,11 +427,47 @@ signals:
     void searchProgressChanged();
     void searchResultsChanged();
     void remoteConnectionsChanged();
+    void rcloneRemotesChanged();
+    void gdriveAuthChanged();
+    void gdriveAuthFinished(bool success, const QString &remoteName, const QString &message);
     void customActionsChanged();
+    void duplicateScanStateChanged();
+    void duplicateScanProgressChanged();
+    void duplicateResultsChanged();
+    void syncStateChanged();
+    void syncProgressChanged();
+    void syncCompareResultsChanged();
+    void directorySyncFinished(const QVariantMap &summary);
+    void checksumStateChanged();
+    void checksumProgressChanged();
+    void checksumResultChanged();
+    void checksumFinished(const QVariantMap &result);
+    void previewLoadingChanged();
+    void previewReady(const QString &target, const QVariantMap &data);
+    void archiveOpChanged();
+    void archiveOperationFinished(bool success, const QString &message);
+    void remoteOpChanged();
+    void remoteOperationFinished(bool success, const QString &mountPath, const QString &message);
     void operationFinished(bool success, const QString &message);
     void conflictRequested(const QVariantMap &info);
+    void focusAndSelectRequested(int panelIndex, const QString &filePath);
+    void windowActivateRequested();
+    void workspacesChanged();
+    void trashChanged();
+    void commandStateChanged();
+    void commandOutputChanged();
+    void commandHistoryChanged();
+    void commandFinished(bool success, int exitCode);
+    void splitOpChanged();
+    void splitOperationFinished(const QVariantMap &result);
 
 private:
+    QString ensureArchiveTempDir();
+    static QString extractArchiveEntryToTempDir(const QString &archivePath, const QString &internalPath, const QString &tempDirPath);
+    static QVariantMap buildPreviewData(const QString &path, int pdfPage, bool dark, const QString &tempDirPath,
+                                        const std::atomic<bool> *cancelFlag = nullptr);
+    void finalizeFontPreviewOnMainThread(QVariantMap &map) const;
+    QVariantList buildBaseDrivesList() const;
     bool startFileOperation(FileOperation::Mode mode, const QStringList &sourcePaths, const QString &targetDir);
     bool launchFileOperation(FileOperation::Mode mode, const QStringList &sourcePaths, const QString &targetDir);
     void onFileOperationFinished();
@@ -305,6 +478,17 @@ private:
     void loadSession();
     void loadBookmarks();
     void saveBookmarks() const;
+    void loadWorkspaces();
+    void saveWorkspaces() const;
+    void recordCommandHistory(const QString &command);
+    bool tryHandleBuiltinCd(const QString &command, QString *outMessage, int *outExitCode);
+    static QVariantMap splitFileImpl(const QString &sourcePath, const QString &targetDir,
+                                     qint64 partSizeBytes, bool writeCrc,
+                                     const std::atomic<bool> *cancelFlag = nullptr,
+                                     const std::function<void(double, const QString &)> &progressCb = {});
+    static QVariantMap combineFilesImpl(const QString &firstPartOrCrcPath, const QString &targetDir,
+                                        const std::atomic<bool> *cancelFlag = nullptr,
+                                        const std::function<void(double, const QString &)> &progressCb = {});
     void ensureDefaultCustomActions();
     QString extractArchiveEntryToTemp(const QString &archivePath, const QString &internalPath);
     static QString computeNewName(const QFileInfo &fi, int index, const QString &findText,
@@ -335,6 +519,15 @@ private:
     int m_nextQueueId = 0;
     QVariantList m_multiRenamePresets;
     QVariantList m_remoteConnections;
+    QVariantList m_rcloneRemotes;
+    QProcess *m_gdriveAuthProc = nullptr;
+    bool m_gdriveAuthRunning = false;
+    QString m_gdriveAuthName;
+    QString m_gdriveAuthClientId;
+    QString m_gdriveAuthClientSecret;
+    QString m_gdriveAuthStatus;
+    QString m_gdriveAuthUrl;
+    int m_gdriveAuthStep = 0;
     QVariantList m_customActions;
     QString m_statusMessage;
 
@@ -344,7 +537,10 @@ private:
     QVariantList m_drives;
     QString m_bookmarksFile;
     QString m_sessionFile;
+    QString m_workspacesFile;
     QStringList m_bookmarks;
+    QVariantList m_workspaces;
+    QString m_activeWorkspaceName;
 
     QStringList m_clipboardPaths;
     bool m_clipboardIsCut = false;
@@ -359,4 +555,67 @@ private:
     bool m_searchRunning = false;
     int m_searchScannedCount = 0;
     QVariantList m_searchResultItems;
+
+    // Async drives (lsblk)
+    std::atomic<quint64> m_drivesGeneration{0};
+    std::shared_ptr<std::atomic<bool>> m_drivesCancel;
+
+    // Async duplicate finder
+    std::atomic<quint64> m_dupGeneration{0};
+    std::shared_ptr<std::atomic<bool>> m_dupCancel;
+    bool m_duplicateScanRunning = false;
+    int m_duplicateScanScannedCount = 0;
+    QString m_duplicateScanDetail;
+    QVariantList m_duplicateResults;
+
+    // Async directory compare & sync
+    std::atomic<quint64> m_syncGeneration{0};
+    std::shared_ptr<std::atomic<bool>> m_syncCancel;
+    bool m_syncRunning = false;
+    double m_syncProgress = 0.0;
+    QString m_syncDetail;
+    QVariantList m_syncCompareResults;
+
+    // Async checksum
+    std::atomic<quint64> m_checksumGeneration{0};
+    std::shared_ptr<std::atomic<bool>> m_checksumCancel;
+    bool m_checksumRunning = false;
+    double m_checksumProgress = 0.0;
+    QVariantMap m_checksumResult;
+
+    // Async preview (modal & quickview tracked independently)
+    std::atomic<quint64> m_modalPreviewGen{0};
+    std::shared_ptr<std::atomic<bool>> m_modalPreviewCancel;
+    std::atomic<quint64> m_quickViewPreviewGen{0};
+    std::shared_ptr<std::atomic<bool>> m_quickViewPreviewCancel;
+    bool m_previewLoading = false;
+    bool m_quickViewLoading = false;
+
+    // Async archive pack/extract
+    std::atomic<quint64> m_archiveOpGen{0};
+    std::shared_ptr<std::atomic<bool>> m_archiveOpCancel;
+    bool m_archiveOpRunning = false;
+    QString m_archiveOpTitle;
+    QString m_archiveOpDetail;
+
+    // Async remote / device mount & unmount
+    std::atomic<quint64> m_remoteOpGen{0};
+    std::shared_ptr<std::atomic<bool>> m_remoteOpCancel;
+    bool m_remoteOpRunning = false;
+    QString m_remoteOpDetail;
+
+    // Async interactive command bar & history
+    QProcess *m_cmdProc = nullptr;
+    bool m_commandRunning = false;
+    QString m_commandRunningText;
+    QString m_commandOutput;
+    int m_commandLastExitCode = 0;
+    QStringList m_commandHistory;
+
+    // Async file split & combine
+    std::atomic<quint64> m_splitOpGen{0};
+    std::shared_ptr<std::atomic<bool>> m_splitOpCancel;
+    bool m_splitOpRunning = false;
+    double m_splitOpProgress = 0.0;
+    QString m_splitOpDetail;
 };
