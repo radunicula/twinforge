@@ -1,7 +1,64 @@
-MIT License
+TwinForge Freeware License
+Copyright (c) 2026 Radu. All rights reserved.
 
-Copyright (c) 2026 Radu
-Portions copyright (c) David Heinemeier Hansson (Theme and Translator patterns from Omacut / Monologue)
+1. GRANT OF LICENSE
+You are granted a non-exclusive, non-transferable, royalty-free license to
+download, install, and use compiled binary distributions of TwinForge for
+personal or commercial purposes at no cost.
+
+2. RESTRICTIONS
+- The source code of TwinForge is proprietary and not publicly licensed.
+- You may not sell, sublicense, or charge a fee for TwinForge itself.
+- You may redistribute unmodified official binary packages provided you retain
+  this LICENSE file and all copyright and third-party notices intact.
+- You may not decompile, reverse-engineer, or disassemble the software except
+  to the extent expressly permitted by applicable law or required for debugging
+  modifications to LGPLv3-licensed libraries dynamically linked by this software.
+
+3. DISCLAIMER OF WARRANTY
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHOR OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+================================================================================
+THIRD-PARTY OPEN-SOURCE NOTICES
+================================================================================
+
+TwinForge dynamically links against or incorporates components covered by the
+following open-source licenses:
+
+--------------------------------------------------------------------------------
+1. Qt 6 Framework (GNU Lesser General Public License v3.0 — LGPLv3)
+--------------------------------------------------------------------------------
+TwinForge dynamically links against the Qt 6 libraries (Qt6Core, Qt6Gui,
+Qt6Quick, Qt6QuickControls2, Qt6Qml, Qt6Svg, Qt6Network, Qt6Concurrent,
+Qt6DBus, Qt6Wayland, and optionally Qt6Multimedia), provided under the terms
+of the GNU Lesser General Public License version 3 (LGPLv3).
+
+Because TwinForge links dynamically against the system Qt 6 shared libraries,
+users may replace or upgrade the Qt 6 libraries installed on their system in
+accordance with LGPLv3.
+
+- Qt Project & Licensing: https://www.qt.io/licensing/
+- Qt Source Code: https://download.qt.io/official_releases/qt/
+- GNU LGPLv3 Full Text: https://www.gnu.org/licenses/lgpl-3.0.txt
+
+--------------------------------------------------------------------------------
+2. libarchive (BSD 2-Clause License)
+--------------------------------------------------------------------------------
+TwinForge dynamically links against libarchive for archive browsing and
+extraction (https://www.libarchive.org/), licensed under the BSD 2-Clause
+License.
+
+--------------------------------------------------------------------------------
+3. Theme & Translator Patterns (MIT License)
+--------------------------------------------------------------------------------
+Portions copyright (c) David Heinemeier Hansson (Theme and Translator patterns
+adapted from Omacut / Monologue).
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

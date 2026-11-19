@@ -1,4 +1,5 @@
 /build/
+/release/
 /pkgbuild/pkg/
 /pkgbuild/src/
 *.pkg.tar.*

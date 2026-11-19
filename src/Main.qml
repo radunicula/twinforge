@@ -11165,7 +11165,7 @@ ApplicationWindow {
                             Text {
                                 id: vText
                                 anchors.centerIn: parent
-                                text: "v1.0"
+                                text: "v0.1.0"
                                 font.pixelSize: 10
                                 font.bold: true
                                 color: p.accent
@@ -11193,7 +11193,16 @@ ApplicationWindow {
                 font.pixelSize: 12
                 lineHeight: 1.4
                 color: p.textSecondary
-                text: qsTr("Dual-panel orthodox file manager featuring tabbed navigation, git status tracking, thumbnail grid, checksum calculation & verification, visual side-by-side diff, multi-file rename, and undoable operations.")
+                text: qsTr("Dual-panel orthodox file manager featuring locked tabs, workspaces, Freedesktop Trash, async workers, thumbnail grid, git status, visual diff, RegEx multi-rename, file split/combine, and remote mounts.")
+            }
+
+            Text {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                font.pixelSize: 11
+                lineHeight: 1.35
+                color: p.textDim
+                text: qsTr("Freeware © 2026 Radu. Dynamically linked against Qt 6 (GNU LGPLv3 — download.qt.io) and libarchive (BSD-2-Clause). See LICENSE for full third-party notices.")
             }
         }
 

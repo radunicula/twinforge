@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+cd "$ROOT"
+
+VER="$(sed -n 's/^pkgver=//p' pkgbuild/PKGBUILD | head -n 1)"
+REL="$(sed -n 's/^pkgrel=//p' pkgbuild/PKGBUILD | head -n 1)"
+ARCH="$(uname -m)"
+
+if [ -z "$VER" ]; then
+  echo "Error: Could not read pkgver from pkgbuild/PKGBUILD" >&2
+  exit 1
+fi
+
+SKIP_TESTS=0
+if [ "${1:-}" = "--skip-tests" ]; then
+  SKIP_TESTS=1
+fi
+
+echo "==> Building TwinForge v${VER} (${ARCH})..."
+./bin/build
+
+if [ "$SKIP_TESTS" -eq 0 ]; then
+  echo "==> Running automated test suite..."
+  ./bin/test
+fi
+
+OUT_DIR="$ROOT/release"
+STAGE_NAME="twinforge-${VER}-linux-${ARCH}"
+STAGE_DIR="$OUT_DIR/${STAGE_NAME}"
+TARBALL="$OUT_DIR/${STAGE_NAME}.tar.gz"
+PUBLIC_STAGE="$OUT_DIR/public-repo"
+
+rm -rf "$OUT_DIR"
+mkdir -p \
+  "$STAGE_DIR/bin" \
+  "$STAGE_DIR/share/applications" \
+  "$STAGE_DIR/share/icons/hicolor/256x256/apps" \
+  "$STAGE_DIR/share/icons/hicolor/scalable/apps" \
+  "$PUBLIC_STAGE/assets" \
+  "$PUBLIC_STAGE/.github"
+
+# 1. Portable Linux binary tarball (.tar.gz)
+install -Dm755 build/twinforge "$STAGE_DIR/bin/twinforge"
+ln -sfn twinforge "$STAGE_DIR/bin/tf"
+install -Dm644 pkgbuild/twinforge.desktop "$STAGE_DIR/share/applications/twinforge.desktop"
+install -Dm644 pkgbuild/twinforge.png "$STAGE_DIR/share/icons/hicolor/256x256/apps/twinforge.png"
+install -Dm644 pkgbuild/twinforge.svg "$STAGE_DIR/share/icons/hicolor/scalable/apps/twinforge.svg"
+install -Dm644 LICENSE "$STAGE_DIR/LICENSE"
+install -Dm755 dist/install.sh "$STAGE_DIR/install.sh"
+install -Dm755 dist/uninstall.sh "$STAGE_DIR/uninstall.sh"
+
+tar -czf "$TARBALL" -C "$OUT_DIR" "$STAGE_NAME"
+rm -rf "$STAGE_DIR"
+
+# 2. Arch Linux package (.pkg.tar.zst)
+echo "==> Building Arch Linux package..."
+(cd pkgbuild && makepkg -f)
+PKG_FILE="pkgbuild/twinforge-${VER}-${REL}-${ARCH}.pkg.tar.zst"
+if [ -f "$PKG_FILE" ]; then
+  cp "$PKG_FILE" "$OUT_DIR/"
+fi
+
+# 3. Copy standalone scripts & generate SHA256SUMS.txt
+install -Dm755 dist/install.sh "$OUT_DIR/install.sh"
+install -Dm755 dist/uninstall.sh "$OUT_DIR/uninstall.sh"
+install -Dm644 LICENSE "$OUT_DIR/LICENSE"
+
+(
+  cd "$OUT_DIR"
+  sha256sum twinforge-*.tar.gz twinforge-*.pkg.tar.zst > SHA256SUMS.txt
+)
+
+# 4. Stage public-only repository contents (NO source code!)
+install -Dm644 dist/README.md "$PUBLIC_STAGE/README.md"
+install -Dm644 LICENSE "$PUBLIC_STAGE/LICENSE"
+install -Dm755 dist/install.sh "$PUBLIC_STAGE/install.sh"
+install -Dm755 dist/uninstall.sh "$PUBLIC_STAGE/uninstall.sh"
+install -Dm644 dist/.github/FUNDING.yml "$PUBLIC_STAGE/.github/FUNDING.yml"
+install -Dm644 src/assets/logo_full.png "$PUBLIC_STAGE/assets/logo_full.png"
+
+echo ""
+echo "==> Release v${VER} artifacts ready in ${OUT_DIR}/:"
+ls -lh "$OUT_DIR"
+echo ""
+echo "==> SHA256SUMS.txt:"
+cat "$OUT_DIR/SHA256SUMS.txt"
+echo ""
+echo "Public-only repo template staged at: ${PUBLIC_STAGE}/"

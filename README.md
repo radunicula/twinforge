@@ -212,4 +212,4 @@ Translations can be edited directly in `src/i18n/`.
 ---
 
 ## 📄 License
-GPL-3.0-or-later License.
+TwinForge Freeware License (see [LICENSE](LICENSE)) — dynamically linked against Qt 6 (GNU LGPLv3) and `libarchive` (BSD-2-Clause).
