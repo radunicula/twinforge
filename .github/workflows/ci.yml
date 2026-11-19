@@ -32,8 +32,12 @@ jobs:
             qml6-module-qtquick-layouts \
             qml6-module-qtquick-window \
             qml6-module-qtquick-templates \
+            qml6-module-qtqml-workerscript \
+            qml6-module-qtqml-models \
             qml6-module-qtcore \
             libarchive-dev \
+            libarchive-tools \
+            zstd \
             poppler-utils \
             ffmpeg \
             zip \

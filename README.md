@@ -63,7 +63,9 @@ curl -fsSL https://raw.githubusercontent.com/radunicula/twinforge/main/install.s
 # Ubuntu 24.04+ / Debian:
 sudo apt install build-essential qmake6 qt6-base-dev qt6-declarative-dev libqt6svg6-dev \
   qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-layouts \
-  qml6-module-qtquick-window qml6-module-qtquick-templates libarchive-dev
+  qml6-module-qtquick-window qml6-module-qtquick-templates \
+  qml6-module-qtqml-workerscript qml6-module-qtqml-models \
+  libarchive-dev libarchive-tools zstd
 
 git clone https://github.com/radunicula/twinforge.git
 cd twinforge
