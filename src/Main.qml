@@ -187,6 +187,7 @@ ApplicationWindow {
     property bool splitCombineOpen: false
     property string splitSourcePath: ""
     property var splitSourceInfo: ({})
+    property real panelSplitRatio: 0.5
     property string openWithTargetPath: ""
     property var openWithAppsList: []
     property var openWithAllApps: []
@@ -313,7 +314,25 @@ ApplicationWindow {
             "network": "<defs><linearGradient id=\"gnet\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0%\" stop-color=\"#38BDF8\"/><stop offset=\"100%\" stop-color=\"#4F46E5\"/></linearGradient></defs><circle cx=\"12\" cy=\"12\" r=\"9\" fill=\"url(#gnet)\"/><ellipse cx=\"12\" cy=\"12\" rx=\"4\" ry=\"9\" stroke=\"#FFFFFF\" stroke-opacity=\"0.78\" stroke-width=\"1.35\"/><line x1=\"3.4\" y1=\"12\" x2=\"20.6\" y2=\"12\" stroke=\"#FFFFFF\" stroke-opacity=\"0.78\" stroke-width=\"1.35\"/><path d=\"M5.5 7.5h13M5.5 16.5h13\" stroke=\"#FFFFFF\" stroke-opacity=\"0.42\" stroke-width=\"1.1\"/>",
             "sun": "<defs><linearGradient id=\"gsun\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0%\" stop-color=\"#FEF08A\"/><stop offset=\"100%\" stop-color=\"#F59E0B\"/></linearGradient></defs><circle cx=\"12\" cy=\"12\" r=\"4.8\" fill=\"url(#gsun)\"/><path d=\"M12 2.4v2.3M12 19.3v2.3M4.9 4.9l1.7 1.7M17.4 17.4l1.7 1.7M2.4 12h2.3M19.3 12h2.3M4.9 19.1l1.7-1.7M17.4 6.6l1.7-1.7\" stroke=\"#FBBF24\" stroke-width=\"2\"/>",
             "moon": "<defs><linearGradient id=\"gmn\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0%\" stop-color=\"#E0E7FF\"/><stop offset=\"100%\" stop-color=\"#6366F1\"/></linearGradient></defs><path d=\"M19.8 14.2A7.8 7.8 0 0 1 9.8 4.2a7.8 7.8 0 1 0 10 10Z\" fill=\"url(#gmn)\"/><circle cx=\"17.5\" cy=\"6.5\" r=\"1.1\" fill=\"#FDE047\" stroke=\"none\"/><circle cx=\"14.5\" cy=\"4.5\" r=\"0.7\" fill=\"#E0E7FF\" stroke=\"none\"/>",
-            "star-filled": "<defs><linearGradient id=\"gst\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0%\" stop-color=\"#FEF08A\"/><stop offset=\"50%\" stop-color=\"#FBBF24\"/><stop offset=\"100%\" stop-color=\"#D97706\"/></linearGradient></defs><polygon points=\"12 2.8 14.9 8.6 21.3 9.5 16.6 14 17.7 20.4 12 17.4 6.3 20.4 7.4 14 2.7 9.5 9.1 8.6\" fill=\"url(#gst)\"/>"
+            "star-filled": "<defs><linearGradient id=\"gst\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0%\" stop-color=\"#FEF08A\"/><stop offset=\"50%\" stop-color=\"#FBBF24\"/><stop offset=\"100%\" stop-color=\"#D97706\"/></linearGradient></defs><polygon points=\"12 2.8 14.9 8.6 21.3 9.5 16.6 14 17.7 20.4 12 17.4 6.3 20.4 7.4 14 2.7 9.5 9.1 8.6\" fill=\"url(#gst)\"/>",
+            "star": "<defs><linearGradient id=\"gsto\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0%\" stop-color=\"#FDE047\"/><stop offset=\"100%\" stop-color=\"#F59E0B\"/></linearGradient></defs><polygon points=\"12 3 14.8 8.7 21 9.6 16.5 14 17.6 20.2 12 17.2 6.4 20.2 7.5 14 3 9.6 9.2 8.7\" fill=\"url(#gsto)\" fill-opacity=\"0.20\" stroke=\"url(#gsto)\" stroke-width=\"1.8\"/>",
+            "home": "<defs><linearGradient id=\"ghm\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0%\" stop-color=\"#38BDF8\"/><stop offset=\"100%\" stop-color=\"#2563EB\"/></linearGradient><linearGradient id=\"ghr\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"0\"><stop offset=\"0%\" stop-color=\"#FB7185\"/><stop offset=\"100%\" stop-color=\"#F59E0B\"/></linearGradient></defs><path d=\"M4.5 10.6V19a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-8.4L12 4.6Z\" fill=\"url(#ghm)\"/><path d=\"M2.5 11.2 12 3.5l9.5 7.7\" stroke=\"url(#ghr)\" stroke-width=\"2.3\"/><rect x=\"9.6\" y=\"13.6\" width=\"4.8\" height=\"7.4\" rx=\"1.3\" fill=\"#FEF08A\"/>",
+            "chart": "<defs><linearGradient id=\"gc1\" x1=\"0\" y1=\"0\" x2=\"0\" y2=\"1\"><stop offset=\"0%\" stop-color=\"#34D399\"/><stop offset=\"100%\" stop-color=\"#059669\"/></linearGradient><linearGradient id=\"gc2\" x1=\"0\" y1=\"0\" x2=\"0\" y2=\"1\"><stop offset=\"0%\" stop-color=\"#38BDF8\"/><stop offset=\"100%\" stop-color=\"#2563EB\"/></linearGradient><linearGradient id=\"gc3\" x1=\"0\" y1=\"0\" x2=\"0\" y2=\"1\"><stop offset=\"0%\" stop-color=\"#FBBF24\"/><stop offset=\"100%\" stop-color=\"#EA580C\"/></linearGradient></defs><rect x=\"3.4\" y=\"12.2\" width=\"4.6\" height=\"8.3\" rx=\"1.4\" fill=\"url(#gc1)\"/><rect x=\"9.7\" y=\"3.8\" width=\"4.6\" height=\"16.7\" rx=\"1.4\" fill=\"url(#gc2)\"/><rect x=\"16\" y=\"8.2\" width=\"4.6\" height=\"12.3\" rx=\"1.4\" fill=\"url(#gc3)\"/>",
+            "filter": "<defs><linearGradient id=\"gflt\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0%\" stop-color=\"#C084FC\"/><stop offset=\"100%\" stop-color=\"#7C3AED\"/></linearGradient></defs><path d=\"M3.2 4.8a1 1 0 0 1 .8-.4h16a1 1 0 0 1 .76 1.65l-6.16 7.2v5.45a1 1 0 0 1-.56.9l-3.2 1.55a1 1 0 0 1-1.44-.9v-7L3.24 6.05a1 1 0 0 1-.04-1.25Z\" fill=\"url(#gflt)\"/><path d=\"M6.2 6.8h11.6\" stroke=\"#FFFFFF\" stroke-opacity=\"0.48\" stroke-width=\"1.4\"/>",
+            "branch": "<defs><linearGradient id=\"gbr\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0%\" stop-color=\"#34D399\"/><stop offset=\"100%\" stop-color=\"#0D9488\"/></linearGradient></defs><path d=\"M7 8v8M17 10.2a5.2 5.2 0 0 1-5.2 5.2H7\" stroke=\"url(#gbr)\" stroke-width=\"2.2\"/><circle cx=\"7\" cy=\"5.6\" r=\"2.6\" fill=\"#34D399\"/><circle cx=\"17\" cy=\"8\" r=\"2.6\" fill=\"#38BDF8\"/><circle cx=\"7\" cy=\"18.4\" r=\"2.6\" fill=\"#10B981\"/>",
+            "refresh": "<defs><linearGradient id=\"grf\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0%\" stop-color=\"#22D3EE\"/><stop offset=\"100%\" stop-color=\"#0284C7\"/></linearGradient></defs><path d=\"M19.8 11.4a7.8 7.8 0 1 0 1.3 4.4\" stroke=\"url(#grf)\" stroke-width=\"2.2\"/><polygon points=\"21.2 4.2 21.2 10.2 15.2 10.2\" fill=\"#22D3EE\" stroke=\"none\"/>",
+            "grid": "<defs><linearGradient id=\"ggr1\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0%\" stop-color=\"#60A5FA\"/><stop offset=\"100%\" stop-color=\"#4F46E5\"/></linearGradient><linearGradient id=\"ggr2\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0%\" stop-color=\"#38BDF8\"/><stop offset=\"100%\" stop-color=\"#0284C7\"/></linearGradient></defs><rect x=\"3.2\" y=\"3.2\" width=\"7.6\" height=\"7.6\" rx=\"2.1\" fill=\"url(#ggr1)\"/><rect x=\"13.2\" y=\"3.2\" width=\"7.6\" height=\"7.6\" rx=\"2.1\" fill=\"url(#ggr2)\"/><rect x=\"3.2\" y=\"13.2\" width=\"7.6\" height=\"7.6\" rx=\"2.1\" fill=\"url(#ggr2)\"/><rect x=\"13.2\" y=\"13.2\" width=\"7.6\" height=\"7.6\" rx=\"2.1\" fill=\"url(#ggr1)\"/>",
+            "list": "<defs><linearGradient id=\"glst\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"0\"><stop offset=\"0%\" stop-color=\"#38BDF8\"/><stop offset=\"100%\" stop-color=\"#6366F1\"/></linearGradient></defs><rect x=\"3.4\" y=\"4.9\" width=\"3.2\" height=\"3.2\" rx=\"1\" fill=\"#38BDF8\" stroke=\"none\"/><line x1=\"9\" y1=\"6.5\" x2=\"20.4\" y2=\"6.5\" stroke=\"url(#glst)\" stroke-width=\"2.3\"/><rect x=\"3.4\" y=\"10.4\" width=\"3.2\" height=\"3.2\" rx=\"1\" fill=\"#818CF8\" stroke=\"none\"/><line x1=\"9\" y1=\"12\" x2=\"20.4\" y2=\"12\" stroke=\"url(#glst)\" stroke-width=\"2.3\"/><rect x=\"3.4\" y=\"15.9\" width=\"3.2\" height=\"3.2\" rx=\"1\" fill=\"#34D399\" stroke=\"none\"/><line x1=\"9\" y1=\"17.5\" x2=\"20.4\" y2=\"17.5\" stroke=\"url(#glst)\" stroke-width=\"2.3\"/>",
+            "back": "<defs><linearGradient id=\"gbk\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0%\" stop-color=\"#60A5FA\"/><stop offset=\"100%\" stop-color=\"#4F46E5\"/></linearGradient></defs><circle cx=\"12\" cy=\"12\" r=\"9.2\" fill=\"url(#gbk)\" fill-opacity=\"0.16\" stroke=\"url(#gbk)\" stroke-width=\"1.2\" stroke-opacity=\"0.45\"/><path d=\"M14.2 7.2 9.4 12l4.8 4.8\" stroke=\"url(#gbk)\" stroke-width=\"2.3\"/>",
+            "forward": "<defs><linearGradient id=\"gfw\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0%\" stop-color=\"#60A5FA\"/><stop offset=\"100%\" stop-color=\"#4F46E5\"/></linearGradient></defs><circle cx=\"12\" cy=\"12\" r=\"9.2\" fill=\"url(#gfw)\" fill-opacity=\"0.16\" stroke=\"url(#gfw)\" stroke-width=\"1.2\" stroke-opacity=\"0.45\"/><path d=\"M9.8 7.2 14.6 12l-4.8 4.8\" stroke=\"url(#gfw)\" stroke-width=\"2.3\"/>",
+            "up": "<defs><linearGradient id=\"gup\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0%\" stop-color=\"#38BDF8\"/><stop offset=\"100%\" stop-color=\"#6366F1\"/></linearGradient></defs><circle cx=\"12\" cy=\"12\" r=\"9.2\" fill=\"url(#gup)\" fill-opacity=\"0.16\" stroke=\"url(#gup)\" stroke-width=\"1.2\" stroke-opacity=\"0.45\"/><path d=\"M12 16.8V7.6M7.8 11.4 12 7.2l4.2 4.2\" stroke=\"url(#gup)\" stroke-width=\"2.2\"/>",
+            "copy": "<defs><linearGradient id=\"gcpy\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0%\" stop-color=\"#60A5FA\"/><stop offset=\"100%\" stop-color=\"#2563EB\"/></linearGradient></defs><rect x=\"3.4\" y=\"3.2\" width=\"11.4\" height=\"13\" rx=\"2.3\" fill=\"#93C5FD\" fill-opacity=\"0.45\" stroke=\"#60A5FA\" stroke-width=\"1.3\"/><rect x=\"8.6\" y=\"7.6\" width=\"11.8\" height=\"13.2\" rx=\"2.3\" fill=\"url(#gcpy)\"/><line x1=\"11.4\" y1=\"12.2\" x2=\"17.6\" y2=\"12.2\" stroke=\"#FFFFFF\" stroke-opacity=\"0.85\" stroke-width=\"1.5\"/><line x1=\"11.4\" y1=\"15.6\" x2=\"15.8\" y2=\"15.6\" stroke=\"#FFFFFF\" stroke-opacity=\"0.75\" stroke-width=\"1.5\"/>",
+            "trash": "<defs><linearGradient id=\"gtr\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0%\" stop-color=\"#FB7185\"/><stop offset=\"100%\" stop-color=\"#E11D48\"/></linearGradient></defs><path d=\"M9 6.5V4.8a1.3 1.3 0 0 1 1.3-1.3h3.4A1.3 1.3 0 0 1 15 4.8v1.7\" stroke=\"#FB7185\" stroke-width=\"1.8\"/><rect x=\"4.2\" y=\"6\" width=\"15.6\" height=\"2.4\" rx=\"1.2\" fill=\"#F43F5E\"/><path d=\"M6.2 8.4l1.1 11a2 2 0 0 0 2 1.8h5.4a2 2 0 0 0 2-1.8l1.1-11Z\" fill=\"url(#gtr)\"/><line x1=\"10\" y1=\"11.4\" x2=\"10\" y2=\"17.6\" stroke=\"#FFFFFF\" stroke-opacity=\"0.82\" stroke-width=\"1.6\"/><line x1=\"14\" y1=\"11.4\" x2=\"14\" y2=\"17.6\" stroke=\"#FFFFFF\" stroke-opacity=\"0.82\" stroke-width=\"1.6\"/>",
+            "workspace": "<defs><linearGradient id=\"gws1\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0%\" stop-color=\"#38BDF8\"/><stop offset=\"100%\" stop-color=\"#2563EB\"/></linearGradient><linearGradient id=\"gws2\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0%\" stop-color=\"#C084FC\"/><stop offset=\"100%\" stop-color=\"#7C3AED\"/></linearGradient><linearGradient id=\"gws3\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0%\" stop-color=\"#34D399\"/><stop offset=\"100%\" stop-color=\"#059669\"/></linearGradient></defs><rect x=\"3\" y=\"3.8\" width=\"8.2\" height=\"16.4\" rx=\"2.2\" fill=\"url(#gws1)\"/><rect x=\"13\" y=\"3.8\" width=\"8\" height=\"7.4\" rx=\"2.2\" fill=\"url(#gws2)\"/><rect x=\"13\" y=\"12.8\" width=\"8\" height=\"7.4\" rx=\"2.2\" fill=\"url(#gws3)\"/>",
+            "sync": "<defs><linearGradient id=\"gsy1\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"0\"><stop offset=\"0%\" stop-color=\"#38BDF8\"/><stop offset=\"100%\" stop-color=\"#2563EB\"/></linearGradient><linearGradient id=\"gsy2\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"0\"><stop offset=\"0%\" stop-color=\"#34D399\"/><stop offset=\"100%\" stop-color=\"#059669\"/></linearGradient></defs><path d=\"M19.5 8H6l3.4-3.4\" stroke=\"url(#gsy1)\" stroke-width=\"2.2\"/><path d=\"M4.5 16H18l-3.4 3.4\" stroke=\"url(#gsy2)\" stroke-width=\"2.2\"/>",
+            "duplicate": "<defs><linearGradient id=\"gdup\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0%\" stop-color=\"#F472B6\"/><stop offset=\"100%\" stop-color=\"#9333EA\"/></linearGradient></defs><rect x=\"3.2\" y=\"3\" width=\"11.6\" height=\"13.2\" rx=\"2.4\" fill=\"#C084FC\" fill-opacity=\"0.42\" stroke=\"#A855F7\" stroke-width=\"1.3\"/><rect x=\"8.8\" y=\"7.6\" width=\"11.8\" height=\"13.4\" rx=\"2.4\" fill=\"url(#gdup)\"/>",
+            "command": "<defs><linearGradient id=\"gcmd\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0%\" stop-color=\"#334155\"/><stop offset=\"100%\" stop-color=\"#0F172A\"/></linearGradient></defs><rect x=\"2.6\" y=\"3.8\" width=\"18.8\" height=\"16.4\" rx=\"3.4\" fill=\"url(#gcmd)\" stroke=\"#475569\" stroke-width=\"1.1\"/><path d=\"M7 9.4 10.4 12 7 14.6\" stroke=\"#34D399\" stroke-width=\"2.1\"/><line x1=\"12.2\" y1=\"14.6\" x2=\"16.8\" y2=\"14.6\" stroke=\"#38BDF8\" stroke-width=\"2.1\"/>",
+            "eject": "<defs><linearGradient id=\"gej\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0%\" stop-color=\"#FB923C\"/><stop offset=\"100%\" stop-color=\"#EA580C\"/></linearGradient></defs><polygon points=\"12 5 19.2 13.6 4.8 13.6\" fill=\"url(#gej)\"/><rect x=\"4.8\" y=\"16.2\" width=\"14.4\" height=\"2.8\" rx=\"1.4\" fill=\"url(#gej)\"/>"
         })
 
         readonly property var actionTemplates: ({
@@ -555,6 +574,14 @@ ApplicationWindow {
         modal: false
         dim: false
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        delegate: AppMenuItem {}
+
+        enter: Transition {
+            NumberAnimation { property: "opacity"; from: 0.0; to: 1.0; duration: 95; easing.type: Easing.OutCubic }
+        }
+        exit: Transition {
+            NumberAnimation { property: "opacity"; from: 1.0; to: 0.0; duration: 75; easing.type: Easing.InCubic }
+        }
 
         background: Rectangle {
             implicitWidth: 310
@@ -589,6 +616,7 @@ ApplicationWindow {
         topPadding: 0
         bottomPadding: 0
         indicator: null
+        arrow: Item {}
 
         contentItem: RowLayout {
             implicitWidth: 290
@@ -625,6 +653,14 @@ ApplicationWindow {
                 text: miRoot.shortcutHint
                 font.pixelSize: 11
                 font.family: "monospace"
+                color: !miRoot.enabled ? p.textDisabled : (miRoot.highlighted ? p.accent : p.textMuted)
+                verticalAlignment: Text.AlignVCenter
+            }
+
+            Text {
+                visible: miRoot.subMenu !== null
+                text: "▸"
+                font.pixelSize: 11
                 color: !miRoot.enabled ? p.textDisabled : (miRoot.highlighted ? p.accent : p.textMuted)
                 verticalAlignment: Text.AlignVCenter
             }
@@ -800,6 +836,186 @@ ApplicationWindow {
             cursorShape: Qt.PointingHandCursor
             onClicked: pillRoot.clicked()
         }
+    }
+
+    // Compact custom-themed CheckBox matching TwinForge's 12px dark/light palette.
+    component AppCheckBox : CheckBox {
+        id: cbRoot
+        spacing: 7
+        padding: 2
+        leftPadding: 0
+        rightPadding: 4
+        implicitHeight: 24
+        hoverEnabled: true
+
+        indicator: Rectangle {
+            implicitWidth: 16
+            implicitHeight: 16
+            x: cbRoot.leftPadding
+            y: parent.height / 2 - height / 2
+            radius: Math.min(4, win.smallRadius)
+            color: cbRoot.checked ? p.accent : (cbRoot.hovered ? p.btnHoverBg : p.inputBg)
+            border.width: 1
+            border.color: cbRoot.checked ? p.accent : (cbRoot.hovered ? p.borderStrong : p.borderDefault)
+            Behavior on color { ColorAnimation { duration: 100 } }
+            Behavior on border.color { ColorAnimation { duration: 100 } }
+
+            Text {
+                anchors.centerIn: parent
+                visible: cbRoot.checked
+                text: "✓"
+                font.pixelSize: 11
+                font.bold: true
+                color: p.accentFg
+            }
+        }
+
+        contentItem: Text {
+            text: cbRoot.text
+            font.pixelSize: 12
+            color: !cbRoot.enabled ? p.textDisabled : (cbRoot.hovered ? p.textPrimary : p.textSecondary)
+            verticalAlignment: Text.AlignVCenter
+            leftPadding: cbRoot.indicator.width + cbRoot.spacing
+        }
+    }
+
+    // Compact custom-themed ComboBox matching CompactField and AppMenu styling.
+    component AppComboBox : ComboBox {
+        id: comboRoot
+        implicitHeight: 30
+        implicitWidth: 150
+        leftPadding: 10
+        rightPadding: 26
+        topPadding: 0
+        bottomPadding: 0
+        hoverEnabled: true
+
+        delegate: ItemDelegate {
+            id: comboDel
+            width: comboRoot.width - 8
+            implicitHeight: 28
+            highlighted: comboRoot.highlightedIndex === index
+            contentItem: Text {
+                text: comboRoot.textRole ? (Array.isArray(comboRoot.model) ? (modelData[comboRoot.textRole] || "") : model[comboRoot.textRole]) : modelData
+                color: comboDel.highlighted ? p.textPrimary : p.textSecondary
+                font.pixelSize: 12
+                font.weight: comboDel.highlighted ? Font.Medium : Font.Normal
+                elide: Text.ElideRight
+                verticalAlignment: Text.AlignVCenter
+                leftPadding: 6
+                rightPadding: 6
+            }
+            background: Rectangle {
+                radius: win.smallRadius
+                color: comboDel.highlighted ? Qt.alpha(p.accent, win.isDark ? 0.22 : 0.14) : "transparent"
+                border.width: comboDel.highlighted ? 1 : 0
+                border.color: Qt.alpha(p.accent, 0.45)
+            }
+        }
+
+        indicator: Text {
+            x: comboRoot.width - width - 8
+            y: (comboRoot.height - height) / 2
+            text: "▾"
+            font.pixelSize: 11
+            color: comboRoot.hovered || comboRoot.activeFocus ? p.accent : p.textMuted
+        }
+
+        contentItem: Text {
+            text: comboRoot.displayText
+            font.pixelSize: 12
+            color: !comboRoot.enabled ? p.textDisabled : p.textPrimary
+            verticalAlignment: Text.AlignVCenter
+            elide: Text.ElideRight
+        }
+
+        background: Rectangle {
+            implicitWidth: 150
+            implicitHeight: 30
+            radius: win.smallRadius
+            color: comboRoot.hovered ? p.chipHoverBg : p.inputBg
+            border.width: 1
+            border.color: comboRoot.activeFocus || comboRoot.popup.visible ? p.accent : p.borderDefault
+        }
+
+        popup: Popup {
+            y: comboRoot.height + 2
+            width: comboRoot.width
+            implicitHeight: Math.min(240, contentItem.implicitHeight + 10)
+            padding: 4
+            contentItem: ListView {
+                clip: true
+                implicitHeight: contentHeight
+                model: comboRoot.popup.visible ? comboRoot.delegateModel : null
+                currentIndex: comboRoot.highlightedIndex
+                ScrollBar.vertical: AppScrollBar {}
+            }
+            background: Rectangle {
+                color: p.menuBg
+                border.width: 1
+                border.color: p.borderDefault
+                radius: win.panelRadius
+            }
+        }
+    }
+
+    // Sleek slim ProgressBar with animated accent fill and indeterminate pulse.
+    component AppProgressBar : ProgressBar {
+        id: pbRoot
+        implicitHeight: 6
+        implicitWidth: 160
+
+        background: Rectangle {
+            implicitHeight: 6
+            radius: 3
+            color: p.borderSubtle
+        }
+
+        contentItem: Item {
+            implicitHeight: 6
+            clip: true
+
+            Rectangle {
+                visible: !pbRoot.indeterminate
+                width: Math.max(pbRoot.visualPosition > 0 ? 6 : 0, pbRoot.visualPosition * parent.width)
+                height: parent.height
+                radius: 3
+                color: p.accent
+                Behavior on width { NumberAnimation { duration: 100; easing.type: Easing.OutCubic } }
+            }
+
+            Rectangle {
+                id: indBar
+                visible: pbRoot.indeterminate
+                width: Math.max(24, parent.width * 0.32)
+                height: parent.height
+                radius: 3
+                color: p.accent
+                SequentialAnimation on x {
+                    running: pbRoot.visible && pbRoot.indeterminate
+                    loops: Animation.Infinite
+                    NumberAnimation { from: -indBar.width; to: pbRoot.width; duration: 1100; easing.type: Easing.InOutQuad }
+                }
+            }
+        }
+    }
+
+    // Reusable slim 6px hover-accented ScrollBar for all lists, grids & drawers.
+    component AppScrollBar : ScrollBar {
+        id: sbRoot
+        policy: ScrollBar.AsNeeded
+        implicitWidth: orientation === Qt.Vertical ? 6 : 120
+        implicitHeight: orientation === Qt.Horizontal ? 6 : 120
+        padding: 1
+        contentItem: Rectangle {
+            implicitWidth: 4
+            implicitHeight: 4
+            radius: 2
+            visible: sbRoot.size < 1.0
+            color: sbRoot.pressed ? p.accent : (sbRoot.hovered ? p.scrollbarHoverColor : p.scrollbarColor)
+            Behavior on color { ColorAnimation { duration: 100 } }
+        }
+        background: Item {}
     }
 
     // Next-Gen Preview Surface shared by Quick View (Ctrl+Q) and F3 Viewer.
@@ -1931,6 +2147,8 @@ ApplicationWindow {
         border.color: isActive ? Qt.alpha(p.accent, 0.65) : p.borderDefault
         radius: win.panelRadius
         clip: true
+        Behavior on color { ColorAnimation { duration: 130 } }
+        Behavior on border.color { ColorAnimation { duration: 130 } }
 
         // Top active-panel accent indicator line
         Rectangle {
@@ -1938,9 +2156,11 @@ ApplicationWindow {
             anchors.left: parent.left
             anchors.right: parent.right
             height: 2
-            visible: panelRoot.isActive
+            opacity: panelRoot.isActive ? 1.0 : 0.0
+            visible: opacity > 0.01
             color: p.accent
             z: 5
+            Behavior on opacity { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
         }
 
         // Quick View overlay when the OPPOSITE panel is active and QuickView is ON
@@ -2037,7 +2257,7 @@ ApplicationWindow {
             // 0. Per-Panel Tab Strip (Ctrl+T new tab, Ctrl+W close tab, Ctrl+Tab cycle, Drop onto tab)
             Rectangle {
                 Layout.fillWidth: true
-                height: 29
+                height: 27
                 color: p.tabStripBg
 
                 RowLayout {
@@ -2306,7 +2526,7 @@ ApplicationWindow {
             // 1. Panel Header: History, Breadcrumb / Editable Path Bar, Bookmark, Filter & Refresh
             Rectangle {
                 Layout.fillWidth: true
-                height: 38
+                height: 34
                 color: panelRoot.isActive ? p.panelHeaderActiveBg : p.panelHeaderInactiveBg
 
                 RowLayout {
@@ -2740,10 +2960,15 @@ ApplicationWindow {
 
             // 2. Quick Filter Bar (Ctrl+S)
             Rectangle {
-                visible: panelRoot.filterVisible || panelRoot.panelModel.filter.length > 0
+                readonly property bool filterOpen: panelRoot.filterVisible || panelRoot.panelModel.filter.length > 0
+                visible: Layout.preferredHeight > 0
                 Layout.fillWidth: true
-                height: 34
+                Layout.preferredHeight: filterOpen ? 34 : 0
+                Layout.minimumHeight: Layout.preferredHeight
+                Layout.maximumHeight: Layout.preferredHeight
+                clip: true
                 color: p.filterBarBg
+                Behavior on Layout.preferredHeight { NumberAnimation { duration: 130; easing.type: Easing.OutCubic } }
 
                 RowLayout {
                     anchors.fill: parent
@@ -2801,7 +3026,8 @@ ApplicationWindow {
             Rectangle {
                 visible: panelRoot.panelModel.isTrashView
                 Layout.fillWidth: true
-                height: 34
+                Layout.preferredHeight: 34
+                Layout.minimumHeight: 34
                 color: p.filterBarBg
 
                 RowLayout {
@@ -3540,6 +3766,7 @@ ApplicationWindow {
                     focus: panelRoot.isActive && panelRoot.panelModel.viewMode === 1
                     cellWidth: Math.max(94, Math.floor(width / Math.max(1, Math.floor(width / 110))))
                     cellHeight: 114
+                    ScrollBar.vertical: AppScrollBar {}
 
                     onCountChanged: {
                         if (count > 0 && currentIndex < 0)
@@ -3601,20 +3828,6 @@ ApplicationWindow {
                                 panelRoot.finishRubberBand();
                             }
                         }
-                    }
-
-                    ScrollBar.vertical: ScrollBar {
-                        id: gridVbar
-                        policy: ScrollBar.AsNeeded
-                        width: 6
-                        padding: 1
-                        contentItem: Rectangle {
-                            implicitWidth: 4
-                            radius: 2
-                            visible: gridVbar.size < 1.0
-                            color: gridVbar.pressed ? p.accent : (gridVbar.hovered ? p.scrollbarHoverColor : p.scrollbarColor)
-                        }
-                        background: Item {}
                     }
 
                     delegate: Rectangle {
@@ -3898,6 +4111,45 @@ ApplicationWindow {
                                 currentIndex++;
                             event.accepted = true;
                         }
+                    }
+                }
+
+                // Clean Empty State Overlay (non-blocking — passes mouse events to background)
+                ColumnLayout {
+                    readonly property bool isEmptyPanel: panelRoot.panelModel.itemCount === 0
+                        || (panelRoot.panelModel.itemCount === 1 && panelRoot.panelModel.itemName(0) === "..")
+                    visible: isEmptyPanel
+                    anchors.centerIn: parent
+                    spacing: 6
+                    opacity: 0.72
+                    z: 2
+
+                    VectorIcon {
+                        Layout.alignment: Qt.AlignHCenter
+                        width: 30
+                        height: 30
+                        kind: panelRoot.panelModel.isTrashView ? "trash"
+                              : (panelRoot.panelModel.filter.length > 0 ? "filter" : "folder")
+                        iconColor: p.textDim
+                    }
+
+                    Text {
+                        Layout.alignment: Qt.AlignHCenter
+                        text: panelRoot.panelModel.isTrashView ? qsTr("Trash is empty")
+                              : (panelRoot.panelModel.filter.length > 0
+                                 ? qsTr("No items match \"%1\"").arg(panelRoot.panelModel.filter)
+                                 : qsTr("This folder is empty"))
+                        font.pixelSize: 13
+                        font.weight: Font.Medium
+                        color: p.textMuted
+                    }
+
+                    Text {
+                        Layout.alignment: Qt.AlignHCenter
+                        visible: !panelRoot.panelModel.isTrashView && panelRoot.panelModel.filter.length === 0
+                        text: qsTr("Press F7 for new folder · Shift+F4 for new file")
+                        font.pixelSize: 11
+                        color: p.textDim
                     }
                 }
 
@@ -4986,9 +5238,9 @@ ApplicationWindow {
             // Top App Bar
             Rectangle {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 40
-                implicitHeight: 40
-                height: 40
+                Layout.preferredHeight: 36
+                implicitHeight: 36
+                height: 36
                 color: p.appBarBg
 
                 RowLayout {
@@ -5660,6 +5912,51 @@ ApplicationWindow {
                             onClicked: backend.pasteFromClipboard(currentModel().path)
                         }
 
+                        // Active Workspace Pill (Ctrl+Shift+L)
+                        Rectangle {
+                            visible: backend.activeWorkspaceName.length > 0
+                            implicitHeight: 24
+                            implicitWidth: wsPillRow.implicitWidth + 14
+                            radius: win.smallRadius
+                            color: wsPillMouse.containsMouse ? Qt.alpha(p.accent, win.isDark ? 0.28 : 0.2) : Qt.alpha(p.accent, win.isDark ? 0.16 : 0.11)
+                            border.width: 1
+                            border.color: Qt.alpha(p.accent, 0.45)
+
+                            RowLayout {
+                                id: wsPillRow
+                                anchors.centerIn: parent
+                                spacing: 5
+
+                                VectorIcon {
+                                    width: 12
+                                    height: 12
+                                    kind: "workspace"
+                                    iconColor: p.accent
+                                }
+
+                                Text {
+                                    text: backend.activeWorkspaceName
+                                    font.pixelSize: 11
+                                    font.weight: Font.DemiBold
+                                    color: p.accent
+                                    Layout.maximumWidth: 120
+                                    elide: Text.ElideRight
+                                }
+                            }
+
+                            MouseArea {
+                                id: wsPillMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: win.workspacesOpen = true
+                            }
+
+                            ToolTip.visible: wsPillMouse.containsMouse
+                            ToolTip.delay: 450
+                            ToolTip.text: qsTr("Active workspace: %1 (Ctrl+Shift+L)").arg(backend.activeWorkspaceName)
+                        }
+
                         ToolbarBtn {
                             label: qsTr("Quick View")
                             shortcutHint: "Ctrl+Q"
@@ -6125,25 +6422,76 @@ ApplicationWindow {
                 }
             }
 
-            // Dual-Panel Workspace
-            RowLayout {
+            // Dual-Panel Workspace with Interactive Resizable Splitter (double-click resets 50/50)
+            Item {
+                id: dualPanelWorkspace
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 Layout.margins: 6
-                spacing: 6
+
+                readonly property real handleWidth: 8
+                readonly property real availWidth: Math.max(200, width - handleWidth)
 
                 FilePanel {
                     id: leftPane
                     objectName: "leftPane"
+                    anchors.left: parent.left
+                    anchors.top: parent.top
+                    anchors.bottom: parent.bottom
+                    width: Math.round(dualPanelWorkspace.availWidth * win.panelSplitRatio)
                     panelIndex: 0
                     panelModel: backend.leftPanel
                     filterVisible: win.leftFilterVisible
                     onFilterVisibleChanged: win.leftFilterVisible = filterVisible
                 }
 
+                Item {
+                    id: panelSplitterHandle
+                    anchors.left: leftPane.right
+                    anchors.top: parent.top
+                    anchors.bottom: parent.bottom
+                    width: dualPanelWorkspace.handleWidth
+
+                    Rectangle {
+                        anchors.centerIn: parent
+                        width: (splitterMouse.containsMouse || splitterMouse.pressed) ? 4 : 2
+                        height: (splitterMouse.containsMouse || splitterMouse.pressed) ? 44 : 28
+                        radius: 2
+                        color: splitterMouse.pressed ? p.accent
+                               : (splitterMouse.containsMouse ? Qt.alpha(p.accent, 0.72) : p.borderStrong)
+                        opacity: (splitterMouse.containsMouse || splitterMouse.pressed) ? 1.0 : 0.65
+                        Behavior on width { NumberAnimation { duration: 100 } }
+                        Behavior on height { NumberAnimation { duration: 100 } }
+                        Behavior on color { ColorAnimation { duration: 100 } }
+                    }
+
+                    MouseArea {
+                        id: splitterMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.SplitHCursor
+                        onPositionChanged: function(mouse) {
+                            if (pressed) {
+                                var pt = splitterMouse.mapToItem(dualPanelWorkspace, mouse.x, mouse.y);
+                                var ratio = (pt.x - dualPanelWorkspace.handleWidth / 2) / Math.max(1, dualPanelWorkspace.availWidth);
+                                win.panelSplitRatio = Math.max(0.22, Math.min(0.78, ratio));
+                            }
+                        }
+                        onDoubleClicked: win.panelSplitRatio = 0.5
+                    }
+
+                    ToolTip.visible: splitterMouse.containsMouse && !splitterMouse.pressed
+                    ToolTip.delay: 600
+                    ToolTip.text: qsTr("Drag to resize panels · Double-click to reset 50/50")
+                }
+
                 FilePanel {
                     id: rightPane
                     objectName: "rightPane"
+                    anchors.left: panelSplitterHandle.right
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    anchors.bottom: parent.bottom
                     panelIndex: 1
                     panelModel: backend.rightPanel
                     filterVisible: win.rightFilterVisible
@@ -6306,10 +6654,14 @@ ApplicationWindow {
 
             // Collapsible Live Command Output Drawer (Ctrl+O)
             Rectangle {
-                visible: win.commandDrawerOpen
+                visible: Layout.preferredHeight > 0
                 Layout.fillWidth: true
-                height: 176
-                color: p.panelBg
+                Layout.preferredHeight: win.commandDrawerOpen ? 176 : 0
+                Layout.minimumHeight: Layout.preferredHeight
+                Layout.maximumHeight: Layout.preferredHeight
+                clip: true
+                color: p.inputBg
+                Behavior on Layout.preferredHeight { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
 
                 Rectangle {
                     anchors.top: parent.top
@@ -6409,6 +6761,8 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         clip: true
+                        background: Rectangle { color: p.inputBg }
+                        ScrollBar.vertical: AppScrollBar {}
 
                         TextEdit {
                             id: cmdDrawerText
@@ -6422,6 +6776,8 @@ ApplicationWindow {
                             font.family: "monospace"
                             font.pixelSize: 11
                             color: backend.commandOutput.length > 0 ? p.textSecondary : p.textDim
+                            selectionColor: Qt.alpha(p.accent, 0.35)
+                            selectedTextColor: p.textOnHover
                             leftPadding: 10
                             rightPadding: 10
                             topPadding: 6
@@ -6509,7 +6865,7 @@ ApplicationWindow {
             // Bottom Function Keys Bar (Total Commander classic F3-F10)
             Rectangle {
                 Layout.fillWidth: true
-                height: 36
+                height: 32
                 color: p.fkeyBarBg
 
                 Rectangle {
@@ -6552,6 +6908,13 @@ ApplicationWindow {
         padding: 16
         topPadding: 14
         bottomPadding: 14
+
+        enter: Transition {
+            NumberAnimation { property: "opacity"; from: 0.0; to: 1.0; duration: 110; easing.type: Easing.OutCubic }
+        }
+        exit: Transition {
+            NumberAnimation { property: "opacity"; from: 1.0; to: 0.0; duration: 85; easing.type: Easing.InCubic }
+        }
 
         Overlay.modal: Rectangle {
             color: p.overlayDim
@@ -6698,7 +7061,7 @@ ApplicationWindow {
                 }
             }
 
-            CheckBox {
+            AppCheckBox {
                 id: conflictApplyAll
                 text: qsTr("Apply to all remaining conflicts")
             }
@@ -6804,7 +7167,7 @@ ApplicationWindow {
                 color: p.textSecondary
                 font.pixelSize: 13
             }
-            CheckBox {
+            AppCheckBox {
                 id: permDeleteCheck
                 visible: !currentModel().isTrashView
                 text: qsTr("Permanent delete (bypass trash)")
@@ -7011,6 +7374,7 @@ ApplicationWindow {
                 Layout.fillHeight: true
                 clip: true
                 model: backend.bookmarks
+                ScrollBar.vertical: AppScrollBar {}
 
                 delegate: Rectangle {
                     width: ListView.view.width
@@ -7136,6 +7500,7 @@ ApplicationWindow {
                     clip: true
                     spacing: 4
                     model: backend.workspaces
+                    ScrollBar.vertical: AppScrollBar {}
 
                     delegate: Rectangle {
                         width: ListView.view.width
@@ -7377,7 +7742,7 @@ ApplicationWindow {
                     font.family: "monospace"
                 }
 
-                CheckBox {
+                AppCheckBox {
                     id: splitWriteCrcCheck
                     text: qsTr("Write .crc verification manifest (SHA-256)")
                     checked: true
@@ -7407,7 +7772,7 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 spacing: 4
 
-                ProgressBar {
+                AppProgressBar {
                     Layout.fillWidth: true
                     from: 0
                     to: 1
@@ -7529,7 +7894,7 @@ ApplicationWindow {
                     spacing: 8
 
                     Text { text: qsTr("Preset:"); color: p.textMuted; font.pixelSize: 12 }
-                    ComboBox {
+                    AppComboBox {
                         id: mrPresetCombo
                         Layout.preferredWidth: 165
                         model: backend.multiRenamePresets
@@ -7661,13 +8026,13 @@ ApplicationWindow {
                 spacing: 10
 
                 Text { text: qsTr("Case:"); color: p.textMuted; font.pixelSize: 12 }
-                ComboBox {
+                AppComboBox {
                     id: mrCaseCombo
                     model: [qsTr("Unchanged"), qsTr("lowercase"), qsTr("UPPERCASE"), qsTr("Title Case")]
                     onCurrentIndexChanged: refreshMultiRenamePreview()
                 }
 
-                CheckBox {
+                AppCheckBox {
                     id: mrCounterCheck
                     text: qsTr("Counter [C]")
                     onCheckedChanged: refreshMultiRenamePreview()
@@ -8955,7 +9320,7 @@ ApplicationWindow {
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: 8
-                    CheckBox {
+                    AppCheckBox {
                         id: openWithSetDefaultCheck
                         text: qsTr("Set selected application as default for %1").arg((win.openWithMimeInfo && win.openWithMimeInfo.mimeType) ? win.openWithMimeInfo.mimeType : qsTr("this type"))
                     }
@@ -9155,11 +9520,11 @@ ApplicationWindow {
                     RowLayout {
                         Layout.fillWidth: true
                         spacing: 12
-                        CheckBox {
+                        AppCheckBox {
                             id: caTerminalCheck
                             text: qsTr("Run in Terminal")
                         }
-                        CheckBox {
+                        AppCheckBox {
                             id: caShowOutputCheck
                             checked: true
                             text: qsTr("Show Output Window")
@@ -9795,7 +10160,7 @@ ApplicationWindow {
                         PermBitBtn { label: qsTr("Exec (x)"); bitMask: 1 }
                     }
 
-                    CheckBox {
+                    AppCheckBox {
                         id: propRecursiveCheck
                         visible: win.propData.isDir === true && win.propData.isSymLink !== true
                         implicitHeight: 28
@@ -10637,6 +11002,7 @@ ApplicationWindow {
         ScrollView {
             anchors.fill: parent
             clip: true
+            ScrollBar.vertical: AppScrollBar {}
 
             ColumnLayout {
                 width: parent.width

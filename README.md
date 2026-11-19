@@ -18,10 +18,18 @@
 
 ---
 
+## ✨ About TwinForge
+
+**TwinForge** (`twinforge` / `tf`) is a native Linux dual-panel orthodox file manager built with **C++20, Qt 6, and QML**. Designed for keyboard-driven speed and modern desktop polish, it pairs classic Total Commander ergonomics (dual independent panels, F3–F10 function keys, locked tabs, workspaces, multi-rename, file split/combine) with a **100% non-blocking asynchronous architecture**, Freedesktop standards (Thumbnails, Trash `trash://`, XDG MIME / `.desktop` integration), and live **Obsidian Carbon (Dark) / Alabaster Daylight (Light)** theming that syncs automatically with Omarchy / Hyprland accents.
+
+---
+
 ## 🌟 Key Features
 
-### 🎨 Modern 2026 Dual Theme
-- **Obsidian Carbon (Dark) & Alabaster Daylight (Light):** Instant dark/light palette switching (<kbd>Ctrl+Shift+T</kbd> or header toggle) with glassmorphism surfaces, semantic badges, animated transitions, and live Omarchy / Hyprland accent synchronization.
+### 🎨 Modern 2026 UI & Dual Theme
+- **Obsidian Carbon (Dark) & Alabaster Daylight (Light):** Instant dark/light palette switching (<kbd>Ctrl+Shift+T</kbd> or header toggle) with semantic badges, custom-themed controls (`AppCheckBox`, `AppComboBox`, `AppProgressBar`, `AppMenu`, slim `AppScrollBar`), smooth micro-animations, and live Omarchy / Hyprland accent synchronization.
+- **Vibrant Multi-Tone SVG Iconography:** Cohesive gradient vector icons for folders, file types, drives, cloud mounts, bookmarks, filters, disk usage analytics, and toolbar actions — sharp at every DPI in both Dark and Light themes.
+- **Resizable Dual-Panel Splitter & Clean Empty States:** Drag the central splitter handle to adjust panel width (`22%–78%`) or double-click to reset `50/50`, with an animated top accent indicator on the active panel, an **Active Workspace** pill in the header, and helpful empty-state hints.
 
 ### ⚡ Power-User Productivity
 - **Command Palette (<kbd>Ctrl+Shift+P</kbd>) & Quick Jump (<kbd>Ctrl+P</kbd>):** Fuzzy-searchable action launcher and instant folder jump powered by bookmarks, tab/visit history, and `zoxide` frecency integration.
@@ -156,7 +164,20 @@ Binary will be created at `./build/twinforge` (with `./build/tf` symlink alias).
 ```bash
 ./bin/test
 ```
-Runs the full automated test suite (57 test cases) verifying file operations, operation queue/pause/resume, non-blocking async workers & cancellation, Freedesktop thumbnail cache compliance, CLI parsing & Single-Instance IPC, next-gen previews, RegEx multi-rename, Google Drive (`rclone`), remote URIs, XDG Open With/Custom Actions, search, sync, duplicate finder, undo stack, git tracking, diffing, and permissions.
+Runs the full automated test suite (**63 test cases**) verifying file operations, operation queue/pause/resume, non-blocking async workers & cancellation, Freedesktop thumbnail cache compliance, CLI parsing & Single-Instance IPC, locked tabs & tab management, dual-panel workspaces, Freedesktop Trash (`trash://`) restore/delete/empty, multi-character type-ahead quick jump, async command runner with built-in `cd` & history, file split/combine with SHA-256 verification, next-gen previews, RegEx multi-rename, Google Drive (`rclone`), remote URIs, XDG Open With/Custom Actions, search, sync, duplicate finder, undo stack, git tracking, diffing, permissions, and full QML UI loading without errors.
+
+---
+
+## ⚙️ Configuration & Data Paths
+
+| Path | Purpose |
+| :--- | :--- |
+| `~/.config/twinforge/session.ini` | Open tabs & lock states, command history, recent directories, theme mode, Multi-Rename presets, remote connections, custom actions, sort/hidden state, window size |
+| `~/.config/twinforge/bookmarks.json` | Saved folder bookmarks |
+| `~/.config/twinforge/workspaces.json` | Saved named dual-panel workspaces |
+| `~/.cache/thumbnails/{normal,large}/` | Freedesktop-compliant PNG thumbnails for Grid View (`Ctrl+2`) |
+| `~/.cache/twinforge/mounts/` | FUSE mountpoints for `rclone` (Google Drive) & `sshfs` |
+| `~/.local/share/Trash/` | Freedesktop Trash managed via `trash://` |
 
 ### CLI Usage & Shell `cd`-on-Exit (`tfcd`)
 ```bash

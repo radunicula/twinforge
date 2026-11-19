@@ -773,5 +773,11 @@
   "Focus command bar (↑/↓ history, built-in cd) / Toggle live output drawer": "Focalizează bara de comandă (istoric ↑/↓, cd integrat) / Afișează output live",
   "Insert highlighted filename / full path into command bar": "Inserează numele / calea completă a fișierului în bara de comandă",
   "Split large file into .001 parts (+ .crc) or combine parts back": "Împarte fișiere mari în părți .001 (+ .crc) sau le combină la loc",
-  "Multi-character Type-Ahead quick jump inside active panel": "Salt rapid multi-caracter (Type-Ahead) în panoul activ"
+  "Multi-character Type-Ahead quick jump inside active panel": "Salt rapid multi-caracter (Type-Ahead) în panoul activ",
+  "Trash is empty": "Coșul de gunoi este gol",
+  "No items match \"%1\"": "Niciun element nu corespunde cu „%1”",
+  "This folder is empty": "Acest folder este gol",
+  "Press F7 for new folder · Shift+F4 for new file": "Apasă F7 pentru folder nou · Shift+F4 pentru fișier nou",
+  "Active workspace: %1 (Ctrl+Shift+L)": "Spațiu de lucru activ: %1 (Ctrl+Shift+L)",
+  "Drag to resize panels · Double-click to reset 50/50": "Trage pentru a redimensiona panourile · Dublu-click pentru reset 50/50"
 }
