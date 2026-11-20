@@ -11,7 +11,7 @@ fi
 
 VER="$(sed -n 's/^pkgver=//p' pkgbuild/PKGBUILD | head -n 1)"
 REL="$(sed -n 's/^pkgrel=//p' pkgbuild/PKGBUILD | head -n 1)"
-VER="${VER:-0.1.0}"
+VER="${VER:-0.2.0}"
 REL="${REL:-1}"
 
 WORK_DIR="$(mktemp -d)"

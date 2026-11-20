@@ -1,7 +1,7 @@
 %global debug_package %{nil}
 
 Name:           twinforge
-Version:        %{?pkgver}%{!?pkgver:0.1.0}
+Version:        %{?pkgver}%{!?pkgver:0.2.0}
 Release:        %{?pkgrel}%{!?pkgrel:1}%{?dist}
 Summary:        Modern dual-panel orthodox file manager for Linux
 
@@ -73,6 +73,9 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/twinforge.desktop
 %{_datadir}/icons/hicolor/scalable/apps/twinforge.svg
 
 %changelog
+* Fri Nov 20 2026 Radu Nicula <radunicula@users.noreply.github.com> - 0.2.0-1
+- Release v0.2.0: directional F5/F6 targets, unified shortcuts, interrupted transfer recovery, modular CommandOutput.qml, workspace saved searches, 50k-file interactivity optimizations, and native RPM/DEB packaging
+
 * Fri Nov 20 2026 Radu Nicula <radunicula@users.noreply.github.com> - 0.1.0-1
 - Add native Fedora RPM packaging and clean-container archive smoke test
 - Add 50,000-file interactivity benchmark harness and PanelModel/Backend optimizations

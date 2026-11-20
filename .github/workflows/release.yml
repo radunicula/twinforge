@@ -48,6 +48,9 @@ jobs:
           install -Dm755 uninstall.sh "$STAGE_DIR/uninstall.sh"
           tar -czf "release/${STAGE_NAME}.tar.gz" -C release "$STAGE_NAME"
           rm -rf "$STAGE_DIR"
+          install -Dm755 install.sh release/install.sh
+          install -Dm755 uninstall.sh release/uninstall.sh
+          install -Dm644 LICENSE release/LICENSE
 
       - name: Smoke-test .deb in clean Ubuntu 24.04 container
         run: |
@@ -70,6 +73,9 @@ jobs:
           path: |
             release/*.deb
             release/*.tar.gz
+            release/install.sh
+            release/uninstall.sh
+            release/LICENSE
           if-no-files-found: error
 
   build-rpm:
@@ -129,7 +135,8 @@ jobs:
       - name: Generate SHA256SUMS.txt
         run: |
           cd dist-release
-          sha256sum * > SHA256SUMS.txt
+          sha256sum *.deb *.rpm *.tar.gz > ../SHA256SUMS.txt
+          mv ../SHA256SUMS.txt .
           cat SHA256SUMS.txt
 
       - name: Publish Release on tag push

@@ -31,7 +31,7 @@ QString resolveCliPath(const QString &rawArg, const QString &workingDir);
 
 CliRequest parseCliArguments(const QStringList &arguments,
                              const QString &workingDir,
-                             const QString &appVersion = QStringLiteral("0.1.0"),
+                             const QString &appVersion = QStringLiteral("0.2.0"),
                              QString *errorOut = nullptr,
                              bool *shouldExitOk = nullptr,
                              QString *stdoutOut = nullptr);

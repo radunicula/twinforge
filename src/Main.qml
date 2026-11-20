@@ -12137,7 +12137,7 @@ ApplicationWindow {
                             Text {
                                 id: vText
                                 anchors.centerIn: parent
-                                text: "v0.1.0"
+                                text: "v0.2.0"
                                 font.pixelSize: 10
                                 font.bold: true
                                 color: p.accent

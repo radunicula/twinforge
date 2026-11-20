@@ -2524,7 +2524,7 @@ private slots:
         const CliRequest twoPanels = parseCliArguments(
             {QStringLiteral("tf"), QStringLiteral("left_dir"),
              QUrl::fromLocalFile(root.filePath("right_dir")).toString()},
-            root.path(), QStringLiteral("0.1.0"), &err, &exitOk, &out);
+            root.path(), QStringLiteral("0.2.0"), &err, &exitOk, &out);
         QVERIFY(err.isEmpty());
         QCOMPARE(exitOk, false);
         QCOMPARE(twoPanels.leftPath, QDir::cleanPath(root.filePath("left_dir")));
@@ -2534,7 +2534,7 @@ private slots:
         // 2. Passing a file highlights it inside its parent directory
         const CliRequest fileArg = parseCliArguments(
             {QStringLiteral("tf"), QStringLiteral("--new-tab"), sampleFile},
-            root.path(), QStringLiteral("0.1.0"), &err, &exitOk, &out);
+            root.path(), QStringLiteral("0.2.0"), &err, &exitOk, &out);
         QVERIFY(err.isEmpty());
         QCOMPARE(fileArg.leftPath, QDir::cleanPath(root.filePath("left_dir")));
         QCOMPARE(fileArg.selectPath, QDir::cleanPath(sampleFile));
@@ -2543,7 +2543,7 @@ private slots:
         // 3. --select + --new-window disables single-instance handoff
         const CliRequest selArg = parseCliArguments(
             {QStringLiteral("tf"), QStringLiteral("-n"), QStringLiteral("-s"), sampleFile},
-            root.path(), QStringLiteral("0.1.0"), &err, &exitOk, &out);
+            root.path(), QStringLiteral("0.2.0"), &err, &exitOk, &out);
         QVERIFY(err.isEmpty());
         QCOMPARE(selArg.newWindow, true);
         QCOMPARE(selArg.shouldUseSingleInstance(), false);
@@ -2554,7 +2554,7 @@ private slots:
         const QString lastDirPath = root.filePath("last_dir.txt");
         const CliRequest lastDirReq = parseCliArguments(
             {QStringLiteral("tf"), QStringLiteral("--last-dir-file"), lastDirPath, QStringLiteral("--print-last-dir")},
-            root.path(), QStringLiteral("0.1.0"), &err, &exitOk, &out);
+            root.path(), QStringLiteral("0.2.0"), &err, &exitOk, &out);
         QVERIFY(err.isEmpty());
         QCOMPARE(lastDirReq.shouldUseSingleInstance(), false);
         QCOMPARE(lastDirReq.printLastDir, true);
@@ -2564,14 +2564,14 @@ private slots:
 
         // 5. --version and --shell-init (bash, zsh, fish, invalid)
         parseCliArguments({QStringLiteral("tf"), QStringLiteral("--version")},
-                          root.path(), QStringLiteral("0.1.0"), &err, &exitOk, &out);
+                          root.path(), QStringLiteral("0.2.0"), &err, &exitOk, &out);
         QVERIFY(err.isEmpty());
         QCOMPARE(exitOk, true);
-        QVERIFY(out.contains(QStringLiteral("twinforge 0.1.0")));
+        QVERIFY(out.contains(QStringLiteral("twinforge 0.2.0")));
 
         for (const QString &sh : {QStringLiteral("bash"), QStringLiteral("zsh"), QStringLiteral("fish")}) {
             parseCliArguments({QStringLiteral("tf"), QStringLiteral("--shell-init"), sh},
-                              root.path(), QStringLiteral("0.1.0"), &err, &exitOk, &out);
+                              root.path(), QStringLiteral("0.2.0"), &err, &exitOk, &out);
             QVERIFY(err.isEmpty());
             QCOMPARE(exitOk, true);
             QVERIFY(out.contains(QStringLiteral("tfcd")));
@@ -2579,14 +2579,14 @@ private slots:
         }
 
         parseCliArguments({QStringLiteral("tf"), QStringLiteral("--shell-init"), QStringLiteral("powershell")},
-                          root.path(), QStringLiteral("0.1.0"), &err, &exitOk, &out);
+                          root.path(), QStringLiteral("0.2.0"), &err, &exitOk, &out);
         QVERIFY(!err.isEmpty());
         QCOMPARE(exitOk, false);
 
         // 6. --smoke-test keeps archive file path intact and disables single-instance handoff
         const CliRequest smokeReq = parseCliArguments(
             {QStringLiteral("tf"), QStringLiteral("--smoke-test"), sampleFile, root.filePath("right_dir")},
-            root.path(), QStringLiteral("0.1.0"), &err, &exitOk, &out);
+            root.path(), QStringLiteral("0.2.0"), &err, &exitOk, &out);
         QVERIFY(err.isEmpty());
         QCOMPARE(exitOk, false);
         QCOMPARE(smokeReq.smokeTest, true);

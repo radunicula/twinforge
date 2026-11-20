@@ -32,7 +32,7 @@ int main(int argc, char *argv[]) {
     QString cliStdout;
     bool cliExitOk = false;
     const CliRequest cliReq = parseCliArguments(
-        rawArgs, QDir::currentPath(), QStringLiteral("0.1.0"),
+        rawArgs, QDir::currentPath(), QStringLiteral("0.2.0"),
         &cliError, &cliExitOk, &cliStdout);
 
     if (!cliError.isEmpty()) {
@@ -50,7 +50,7 @@ int main(int argc, char *argv[]) {
 
     QGuiApplication app(argc, argv);
     app.setApplicationName("twinforge");
-    app.setApplicationVersion("0.1.0");
+    app.setApplicationVersion("0.2.0");
 
     SingleInstance singleInstance;
     if (cliReq.shouldUseSingleInstance()) {
