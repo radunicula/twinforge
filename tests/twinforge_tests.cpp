@@ -3582,7 +3582,8 @@ private slots:
                 const QByteArray p = subPrefix + QByteArrayLiteral("nested_") + QByteArray::number(f) + QByteArrayLiteral(".log");
                 const int fd = ::open(p.constData(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
                 QVERIFY(fd >= 0);
-                ::write(fd, payload.constData(), static_cast<size_t>((f % 5) * 16 + 8));
+                const size_t len = static_cast<size_t>((f % 5) * 16 + 8);
+                QCOMPARE(::write(fd, payload.constData(), len), static_cast<ssize_t>(len));
                 ::close(fd);
             }
         }
@@ -3593,7 +3594,8 @@ private slots:
                                  + ((i % 2 == 0) ? QByteArrayLiteral(".txt") : QByteArrayLiteral(".log"));
             const int fd = ::open(p.constData(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
             QVERIFY(fd >= 0);
-            ::write(fd, payload.constData(), static_cast<size_t>((i % 7) * 16 + 8));
+            const size_t len = static_cast<size_t>((i % 7) * 16 + 8);
+            QCOMPARE(::write(fd, payload.constData(), len), static_cast<ssize_t>(len));
             ::close(fd);
         }
         writeFile(smallDir + QStringLiteral("/note.txt"), "small");

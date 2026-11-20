@@ -9,6 +9,7 @@
 #include <QQmlContext>
 #include <QQmlError>
 #include <QQuickStyle>
+#include <QStringList>
 #include <QTextStream>
 #include <QTimer>
 #include <QUrl>
@@ -22,15 +23,16 @@
 #include "translator.h"
 
 int main(int argc, char *argv[]) {
-    QGuiApplication app(argc, argv);
-    app.setApplicationName("twinforge");
-    app.setApplicationVersion("0.1.0");
+    QStringList rawArgs;
+    rawArgs.reserve(argc);
+    for (int i = 0; i < argc; ++i)
+        rawArgs.append(QString::fromLocal8Bit(argv[i]));
 
     QString cliError;
     QString cliStdout;
     bool cliExitOk = false;
     const CliRequest cliReq = parseCliArguments(
-        app.arguments(), QDir::currentPath(), app.applicationVersion(),
+        rawArgs, QDir::currentPath(), QStringLiteral("0.1.0"),
         &cliError, &cliExitOk, &cliStdout);
 
     if (!cliError.isEmpty()) {
@@ -45,6 +47,10 @@ int main(int argc, char *argv[]) {
         }
         return 0;
     }
+
+    QGuiApplication app(argc, argv);
+    app.setApplicationName("twinforge");
+    app.setApplicationVersion("0.1.0");
 
     SingleInstance singleInstance;
     if (cliReq.shouldUseSingleInstance()) {

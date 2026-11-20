@@ -150,8 +150,15 @@ CliRequest parseCliArguments(const QStringList &arguments,
     if (parser.isSet(helpOpt)) {
         if (shouldExitOk)
             *shouldExitOk = true;
-        if (stdoutOut)
-            *stdoutOut = parser.helpText();
+        if (stdoutOut) {
+            QString help = parser.helpText();
+            help.replace(QLatin1String("Usage: <executable_name> "), QLatin1String("Usage: twinforge "));
+            if (help.startsWith(QLatin1String("Usage:  ")))
+                help.replace(0, 8, QStringLiteral("Usage: twinforge "));
+            else if (help.startsWith(QLatin1String("Usage: [")))
+                help.replace(0, 7, QStringLiteral("Usage: twinforge "));
+            *stdoutOut = help;
+        }
         return req;
     }
 
