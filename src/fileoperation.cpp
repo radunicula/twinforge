@@ -195,7 +195,11 @@ void FileOperation::run()
     m_progressTimer.start();
 
     if (!QFileInfo(m_targetDir).isDir()) {
-        fail(m_targetDir, tr("Target folder does not exist"));
+        const QString reason = tr("Target folder does not exist");
+        fail(m_targetDir, reason);
+        m_remainingSources = m_sources;
+        m_interruptedSource = m_sources.isEmpty() ? m_targetDir : m_sources.first();
+        m_interruptedReason = reason;
         m_failed = m_sources.size();
         emit finished();
         return;
@@ -212,15 +216,43 @@ void FileOperation::run()
     addDone(0, {}, true);
 
     const QString targetCanonical = canonicalish(m_targetDir);
-    for (const QString &src : std::as_const(m_sources)) {
+    for (int i = 0; i < m_sources.size(); ++i) {
+        const QString &src = m_sources.at(i);
         waitIfPaused();
-        if (m_cancelled)
+        if (m_cancelled) {
+            if (m_interruptedSource.isEmpty()) {
+                m_interruptedSource = src;
+                m_interruptedReason = tr("Transfer cancelled");
+            }
+            for (int k = i; k < m_sources.size(); ++k)
+                m_remainingSources.append(m_sources.at(k));
             break;
+        }
+
+        if (!QFileInfo(m_targetDir).isDir()) {
+            const QString reason = tr("Target destination became unavailable");
+            fail(m_targetDir, reason);
+            if (m_interruptedSource.isEmpty()) {
+                m_interruptedSource = src;
+                m_interruptedReason = reason;
+            }
+            for (int k = i; k < m_sources.size(); ++k) {
+                m_remainingSources.append(m_sources.at(k));
+                ++m_failed;
+            }
+            break;
+        }
 
         const QFileInfo si(src);
         if (!pathExists(si)) {
-            fail(src, tr("Source no longer exists"));
+            const QString reason = tr("Source no longer exists");
+            fail(src, reason);
             ++m_failed;
+            m_remainingSources.append(src);
+            if (m_interruptedSource.isEmpty()) {
+                m_interruptedSource = src;
+                m_interruptedReason = reason;
+            }
             continue;
         }
 
@@ -248,11 +280,43 @@ void FileOperation::run()
             result = (m_mode == Copy) ? copyEntry(src, dest, false) : moveEntry(src, dest);
         }
 
+        bool stopLoop = false;
         switch (result) {
-        case Result::Ok: ++m_completed; break;
-        case Result::Skipped: ++m_skipped; break;
-        case Result::Failed: ++m_failed; break;
+        case Result::Ok:
+            m_completedSources.append(src);
+            ++m_completed;
+            break;
+        case Result::Skipped:
+            if (m_cancelled) {
+                if (m_interruptedSource.isEmpty()) {
+                    m_interruptedSource = src;
+                    m_interruptedReason = tr("Transfer cancelled");
+                }
+                for (int k = i; k < m_sources.size(); ++k)
+                    m_remainingSources.append(m_sources.at(k));
+                stopLoop = true;
+            } else {
+                ++m_skipped;
+            }
+            break;
+        case Result::Failed:
+            ++m_failed;
+            m_remainingSources.append(src);
+            if (m_interruptedSource.isEmpty()) {
+                m_interruptedSource = src;
+                m_interruptedReason = m_errors.isEmpty() ? tr("Transfer failed") : m_errors.last();
+            }
+            if (!QFileInfo(m_targetDir).isDir()) {
+                for (int k = i + 1; k < m_sources.size(); ++k) {
+                    m_remainingSources.append(m_sources.at(k));
+                    ++m_failed;
+                }
+                stopLoop = true;
+            }
+            break;
         }
+        if (stopLoop)
+            break;
     }
 
     addDone(0, {}, true);

@@ -382,6 +382,10 @@ ApplicationWindow {
             win.raise();
             win.requestActivate();
         }
+        function onCommandFinished(success, exitCode) {
+            if (!success)
+                win.commandDrawerOpen = true;
+        }
     }
 
     function isAnyMenuOpen() {
@@ -7080,6 +7084,23 @@ ApplicationWindow {
                     }
 
                     ToolbarBtn {
+                        visible: !backend.isBusy && backend.hasInterruptedTransfer
+                        implicitHeight: 22
+                        label: qsTr("Retry (%1)").arg(backend.interruptedTransfer.remainingCount || 0)
+                        accentHighlight: true
+                        tooltipText: qsTr("Interrupted transfer (%1) — Click to retry remaining items").arg(backend.interruptedTransfer.interruptedItem || "")
+                        onClicked: backend.retryInterruptedTransfer()
+                    }
+
+                    ToolbarBtn {
+                        visible: !backend.isBusy && backend.hasInterruptedTransfer
+                        implicitHeight: 22
+                        label: qsTr("Dismiss")
+                        tooltipText: qsTr("Dismiss interrupted transfer recovery")
+                        onClicked: backend.dismissInterruptedTransfer()
+                    }
+
+                    ToolbarBtn {
                         visible: backend.isBusy
                         implicitHeight: 22
                         label: qsTr("Queue (%1)").arg(backend.queueCount)
@@ -7115,142 +7136,26 @@ ApplicationWindow {
                 }
             }
 
-            // Collapsible Live Command Output Drawer (Ctrl+O)
-            Rectangle {
-                visible: Layout.preferredHeight > 0
-                Layout.fillWidth: true
-                Layout.preferredHeight: win.commandDrawerOpen ? 176 : 0
-                Layout.minimumHeight: Layout.preferredHeight
-                Layout.maximumHeight: Layout.preferredHeight
-                clip: true
-                color: p.inputBg
-                Behavior on Layout.preferredHeight { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
-
-                Rectangle {
-                    anchors.top: parent.top
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    height: 1
-                    color: p.borderDefault
+            // Modular Grouped Command Output Drawer (Ctrl+O)
+            CommandOutput {
+                id: commandOutputDrawer
+                objectName: "commandOutputDrawer"
+                drawerOpen: win.commandDrawerOpen
+                themeColors: p
+                smallRadius: win.smallRadius
+                commandLogModel: backend.commandLog
+                commandRunning: backend.commandRunning
+                commandRunningText: backend.commandRunningText
+                onStopRequested: backend.cancelCommand()
+                onCopyTextRequested: function(text, statusMsg) { backend.copyTextToClipboard(text, statusMsg); }
+                onClearRequested: backend.clearCommandOutput()
+                onCloseRequested: {
+                    win.commandDrawerOpen = false;
+                    currentListView().forceActiveFocus();
                 }
-
-                ColumnLayout {
-                    anchors.fill: parent
-                    spacing: 0
-
-                    Rectangle {
-                        Layout.fillWidth: true
-                        height: 28
-                        color: p.subBarBg
-
-                        RowLayout {
-                            anchors.fill: parent
-                            anchors.leftMargin: 10
-                            anchors.rightMargin: 8
-                            spacing: 8
-
-                            Text {
-                                text: backend.commandRunning
-                                      ? qsTr("Running: %1").arg(backend.commandRunningText)
-                                      : qsTr("Command Output")
-                                font.pixelSize: 11
-                                font.bold: true
-                                color: backend.commandRunning ? p.accent : p.textSecondary
-                                elide: Text.ElideRight
-                                Layout.fillWidth: true
-                            }
-
-                            Rectangle {
-                                visible: !backend.commandRunning && backend.commandOutput.length > 0
-                                implicitHeight: 18
-                                implicitWidth: exitCodeText.implicitWidth + 10
-                                radius: 3
-                                color: backend.commandLastExitCode === 0
-                                       ? Qt.alpha(p.accent, 0.16)
-                                       : Qt.alpha(p.dangerAccent, 0.16)
-                                Text {
-                                    id: exitCodeText
-                                    anchors.centerIn: parent
-                                    text: "exit " + backend.commandLastExitCode
-                                    font.pixelSize: 10
-                                    font.family: "monospace"
-                                    font.bold: true
-                                    color: backend.commandLastExitCode === 0 ? p.accent : p.dangerText
-                                }
-                            }
-
-                            ToolbarBtn {
-                                visible: backend.commandRunning
-                                label: qsTr("Stop")
-                                tooltipText: qsTr("Cancel running command")
-                                onClicked: backend.cancelCommand()
-                            }
-
-                            ToolbarBtn {
-                                label: qsTr("Copy")
-                                btnEnabled: backend.commandOutput.length > 0
-                                onClicked: backend.copyTextToClipboard(backend.commandOutput, qsTr("Command output copied to clipboard."))
-                            }
-
-                            ToolbarBtn {
-                                label: qsTr("Clear")
-                                btnEnabled: backend.commandOutput.length > 0
-                                onClicked: backend.clearCommandOutput()
-                            }
-
-                            IconBtn {
-                                implicitWidth: 22
-                                implicitHeight: 22
-                                iconKind: "close"
-                                tooltipText: qsTr("Hide output drawer (Ctrl+O / Esc)")
-                                onClicked: {
-                                    win.commandDrawerOpen = false;
-                                    currentListView().forceActiveFocus();
-                                }
-                            }
-                        }
-
-                        Rectangle {
-                            anchors.bottom: parent.bottom
-                            anchors.left: parent.left
-                            anchors.right: parent.right
-                            height: 1
-                            color: p.borderSubtle
-                        }
-                    }
-
-                    ScrollView {
-                        id: cmdDrawerScroll
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        clip: true
-                        background: Rectangle { color: p.inputBg }
-                        ScrollBar.vertical: AppScrollBar {}
-
-                        TextEdit {
-                            id: cmdDrawerText
-                            width: cmdDrawerScroll.availableWidth
-                            text: backend.commandOutput.length > 0
-                                  ? backend.commandOutput
-                                  : qsTr("No command output yet. Type a command below (Up/Down for history, Ctrl+Enter to insert filename).")
-                            readOnly: true
-                            selectByMouse: true
-                            wrapMode: TextEdit.WrapAnywhere
-                            font.family: "monospace"
-                            font.pixelSize: 11
-                            color: backend.commandOutput.length > 0 ? p.textSecondary : p.textDim
-                            selectionColor: Qt.alpha(p.accent, 0.35)
-                            selectedTextColor: p.textOnHover
-                            leftPadding: 10
-                            rightPadding: 10
-                            topPadding: 6
-                            bottomPadding: 6
-                            onTextChanged: {
-                                if (cmdDrawerScroll.ScrollBar.vertical)
-                                    cmdDrawerScroll.ScrollBar.vertical.position = Math.max(0, 1.0 - cmdDrawerScroll.ScrollBar.vertical.size);
-                            }
-                        }
-                    }
+                onRerunRequested: function(cmd) {
+                    if (cmd && cmd.length > 0)
+                        backend.runCommandAsync(cmd);
                 }
             }
 
@@ -7894,10 +7799,11 @@ ApplicationWindow {
     // Workspaces Dialog (Ctrl+Shift+L) — Save & Restore Dual-Panel Layouts
     AppDialog {
         id: workspacesDialog
+        objectName: "workspacesDialog"
         visible: win.workspacesOpen
         title: qsTr("Workspaces (Ctrl+Shift+L)")
-        width: 580
-        height: 420
+        width: 660
+        height: 540
         standardButtons: Dialog.Close
 
         onOpened: {
@@ -8032,6 +7938,9 @@ ApplicationWindow {
                                     text: qsTr("Left: %1 tab(s) · Right: %2 tab(s)")
                                           .arg((modelData.leftTabs || []).length)
                                           .arg((modelData.rightTabs || []).length)
+                                          + (((modelData.savedSearches || []).length > 0)
+                                             ? (" · " + qsTr("%1 saved search(es)").arg((modelData.savedSearches || []).length))
+                                             : "")
                                     color: p.textMuted
                                     font.pixelSize: 10
                                     font.family: "monospace"
@@ -8062,6 +7971,143 @@ ApplicationWindow {
                                 iconKind: "close"
                                 tooltipText: qsTr("Delete workspace")
                                 onClicked: backend.deleteWorkspace(modelData.id || modelData.name)
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Saved Searches Linked to Active Workspace
+            Rectangle {
+                id: workspaceSavedSearchesPanel
+                objectName: "workspaceSavedSearchesPanel"
+                visible: backend.activeWorkspaceName.length > 0
+                Layout.fillWidth: true
+                Layout.preferredHeight: 158
+                radius: win.smallRadius
+                color: p.cardAltBg
+                border.width: 1
+                border.color: p.borderDefault
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: 8
+                    spacing: 6
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 6
+
+                        Text {
+                            text: qsTr("Saved Searches in \"%1\"").arg(backend.activeWorkspaceName)
+                            font.pixelSize: 12
+                            font.bold: true
+                            color: p.accent
+                            Layout.fillWidth: true
+                            elide: Text.ElideRight
+                        }
+
+                        ToolbarBtn {
+                            implicitHeight: 22
+                            label: qsTr("+ New Search...")
+                            onClicked: {
+                                win.workspacesOpen = false;
+                                win.openAdvancedSearchDialog();
+                            }
+                        }
+                    }
+
+                    Item {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+
+                        Text {
+                            anchors.centerIn: parent
+                            visible: backend.activeWorkspaceSavedSearches.length === 0
+                            text: qsTr("No saved searches in this workspace yet. Run a search (Alt+F7) and click Save to Workspace.")
+                            font.pixelSize: 11
+                            color: p.textDim
+                            elide: Text.ElideRight
+                            width: parent.width - 16
+                            horizontalAlignment: Text.AlignHCenter
+                        }
+
+                        ListView {
+                            anchors.fill: parent
+                            visible: backend.activeWorkspaceSavedSearches.length > 0
+                            clip: true
+                            spacing: 4
+                            model: backend.activeWorkspaceSavedSearches
+                            ScrollBar.vertical: AppScrollBar {}
+
+                            delegate: Rectangle {
+                                width: ListView.view.width
+                                height: 36
+                                radius: win.smallRadius
+                                color: index % 2 === 0 ? p.cardBg : "transparent"
+
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 8
+                                    anchors.rightMargin: 6
+                                    spacing: 6
+
+                                    ColumnLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 1
+
+                                        Text {
+                                            text: modelData.name || ""
+                                            font.pixelSize: 11
+                                            font.bold: true
+                                            color: p.textPrimary
+                                            elide: Text.ElideRight
+                                            Layout.fillWidth: true
+                                        }
+
+                                        Text {
+                                            readonly property string namePat: modelData.nameQuery || "*"
+                                            readonly property string contentPat: modelData.contentQuery || ""
+                                            text: contentPat.length > 0
+                                                  ? (namePat + " · /" + contentPat + "/")
+                                                  : (namePat + " · " + (modelData.rootPath || ""))
+                                            font.pixelSize: 10
+                                            font.family: "monospace"
+                                            color: p.textMuted
+                                            elide: Text.ElideMiddle
+                                            Layout.fillWidth: true
+                                        }
+                                    }
+
+                                    ToolbarBtn {
+                                        implicitHeight: 24
+                                        label: qsTr("Run Again")
+                                        accentHighlight: true
+                                        onClicked: {
+                                            backend.runWorkspaceSavedSearch(backend.activeWorkspaceName, modelData.id, true, false);
+                                            win.workspacesOpen = false;
+                                            currentListView().forceActiveFocus();
+                                        }
+                                    }
+
+                                    ToolbarBtn {
+                                        implicitHeight: 24
+                                        label: qsTr("New Tab")
+                                        onClicked: {
+                                            backend.runWorkspaceSavedSearch(backend.activeWorkspaceName, modelData.id, true, true);
+                                            win.workspacesOpen = false;
+                                            currentListView().forceActiveFocus();
+                                        }
+                                    }
+
+                                    IconBtn {
+                                        implicitWidth: 22
+                                        implicitHeight: 22
+                                        iconKind: "close"
+                                        tooltipText: qsTr("Remove saved search")
+                                        onClicked: backend.removeSearchFromWorkspace(backend.activeWorkspaceName, modelData.id)
+                                    }
+                                }
                             }
                         }
                     }
@@ -8720,6 +8766,86 @@ ApplicationWindow {
         ColumnLayout {
             anchors.fill: parent
             spacing: 10
+
+            // Interrupted Transfer Recovery Card
+            Rectangle {
+                id: interruptedRecoveryCard
+                objectName: "interruptedRecoveryCard"
+                visible: backend.hasInterruptedTransfer
+                Layout.fillWidth: true
+                implicitHeight: recCol.implicitHeight + 18
+                radius: win.smallRadius
+                color: Qt.alpha(p.warningText, win.isDark ? 0.14 : 0.1)
+                border.width: 1
+                border.color: p.warningText
+
+                ColumnLayout {
+                    id: recCol
+                    anchors.fill: parent
+                    anchors.margins: 9
+                    spacing: 6
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 8
+
+                        Text {
+                            text: qsTr("Interrupted Transfer Detected")
+                            font.pixelSize: 12
+                            font.bold: true
+                            color: p.warningText
+                            Layout.fillWidth: true
+                        }
+
+                        Text {
+                            text: qsTr("%1 done · %2 remaining")
+                                  .arg(backend.interruptedTransfer.completedCount || 0)
+                                  .arg(backend.interruptedTransfer.remainingCount || 0)
+                            font.pixelSize: 11
+                            font.family: "monospace"
+                            font.bold: true
+                            color: p.textPrimary
+                        }
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
+                        text: qsTr("Interrupted at: %1 — %2")
+                              .arg(backend.interruptedTransfer.interruptedItem || "")
+                              .arg(backend.interruptedTransfer.reason || "")
+                        font.pixelSize: 11
+                        color: p.textSecondary
+                        elide: Text.ElideMiddle
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
+                        text: qsTr("Destination: %1").arg(backend.interruptedTransfer.targetDir || "")
+                        font.pixelSize: 10
+                        font.family: "monospace"
+                        color: p.textMuted
+                        elide: Text.ElideMiddle
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 8
+                        Item { Layout.fillWidth: true }
+
+                        ToolbarBtn {
+                            label: qsTr("Dismiss")
+                            onClicked: backend.dismissInterruptedTransfer()
+                        }
+
+                        ToolbarBtn {
+                            objectName: "retryInterruptedBtn"
+                            label: qsTr("Retry Remaining Items")
+                            accentHighlight: true
+                            onClicked: backend.retryInterruptedTransfer()
+                        }
+                    }
+                }
+            }
 
             // Current Active Operation Card
             Rectangle {
@@ -10335,6 +10461,40 @@ ApplicationWindow {
                                 }
                             }
                         }
+                    }
+                }
+            }
+
+            // Save Search Preset into Active Workspace
+            RowLayout {
+                visible: backend.activeWorkspaceName.length > 0
+                Layout.fillWidth: true
+                spacing: 8
+
+                CompactField {
+                    id: saveSearchNameField
+                    Layout.fillWidth: true
+                    placeholderText: qsTr("Name for saved search in \"%1\" (optional)...").arg(backend.activeWorkspaceName)
+                }
+
+                ToolbarBtn {
+                    label: qsTr("Save to \"%1\"").arg(backend.activeWorkspaceName)
+                    accentHighlight: true
+                    onClicked: {
+                        backend.saveSearchToWorkspace(backend.activeWorkspaceName, {
+                            name: saveSearchNameField.text.trim(),
+                            rootPath: currentModel().path,
+                            nameQuery: searchInput.text,
+                            contentQuery: searchContentInput.text,
+                            caseSensitive: searchDialog.caseSensitive,
+                            useRegex: searchDialog.useRegex,
+                            includeHidden: searchDialog.includeHidden,
+                            typeFilter: searchDialog.typeFilter,
+                            minSizeBytes: searchDialog.minSizeBytes,
+                            modifiedWithinDays: searchDialog.modifiedWithinDays,
+                            maxResults: 2000
+                        });
+                        saveSearchNameField.text = "";
                     }
                 }
             }

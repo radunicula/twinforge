@@ -9,6 +9,7 @@
 #include <QMimeData>
 #include <QProcess>
 #include <QQmlApplicationEngine>
+#include <QQmlComponent>
 #include <QQmlContext>
 #include <QQuickItem>
 #include <QQuickWindow>
@@ -22,6 +23,7 @@
 
 #include "backend.h"
 #include "cli.h"
+#include "commandlogmodel.h"
 #include "fileoperation.h"
 #include "panelmodel.h"
 #include "singleinstance.h"
@@ -3350,6 +3352,201 @@ private slots:
         QVERIFY(bmStrip != nullptr);
         QTRY_VERIFY_WITH_TIMEOUT(bmStrip->property("overflowBookmarks").toList().size() > 0, 2000);
         QVERIFY(bmStrip->property("visibleBookmarkCount").toInt() < backend.bookmarks().size());
+    }
+
+    void interruptedTransferRecoveryAndRetryRemaining()
+    {
+        QTemporaryDir root;
+        QTemporaryDir cfg;
+        QVERIFY(root.isValid());
+        QVERIFY(cfg.isValid());
+
+        const QString srcDir = root.filePath("src");
+        const QString dstDir = root.filePath("external_ssd");
+        QVERIFY(QDir().mkpath(srcDir));
+        QVERIFY(QDir().mkpath(dstDir));
+
+        const QString f1 = QDir(srcDir).filePath("f1.txt");
+        const QString f2 = QDir(srcDir).filePath("f2.txt");
+        const QString f3 = QDir(srcDir).filePath("f3.txt");
+        writeFile(f1, "one");
+        writeFile(f2, "two-new");
+        writeFile(f3, "three");
+        // Conflict on f2 triggers user Cancel -> simulates interruption after f1 succeeded
+        writeFile(QDir(dstDir).filePath("f2.txt"), "two-existing");
+
+        const QString bookmarks = cfg.filePath("bookmarks.json");
+        {
+            Backend b1(bookmarks);
+            int conflicts = 0;
+            const bool ok = runBackendOp(b1, true, {f1, f2, f3}, dstDir, FileOperation::Cancel, &conflicts);
+            QCOMPARE(ok, false);
+            QCOMPARE(conflicts, 1);
+
+            // f1 completed & moved; f2 and f3 preserved intact at source
+            QVERIFY(!QFileInfo::exists(f1));
+            QCOMPARE(readFile(QDir(dstDir).filePath("f1.txt")), QByteArray("one"));
+            QVERIFY(QFileInfo::exists(f2));
+            QVERIFY(QFileInfo::exists(f3));
+
+            QCOMPARE(b1.hasInterruptedTransfer(), true);
+            const QVariantMap rec = b1.interruptedTransfer();
+            QCOMPARE(rec.value("mode").toString(), QStringLiteral("move"));
+            QCOMPARE(rec.value("completedCount").toInt(), 1);
+            QCOMPARE(rec.value("remainingCount").toInt(), 2);
+            QCOMPARE(rec.value("interruptedItem").toString(), QStringLiteral("f2.txt"));
+        }
+
+        // Reload in fresh Backend to verify session persistence + retry when destination missing vs restored
+        Backend b2(bookmarks);
+        QCOMPARE(b2.hasInterruptedTransfer(), true);
+        QCOMPARE(b2.interruptedTransfer().value("remainingCount").toInt(), 2);
+
+        // Simulate destination drive still disconnected
+        QVERIFY(QDir(dstDir).removeRecursively());
+        QCOMPARE(b2.retryInterruptedTransfer(), false);
+        QCOMPARE(b2.hasInterruptedTransfer(), true);
+
+        // Reconnect destination drive and retry remaining items
+        QVERIFY(QDir().mkpath(dstDir));
+        QSignalSpy finishedSpy(&b2, &Backend::operationFinished);
+        QCOMPARE(b2.retryInterruptedTransfer(), true);
+        QCOMPARE(b2.hasInterruptedTransfer(), false);
+        QTRY_COMPARE_WITH_TIMEOUT(finishedSpy.count(), 1, 5000);
+        QCOMPARE(finishedSpy.first().at(0).toBool(), true);
+
+        QVERIFY(!QFileInfo::exists(f2));
+        QVERIFY(!QFileInfo::exists(f3));
+        QCOMPARE(readFile(QDir(dstDir).filePath("f2.txt")), QByteArray("two-new"));
+        QCOMPARE(readFile(QDir(dstDir).filePath("f3.txt")), QByteArray("three"));
+
+        // Dismiss no-op check
+        b2.dismissInterruptedTransfer();
+        QCOMPARE(b2.hasInterruptedTransfer(), false);
+    }
+
+    void commandLogModelAndStandaloneCommandOutputQml()
+    {
+        QTemporaryDir root;
+        QTemporaryDir cfg;
+        QVERIFY(root.isValid());
+        QVERIFY(cfg.isValid());
+
+        Backend backend(cfg.filePath("bookmarks.json"));
+        backend.leftPanel()->setPath(root.path());
+        backend.setActivePanel(0);
+
+        QSignalSpy cmdSpy(&backend, &Backend::commandFinished);
+
+        // 1. Failing builtin cd is grouped with its cwd and error output
+        backend.runCommandAsync(QStringLiteral("cd missing_subfolder_xyz"));
+        QCOMPARE(cmdSpy.count(), 1);
+        QCOMPARE(cmdSpy.takeFirst().at(0).toBool(), false);
+
+        // 2. Real command execution is grouped in a second entry
+        backend.runCommandAsync(QStringLiteral("echo twinforge-grouped-output"));
+        QTRY_COMPARE_WITH_TIMEOUT(cmdSpy.count(), 1, 5000);
+        QCOMPARE(cmdSpy.takeFirst().at(0).toBool(), true);
+
+        CommandLogModel *log = backend.commandLog();
+        QVERIFY(log != nullptr);
+        QCOMPARE(log->count(), 2);
+
+        const QModelIndex idx0 = log->index(0);
+        QCOMPARE(log->data(idx0, CommandLogModel::CommandRole).toString(), QStringLiteral("cd missing_subfolder_xyz"));
+        QCOMPARE(log->data(idx0, CommandLogModel::CwdRole).toString(), root.path());
+        QCOMPARE(log->data(idx0, CommandLogModel::ExitCodeRole).toInt(), 1);
+        QCOMPARE(log->data(idx0, CommandLogModel::RunningRole).toBool(), false);
+        QVERIFY(log->data(idx0, CommandLogModel::OutputRole).toString().contains(QStringLiteral("missing_subfolder_xyz")));
+
+        const QModelIndex idx1 = log->index(1);
+        QCOMPARE(log->data(idx1, CommandLogModel::CommandRole).toString(), QStringLiteral("echo twinforge-grouped-output"));
+        QCOMPARE(log->data(idx1, CommandLogModel::ExitCodeRole).toInt(), 0);
+        QCOMPARE(log->data(idx1, CommandLogModel::OutputRole).toString().trimmed(), QStringLiteral("twinforge-grouped-output"));
+        QVERIFY(log->formatEntryForCopy(1).contains(root.path()));
+        QVERIFY(log->formatAllForCopy().contains(QStringLiteral("[exit 1]")));
+        QVERIFY(log->formatAllForCopy().contains(QStringLiteral("[exit 0]")));
+
+        // 3. Instantiate CommandOutput.qml standalone with CommandLogModel
+        QQmlEngine engine;
+        QQmlComponent comp(&engine, QUrl(QStringLiteral("qrc:/CommandOutput.qml")));
+        QVERIFY2(comp.status() == QQmlComponent::Ready, qPrintable(comp.errorString()));
+        std::unique_ptr<QObject> item(comp.create());
+        QVERIFY(item != nullptr);
+        item->setProperty("commandLogModel", QVariant::fromValue(log));
+        item->setProperty("drawerOpen", true);
+        item->setProperty("width", 700);
+        QCOMPARE(item->property("commandCount").toInt(), 2);
+
+        backend.clearCommandOutput();
+        QCOMPARE(log->count(), 0);
+    }
+
+    void workspaceSavedSearchesPersistenceAndRerunFeedToPanel()
+    {
+        QTemporaryDir root;
+        QTemporaryDir cfg;
+        QVERIFY(root.isValid());
+        QVERIFY(cfg.isValid());
+
+        const QString logsDir = root.filePath("logs");
+        const QString otherDir = root.filePath("other");
+        QVERIFY(QDir().mkpath(logsDir));
+        QVERIFY(QDir().mkpath(otherDir));
+
+        writeFile(QDir(logsDir).filePath("app.log"), "INFO boot\nERROR disk timeout\n");
+        writeFile(QDir(logsDir).filePath("radar.log"), "TIMEOUT frame 42\n");
+        writeFile(QDir(logsDir).filePath("info.log"), "INFO all systems green\n");
+        writeFile(QDir(logsDir).filePath("readme.txt"), "ERROR in txt ignored by *.log mask\n");
+
+        const QString bookmarks = cfg.filePath("bookmarks.json");
+        QString searchId;
+        {
+            Backend b1(bookmarks);
+            b1.leftPanel()->setPath(logsDir);
+            b1.rightPanel()->setPath(otherDir);
+            QVERIFY(b1.saveWorkspace(QStringLiteral("Validare radar")));
+
+            QVariantMap spec;
+            spec[QStringLiteral("name")] = QStringLiteral("Erori *.log");
+            spec[QStringLiteral("rootPath")] = logsDir;
+            spec[QStringLiteral("nameQuery")] = QStringLiteral("*.log");
+            spec[QStringLiteral("contentQuery")] = QStringLiteral("ERROR|TIMEOUT");
+            spec[QStringLiteral("useRegex")] = true;
+            QVERIFY(b1.saveSearchToWorkspace(QStringLiteral("Validare radar"), spec));
+
+            const QVariantList saved = b1.activeWorkspaceSavedSearches();
+            QCOMPARE(saved.size(), 1);
+            searchId = saved.first().toMap().value(QStringLiteral("id")).toString();
+            QVERIFY(!searchId.isEmpty());
+
+            // Saving workspace layout again must preserve attached savedSearches
+            QVERIFY(b1.saveWorkspace(QStringLiteral("Validare radar")));
+            QCOMPARE(b1.activeWorkspaceSavedSearches().size(), 1);
+        }
+
+        // Reload in fresh Backend instance and re-run saved search directly into panel
+        Backend b2(bookmarks);
+        QVERIFY(b2.loadWorkspace(QStringLiteral("Validare radar")));
+        QCOMPARE(b2.activeWorkspaceSavedSearches().size(), 1);
+        QCOMPARE(b2.activeWorkspaceSavedSearches().first().toMap().value(QStringLiteral("name")).toString(),
+                 QStringLiteral("Erori *.log"));
+
+        b2.setActivePanel(0);
+        QSignalSpy stateSpy(&b2, &Backend::searchStateChanged);
+        QVERIFY(b2.runWorkspaceSavedSearch(QStringLiteral("Validare radar"), searchId, true, false));
+        QTRY_VERIFY_WITH_TIMEOUT(!b2.searchRunning() && stateSpy.count() >= 2, 5000);
+
+        PanelModel *left = b2.leftPanel();
+        QCOMPARE(left->isCollectionView(), true);
+        QCOMPARE(left->collectionTitle(), QStringLiteral("Erori *.log"));
+        QVERIFY(left->findIndexByPath(QDir(logsDir).filePath("app.log")) >= 0);
+        QVERIFY(left->findIndexByPath(QDir(logsDir).filePath("radar.log")) >= 0);
+        QCOMPARE(left->findIndexByPath(QDir(logsDir).filePath("info.log")), -1);
+        QCOMPARE(left->findIndexByPath(QDir(logsDir).filePath("readme.txt")), -1);
+
+        QVERIFY(b2.removeSearchFromWorkspace(QStringLiteral("Validare radar"), searchId));
+        QCOMPARE(b2.activeWorkspaceSavedSearches().size(), 0);
     }
 };
 

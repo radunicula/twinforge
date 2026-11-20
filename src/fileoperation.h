@@ -51,6 +51,12 @@ public:
     int completedCount() const { return m_completed; }
     int skippedCount() const { return m_skipped; }
     int failedCount() const { return m_failed; }
+    QString targetDir() const { return m_targetDir; }
+    QStringList sources() const { return m_sources; }
+    QStringList completedSources() const { return m_completedSources; }
+    QStringList remainingSources() const { return m_remainingSources; }
+    QString interruptedSource() const { return m_interruptedSource; }
+    QString interruptedReason() const { return m_interruptedReason; }
     QStringList errors() const { return m_errors; }
     // Pairs of (newDestPath, originalSrcPath) for non-overwriting moves, suitable for Undo.
     QList<QPair<QString, QString>> movedPairs() const { return m_movedPairs; }
@@ -116,6 +122,10 @@ private:
     int m_completed = 0;
     int m_skipped = 0;
     int m_failed = 0;
+    QStringList m_completedSources;
+    QStringList m_remainingSources;
+    QString m_interruptedSource;
+    QString m_interruptedReason;
     QStringList m_errors;
     QList<QPair<QString, QString>> m_movedPairs;
 };

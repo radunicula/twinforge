@@ -12,6 +12,7 @@
 #include <functional>
 #include <memory>
 
+#include "commandlogmodel.h"
 #include "fileoperation.h"
 #include "panelmodel.h"
 
@@ -107,12 +108,16 @@ class Backend : public QObject {
     Q_PROPERTY(QString remoteOpDetail READ remoteOpDetail NOTIFY remoteOpChanged)
     Q_PROPERTY(QVariantList workspaces READ workspaces NOTIFY workspacesChanged)
     Q_PROPERTY(QString activeWorkspaceName READ activeWorkspaceName NOTIFY workspacesChanged)
+    Q_PROPERTY(QVariantList activeWorkspaceSavedSearches READ activeWorkspaceSavedSearches NOTIFY workspacesChanged)
     Q_PROPERTY(int trashCount READ trashCount NOTIFY trashChanged)
     Q_PROPERTY(bool commandRunning READ commandRunning NOTIFY commandStateChanged)
     Q_PROPERTY(QString commandOutput READ commandOutput NOTIFY commandOutputChanged)
     Q_PROPERTY(QString commandRunningText READ commandRunningText NOTIFY commandStateChanged)
     Q_PROPERTY(int commandLastExitCode READ commandLastExitCode NOTIFY commandStateChanged)
     Q_PROPERTY(QStringList commandHistory READ commandHistory NOTIFY commandHistoryChanged)
+    Q_PROPERTY(CommandLogModel* commandLog READ commandLog CONSTANT)
+    Q_PROPERTY(bool hasInterruptedTransfer READ hasInterruptedTransfer NOTIFY interruptedTransferChanged)
+    Q_PROPERTY(QVariantMap interruptedTransfer READ interruptedTransfer NOTIFY interruptedTransferChanged)
     Q_PROPERTY(bool splitOpRunning READ splitOpRunning NOTIFY splitOpChanged)
     Q_PROPERTY(double splitOpProgress READ splitOpProgress NOTIFY splitOpChanged)
     Q_PROPERTY(QString splitOpDetail READ splitOpDetail NOTIFY splitOpChanged)
@@ -402,12 +407,25 @@ public:
     // Tab power actions
     Q_INVOKABLE bool moveTabToOppositePanel(int panelIndex, int tabIndex = -1);
 
-    // Saved Dual-Panel Workspaces (workspaces.json)
+    // Saved Dual-Panel Workspaces (workspaces.json) + Saved Searches
     QVariantList workspaces() const { return m_workspaces; }
     QString activeWorkspaceName() const { return m_activeWorkspaceName; }
+    QVariantList activeWorkspaceSavedSearches() const;
     Q_INVOKABLE bool saveWorkspace(const QString &name);
     Q_INVOKABLE bool loadWorkspace(const QString &nameOrId);
     Q_INVOKABLE bool deleteWorkspace(const QString &nameOrId);
+    Q_INVOKABLE bool saveSearchToWorkspace(const QString &workspaceNameOrId, const QVariantMap &searchSpec);
+    Q_INVOKABLE bool removeSearchFromWorkspace(const QString &workspaceNameOrId, const QString &searchId);
+    Q_INVOKABLE bool runWorkspaceSavedSearch(const QString &workspaceNameOrId,
+                                             const QString &searchId,
+                                             bool feedToPanel = true,
+                                             bool newTab = false);
+
+    // Interrupted Transfer Recovery
+    bool hasInterruptedTransfer() const { return !m_interruptedTransfer.isEmpty(); }
+    QVariantMap interruptedTransfer() const { return m_interruptedTransfer; }
+    Q_INVOKABLE bool retryInterruptedTransfer();
+    Q_INVOKABLE void dismissInterruptedTransfer();
 
     // Freedesktop Trash Manager (trash://)
     int trashCount() const;
@@ -422,6 +440,7 @@ public:
     QString commandRunningText() const { return m_commandRunningText; }
     int commandLastExitCode() const { return m_commandLastExitCode; }
     QStringList commandHistory() const { return m_commandHistory; }
+    CommandLogModel *commandLog() { return &m_commandLog; }
     Q_INVOKABLE void runCommandAsync(const QString &command);
     Q_INVOKABLE void cancelCommand();
     Q_INVOKABLE void clearCommandOutput();
@@ -519,6 +538,7 @@ signals:
     void commandOutputChanged();
     void commandHistoryChanged();
     void commandFinished(bool success, int exitCode);
+    void interruptedTransferChanged();
     void splitOpChanged();
     void splitOperationFinished(const QVariantMap &result);
     void settingsChanged();
@@ -545,6 +565,11 @@ private:
     void saveWorkspaces() const;
     void recordCommandHistory(const QString &command);
     bool tryHandleBuiltinCd(const QString &command, QString *outMessage, int *outExitCode);
+    void startAdvancedSearchInternal(const QString &rootPath,
+                                     const QVariantMap &options,
+                                     bool feedToPanel,
+                                     bool feedNewTab,
+                                     const QString &feedTitle);
     static QVariantMap splitFileImpl(const QString &sourcePath, const QString &targetDir,
                                      qint64 partSizeBytes, bool writeCrc,
                                      const std::atomic<bool> *cancelFlag = nullptr,
@@ -618,6 +643,9 @@ private:
     bool m_searchRunning = false;
     int m_searchScannedCount = 0;
     QVariantList m_searchResultItems;
+    bool m_pendingSearchFeedToPanel = false;
+    bool m_pendingSearchFeedNewTab = false;
+    QString m_pendingSearchFeedTitle;
 
     // Async drives (lsblk)
     std::atomic<quint64> m_drivesGeneration{0};
@@ -682,6 +710,11 @@ private:
     QString m_commandOutput;
     int m_commandLastExitCode = 0;
     QStringList m_commandHistory;
+    CommandLogModel m_commandLog;
+    int m_activeCommandEntryId = -1;
+
+    // Interrupted transfer recovery state
+    QVariantMap m_interruptedTransfer;
 
     // Async file split & combine
     std::atomic<quint64> m_splitOpGen{0};

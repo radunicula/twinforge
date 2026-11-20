@@ -214,6 +214,9 @@ QVariantList runSearchImpl(const QString &rootPath, const SearchSpec &spec,
     if (!spec.nameQuery.isEmpty()) {
         if (spec.useRegex) {
             nameRe = QRegularExpression(spec.nameQuery, reOpts);
+            if (!nameRe.isValid() && (spec.nameQuery.contains('*') || spec.nameQuery.contains('?'))) {
+                nameRe = QRegularExpression(QRegularExpression::wildcardToRegularExpression(spec.nameQuery), reOpts);
+            }
             useNameRe = nameRe.isValid();
         } else if (spec.nameQuery.contains('*') || spec.nameQuery.contains('?')) {
             nameRe = QRegularExpression(QRegularExpression::wildcardToRegularExpression(spec.nameQuery), reOpts);
@@ -2288,11 +2291,17 @@ void Backend::onFileOperationFinished()
 
     m_fileOpThread->wait();
     const bool isCopy = m_fileOp->mode() == FileOperation::Copy;
+    const QString modeStr = isCopy ? QStringLiteral("copy") : QStringLiteral("move");
+    const QString targetDir = m_fileOp->targetDir();
+    const int totalSources = m_fileOp->sources().size();
     const bool cancelled = m_fileOp->wasCancelled();
     const int completed = m_fileOp->completedCount();
     const int skipped = m_fileOp->skippedCount();
     const int failed = m_fileOp->failedCount();
     const QStringList errors = m_fileOp->errors();
+    const QStringList remainingSources = m_fileOp->remainingSources();
+    const QString interruptedSource = m_fileOp->interruptedSource();
+    const QString interruptedReason = m_fileOp->interruptedReason();
     const QList<QPair<QString, QString>> moved = m_fileOp->movedPairs();
 
     delete m_fileOpThread;
@@ -2310,6 +2319,30 @@ void Backend::onFileOperationFinished()
         for (int i = moved.size() - 1; i >= 0; --i)
             entry.pairs.append(UndoPair{moved.at(i).first, moved.at(i).second, {}});
         pushUndo(std::move(entry));
+    }
+
+    if (!remainingSources.isEmpty()) {
+        QVariantMap recovery;
+        recovery[QStringLiteral("mode")] = modeStr;
+        recovery[QStringLiteral("targetDir")] = targetDir;
+        recovery[QStringLiteral("totalCount")] = totalSources;
+        recovery[QStringLiteral("completedCount")] = completed;
+        recovery[QStringLiteral("skippedCount")] = skipped;
+        recovery[QStringLiteral("failedCount")] = failed;
+        recovery[QStringLiteral("remainingCount")] = remainingSources.size();
+        recovery[QStringLiteral("remainingSources")] = remainingSources;
+        recovery[QStringLiteral("interruptedPath")] = interruptedSource;
+        recovery[QStringLiteral("interruptedItem")] = QFileInfo(interruptedSource).fileName().isEmpty()
+            ? interruptedSource
+            : QFileInfo(interruptedSource).fileName();
+        recovery[QStringLiteral("reason")] = interruptedReason.isEmpty()
+            ? (cancelled ? tr("Transfer cancelled") : tr("Transfer interrupted"))
+            : interruptedReason;
+        recovery[QStringLiteral("wasCancelled")] = cancelled;
+        recovery[QStringLiteral("timestamp")] = QDateTime::currentDateTime().toString(Qt::ISODate);
+        m_interruptedTransfer = recovery;
+        saveSession();
+        emit interruptedTransferChanged();
     }
 
     m_isBusy = false;
@@ -2348,6 +2381,49 @@ void Backend::onFileOperationFinished()
         emit operationQueueChanged();
         launchFileOperation(nextOp.mode, nextOp.sourcePaths, nextOp.targetDir);
     }
+}
+
+bool Backend::retryInterruptedTransfer()
+{
+    if (m_interruptedTransfer.isEmpty())
+        return false;
+
+    const QString targetDir = m_interruptedTransfer.value(QStringLiteral("targetDir")).toString();
+    if (targetDir.isEmpty() || !QFileInfo(targetDir).isDir()) {
+        showStatus(tr("Target destination is still unavailable: %1").arg(targetDir));
+        return false;
+    }
+
+    const QStringList rawRemaining = m_interruptedTransfer.value(QStringLiteral("remainingSources")).toStringList();
+    QStringList existingRemaining;
+    for (const QString &src : rawRemaining) {
+        const QFileInfo fi(src);
+        if (fi.exists() || fi.isSymLink())
+            existingRemaining.append(src);
+    }
+    if (existingRemaining.isEmpty()) {
+        showStatus(tr("Source items are still unavailable."));
+        return false;
+    }
+
+    const FileOperation::Mode mode = (m_interruptedTransfer.value(QStringLiteral("mode")).toString() == QLatin1String("move"))
+        ? FileOperation::Move
+        : FileOperation::Copy;
+
+    m_interruptedTransfer.clear();
+    saveSession();
+    emit interruptedTransferChanged();
+
+    return startFileOperation(mode, existingRemaining, targetDir);
+}
+
+void Backend::dismissInterruptedTransfer()
+{
+    if (m_interruptedTransfer.isEmpty())
+        return;
+    m_interruptedTransfer.clear();
+    saveSession();
+    emit interruptedTransferChanged();
 }
 
 bool Backend::copyItems(const QStringList &sourcePaths, const QString &targetDir)
@@ -4367,6 +4443,15 @@ void Backend::loadSession()
     m_showModifiedColumn = settings.value("settings/showModifiedColumn", true).toBool();
     m_languageMode = normalizeLangMode(settings.value("settings/languageMode", QStringLiteral("auto")).toString());
 
+    m_interruptedTransfer.clear();
+    const QByteArray recoveryRaw = settings.value("transfer/interruptedJson").toByteArray();
+    if (!recoveryRaw.isEmpty()) {
+        const QJsonObject obj = QJsonDocument::fromJson(recoveryRaw).object();
+        const QVariantMap map = obj.toVariantMap();
+        if (!map.value(QStringLiteral("remainingSources")).toStringList().isEmpty())
+            m_interruptedTransfer = map;
+    }
+
     m_loadingSession = false;
     emit recentDirectoriesChanged();
     emit commandHistoryChanged();
@@ -4374,6 +4459,7 @@ void Backend::loadSession()
     emit remoteConnectionsChanged();
     emit customActionsChanged();
     emit settingsChanged();
+    emit interruptedTransferChanged();
 }
 
 void Backend::saveSession() const
@@ -4399,6 +4485,10 @@ void Backend::saveSession() const
     settings.setValue("settings/showSizeColumn", m_showSizeColumn);
     settings.setValue("settings/showModifiedColumn", m_showModifiedColumn);
     settings.setValue("settings/languageMode", m_languageMode);
+    settings.setValue("transfer/interruptedJson",
+                      m_interruptedTransfer.isEmpty()
+                          ? QByteArray()
+                          : QJsonDocument(QJsonObject::fromVariantMap(m_interruptedTransfer)).toJson(QJsonDocument::Compact));
     settings.setValue("history/recentDirs", m_recentDirs);
     settings.setValue("history/commandHistory", m_commandHistory);
 
@@ -6415,6 +6505,10 @@ QVariantList Backend::runAdvancedSearchSync(const QString &rootPath, const QVari
 
 void Backend::cancelSearch()
 {
+    m_pendingSearchFeedToPanel = false;
+    m_pendingSearchFeedNewTab = false;
+    m_pendingSearchFeedTitle.clear();
+
     if (!m_searchThread && !m_searchRunning)
         return;
 
@@ -6436,6 +6530,15 @@ void Backend::cancelSearch()
 
 void Backend::startAdvancedSearch(const QString &rootPath, const QVariantMap &options)
 {
+    startAdvancedSearchInternal(rootPath, options, false, false, {});
+}
+
+void Backend::startAdvancedSearchInternal(const QString &rootPath,
+                                          const QVariantMap &options,
+                                          bool feedToPanel,
+                                          bool feedNewTab,
+                                          const QString &feedTitle)
+{
     cancelSearch();
 
     const QFileInfo rootFi(rootPath);
@@ -6447,6 +6550,9 @@ void Backend::startAdvancedSearch(const QString &rootPath, const QVariantMap &op
     const QString cleanRoot = rootFi.absoluteFilePath();
     const SearchSpec spec = parseSearchOptions(options);
 
+    m_pendingSearchFeedToPanel = feedToPanel;
+    m_pendingSearchFeedNewTab = feedNewTab;
+    m_pendingSearchFeedTitle = feedTitle;
     m_searchCancelRequested.store(false, std::memory_order_relaxed);
     const quint64 gen = ++m_searchGeneration;
     m_searchRunning = true;
@@ -6484,13 +6590,36 @@ void Backend::startAdvancedSearch(const QString &rootPath, const QVariantMap &op
                 delete m_searchThread;
                 m_searchThread = nullptr;
             }
+            const bool doFeed = !cancelled && m_pendingSearchFeedToPanel;
+            const bool feedNewTab = m_pendingSearchFeedNewTab;
+            const QString feedTitle = m_pendingSearchFeedTitle;
+            m_pendingSearchFeedToPanel = false;
+            m_pendingSearchFeedNewTab = false;
+            m_pendingSearchFeedTitle.clear();
+
+            if (doFeed) {
+                QStringList paths;
+                paths.reserve(m_searchResultItems.size());
+                for (const QVariant &v : std::as_const(m_searchResultItems)) {
+                    const QString p = v.toMap().value(QStringLiteral("path")).toString();
+                    if (!p.isEmpty())
+                        paths.append(p);
+                }
+                if (!paths.isEmpty()) {
+                    feedPathsToPanel(paths, feedTitle, feedNewTab);
+                } else {
+                    showStatus(tr("Saved search \"%1\": no matching items found.").arg(feedTitle));
+                }
+            } else {
+                showStatus(cancelled
+                               ? tr("Search stopped (%1 results found).").arg(m_searchResultItems.size())
+                               : tr("Search finished: %1 result(s) across %2 item(s).")
+                                     .arg(m_searchResultItems.size())
+                                     .arg(totalScanned));
+            }
+
             emit searchProgressChanged();
             emit searchStateChanged();
-            showStatus(cancelled
-                           ? tr("Search stopped (%1 results found).").arg(m_searchResultItems.size())
-                           : tr("Search finished: %1 result(s) across %2 item(s).")
-                                 .arg(m_searchResultItems.size())
-                                 .arg(totalScanned));
         }, Qt::QueuedConnection);
     });
 
@@ -8985,12 +9114,14 @@ bool Backend::saveWorkspace(const QString &name)
 
     QVariantMap ws;
     QString existingId;
+    QVariantList existingSavedSearches;
     int existingIdx = -1;
     for (int i = 0; i < m_workspaces.size(); ++i) {
         const QVariantMap cur = m_workspaces.at(i).toMap();
         if (cur.value(QStringLiteral("name")).toString().compare(cleanName, Qt::CaseInsensitive) == 0) {
             existingIdx = i;
             existingId = cur.value(QStringLiteral("id")).toString();
+            existingSavedSearches = cur.value(QStringLiteral("savedSearches")).toList();
             break;
         }
     }
@@ -9008,6 +9139,7 @@ bool Backend::saveWorkspace(const QString &name)
     ws[QStringLiteral("rightSortAscending")] = m_rightPanel.sortAscending();
     ws[QStringLiteral("rightShowHidden")] = m_rightPanel.showHidden();
     ws[QStringLiteral("activePanel")] = m_activePanel;
+    ws[QStringLiteral("savedSearches")] = existingSavedSearches;
     ws[QStringLiteral("savedAt")] = QDateTime::currentDateTime().toString(Qt::ISODate);
 
     if (existingIdx >= 0)
@@ -9097,6 +9229,162 @@ bool Backend::deleteWorkspace(const QString &nameOrId)
         }
     }
     return false;
+}
+
+static int findWorkspaceIdxByKey(const QVariantList &workspaces, const QString &nameOrId)
+{
+    const QString key = nameOrId.trimmed();
+    if (key.isEmpty())
+        return -1;
+    for (int i = 0; i < workspaces.size(); ++i) {
+        const QVariantMap ws = workspaces.at(i).toMap();
+        if (ws.value(QStringLiteral("id")).toString() == key
+            || ws.value(QStringLiteral("name")).toString().compare(key, Qt::CaseInsensitive) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+QVariantList Backend::activeWorkspaceSavedSearches() const
+{
+    const int idx = findWorkspaceIdxByKey(m_workspaces, m_activeWorkspaceName);
+    if (idx < 0)
+        return {};
+    return m_workspaces.at(idx).toMap().value(QStringLiteral("savedSearches")).toList();
+}
+
+bool Backend::saveSearchToWorkspace(const QString &workspaceNameOrId, const QVariantMap &searchSpec)
+{
+    const int idx = findWorkspaceIdxByKey(m_workspaces, workspaceNameOrId);
+    if (idx < 0)
+        return false;
+
+    QVariantMap ws = m_workspaces.at(idx).toMap();
+    QVariantList saved = ws.value(QStringLiteral("savedSearches")).toList();
+
+    const QString nameQ = searchSpec.value(QStringLiteral("nameQuery")).toString().trimmed();
+    const QString contentQ = searchSpec.value(QStringLiteral("contentQuery")).toString().trimmed();
+    QString title = searchSpec.value(QStringLiteral("name")).toString().trimmed();
+    if (title.isEmpty()) {
+        if (!contentQ.isEmpty() && !nameQ.isEmpty())
+            title = QStringLiteral("%1 (%2)").arg(contentQ, nameQ);
+        else if (!contentQ.isEmpty())
+            title = contentQ;
+        else if (!nameQ.isEmpty())
+            title = nameQ;
+        else
+            title = tr("Saved Search");
+    }
+
+    QString rootPath = searchSpec.value(QStringLiteral("rootPath")).toString().trimmed();
+    if (rootPath.isEmpty())
+        rootPath = activeFilesystemPath();
+
+    QString searchId = searchSpec.value(QStringLiteral("id")).toString().trimmed();
+    int existingSearchIdx = -1;
+    for (int i = 0; i < saved.size(); ++i) {
+        const QVariantMap item = saved.at(i).toMap();
+        if ((!searchId.isEmpty() && item.value(QStringLiteral("id")).toString() == searchId)
+            || item.value(QStringLiteral("name")).toString().compare(title, Qt::CaseInsensitive) == 0) {
+            existingSearchIdx = i;
+            if (searchId.isEmpty())
+                searchId = item.value(QStringLiteral("id")).toString();
+            break;
+        }
+    }
+    if (searchId.isEmpty())
+        searchId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+
+    QVariantMap entry;
+    entry[QStringLiteral("id")] = searchId;
+    entry[QStringLiteral("name")] = title;
+    entry[QStringLiteral("rootPath")] = rootPath;
+    entry[QStringLiteral("nameQuery")] = nameQ;
+    entry[QStringLiteral("contentQuery")] = contentQ;
+    entry[QStringLiteral("useRegex")] = searchSpec.value(QStringLiteral("useRegex"), false).toBool();
+    entry[QStringLiteral("caseSensitive")] = searchSpec.value(QStringLiteral("caseSensitive"), false).toBool();
+    entry[QStringLiteral("includeHidden")] = searchSpec.value(QStringLiteral("includeHidden"), true).toBool();
+    entry[QStringLiteral("typeFilter")] = searchSpec.value(QStringLiteral("typeFilter"), QStringLiteral("all")).toString();
+    entry[QStringLiteral("minSizeBytes")] = searchSpec.value(QStringLiteral("minSizeBytes"), 0).toLongLong();
+    entry[QStringLiteral("modifiedWithinDays")] = searchSpec.value(QStringLiteral("modifiedWithinDays"), 0).toInt();
+    entry[QStringLiteral("maxResults")] = std::clamp(searchSpec.value(QStringLiteral("maxResults"), 2000).toInt(), 1, 20000);
+    entry[QStringLiteral("savedAt")] = QDateTime::currentDateTime().toString(Qt::ISODate);
+
+    if (existingSearchIdx >= 0)
+        saved[existingSearchIdx] = entry;
+    else
+        saved.append(entry);
+
+    ws[QStringLiteral("savedSearches")] = saved;
+    m_workspaces[idx] = ws;
+    saveWorkspaces();
+    emit workspacesChanged();
+    showStatus(tr("Saved search \"%1\" to workspace %2.").arg(title, ws.value(QStringLiteral("name")).toString()));
+    return true;
+}
+
+bool Backend::removeSearchFromWorkspace(const QString &workspaceNameOrId, const QString &searchId)
+{
+    const int idx = findWorkspaceIdxByKey(m_workspaces, workspaceNameOrId);
+    if (idx < 0 || searchId.trimmed().isEmpty())
+        return false;
+
+    QVariantMap ws = m_workspaces.at(idx).toMap();
+    QVariantList saved = ws.value(QStringLiteral("savedSearches")).toList();
+    bool removed = false;
+    for (int i = 0; i < saved.size(); ++i) {
+        if (saved.at(i).toMap().value(QStringLiteral("id")).toString() == searchId) {
+            saved.removeAt(i);
+            removed = true;
+            break;
+        }
+    }
+    if (!removed)
+        return false;
+
+    ws[QStringLiteral("savedSearches")] = saved;
+    m_workspaces[idx] = ws;
+    saveWorkspaces();
+    emit workspacesChanged();
+    return true;
+}
+
+bool Backend::runWorkspaceSavedSearch(const QString &workspaceNameOrId,
+                                      const QString &searchId,
+                                      bool feedToPanel,
+                                      bool newTab)
+{
+    const int idx = findWorkspaceIdxByKey(m_workspaces, workspaceNameOrId);
+    if (idx < 0)
+        return false;
+
+    const QVariantList saved = m_workspaces.at(idx).toMap().value(QStringLiteral("savedSearches")).toList();
+    QVariantMap foundSpec;
+    for (const QVariant &v : saved) {
+        const QVariantMap item = v.toMap();
+        if (item.value(QStringLiteral("id")).toString() == searchId
+            || item.value(QStringLiteral("name")).toString().compare(searchId, Qt::CaseInsensitive) == 0) {
+            foundSpec = item;
+            break;
+        }
+    }
+    if (foundSpec.isEmpty())
+        return false;
+
+    QString rootPath = foundSpec.value(QStringLiteral("rootPath")).toString().trimmed();
+    if (rootPath.isEmpty() || !QFileInfo(rootPath).isDir())
+        rootPath = activeFilesystemPath();
+    if (!QFileInfo(rootPath).isDir()) {
+        showStatus(tr("Search folder does not exist: %1").arg(rootPath));
+        return false;
+    }
+
+    const QString title = foundSpec.value(QStringLiteral("name")).toString().trimmed().isEmpty()
+        ? tr("Saved Search")
+        : foundSpec.value(QStringLiteral("name")).toString().trimmed();
+    startAdvancedSearchInternal(rootPath, foundSpec, feedToPanel, newTab, title);
+    return true;
 }
 
 int Backend::trashCount() const
@@ -9301,9 +9589,10 @@ void Backend::clearCommandHistory()
 
 void Backend::clearCommandOutput()
 {
-    if (m_commandOutput.isEmpty())
+    if (m_commandOutput.isEmpty() && m_commandLog.count() == 0)
         return;
     m_commandOutput.clear();
+    m_commandLog.clear();
     emit commandOutputChanged();
 }
 
@@ -9414,12 +9703,16 @@ void Backend::runCommandAsync(const QString &command)
     if (!m_commandOutput.isEmpty() && !m_commandOutput.endsWith(QLatin1Char('\n')))
         appendOutput(QStringLiteral("\n"));
     appendOutput(QStringLiteral("%1 ❯ %2\n").arg(workDir, trimmed));
+    const int entryId = m_commandLog.beginEntry(workDir, trimmed);
 
     QString cdMsg;
     int cdCode = 0;
     if (tryHandleBuiltinCd(trimmed, &cdMsg, &cdCode)) {
         if (cdCode != 0)
             appendOutput(cdMsg + QLatin1Char('\n'));
+        if (!cdMsg.isEmpty())
+            m_commandLog.appendOutput(entryId, cdMsg + QLatin1Char('\n'));
+        m_commandLog.finishEntry(entryId, cdCode, false);
         m_commandLastExitCode = cdCode;
         emit commandStateChanged();
         showStatus(cdMsg);
@@ -9429,6 +9722,7 @@ void Backend::runCommandAsync(const QString &command)
 
     auto *proc = new QProcess(this);
     m_cmdProc = proc;
+    m_activeCommandEntryId = entryId;
     m_commandRunning = true;
     m_commandRunningText = trimmed;
     emit commandStateChanged();
@@ -9437,18 +9731,24 @@ void Backend::runCommandAsync(const QString &command)
     proc->setWorkingDirectory(workDir);
     proc->setProcessChannelMode(QProcess::MergedChannels);
 
-    connect(proc, &QProcess::readyReadStandardOutput, this, [this, proc, appendOutput]() {
+    connect(proc, &QProcess::readyReadStandardOutput, this, [this, proc, entryId, appendOutput]() {
         if (m_cmdProc != proc)
             return;
-        appendOutput(QString::fromUtf8(proc->readAllStandardOutput()));
+        const QString chunk = QString::fromUtf8(proc->readAllStandardOutput());
+        appendOutput(chunk);
+        m_commandLog.appendOutput(entryId, chunk);
     });
 
-    connect(proc, &QProcess::errorOccurred, this, [this, proc, appendOutput](QProcess::ProcessError err) {
+    connect(proc, &QProcess::errorOccurred, this, [this, proc, entryId, appendOutput](QProcess::ProcessError err) {
         if (m_cmdProc != proc)
             return;
         if (err == QProcess::FailedToStart) {
-            appendOutput(tr("Failed to start shell command.\n"));
+            const QString msg = tr("Failed to start shell command.\n");
+            appendOutput(msg);
+            m_commandLog.appendOutput(entryId, msg);
+            m_commandLog.finishEntry(entryId, 127, false);
             m_cmdProc = nullptr;
+            m_activeCommandEntryId = -1;
             m_commandRunning = false;
             m_commandRunningText.clear();
             m_commandLastExitCode = 127;
@@ -9460,19 +9760,23 @@ void Backend::runCommandAsync(const QString &command)
     });
 
     connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this,
-            [this, proc, trimmed, appendOutput](int exitCode, QProcess::ExitStatus status) {
+            [this, proc, entryId, trimmed, appendOutput](int exitCode, QProcess::ExitStatus status) {
                 if (m_cmdProc != proc) {
                     proc->deleteLater();
                     return;
                 }
                 const QString tail = QString::fromUtf8(proc->readAllStandardOutput());
-                if (!tail.isEmpty())
+                if (!tail.isEmpty()) {
                     appendOutput(tail);
+                    m_commandLog.appendOutput(entryId, tail);
+                }
 
                 m_cmdProc = nullptr;
+                m_activeCommandEntryId = -1;
                 m_commandRunning = false;
                 m_commandRunningText.clear();
                 m_commandLastExitCode = (status == QProcess::NormalExit) ? exitCode : -1;
+                m_commandLog.finishEntry(entryId, m_commandLastExitCode, false);
                 emit commandStateChanged();
 
                 m_leftPanel.refresh();
@@ -9496,7 +9800,9 @@ void Backend::cancelCommand()
     if (!m_cmdProc)
         return;
     QProcess *proc = m_cmdProc;
+    const int entryId = m_activeCommandEntryId;
     m_cmdProc = nullptr;
+    m_activeCommandEntryId = -1;
     m_commandRunning = false;
     m_commandRunningText.clear();
     m_commandLastExitCode = 130;
@@ -9511,7 +9817,12 @@ void Backend::cancelCommand()
     }
     proc->deleteLater();
 
-    m_commandOutput.append(tr("[Cancelled]\n"));
+    const QString cancelledTag = tr("[Cancelled]\n");
+    m_commandOutput.append(cancelledTag);
+    if (entryId > 0) {
+        m_commandLog.appendOutput(entryId, cancelledTag);
+        m_commandLog.finishEntry(entryId, 130, true);
+    }
     emit commandOutputChanged();
     emit commandStateChanged();
     showStatus(tr("Command cancelled."));

@@ -7,6 +7,7 @@ TEMPLATE = app
 HEADERS += \
     src/backend.h \
     src/cli.h \
+    src/commandlogmodel.h \
     src/fileoperation.h \
     src/panelmodel.h \
     src/singleinstance.h \
@@ -18,6 +19,7 @@ SOURCES += \
     src/main.cpp \
     src/backend.cpp \
     src/cli.cpp \
+    src/commandlogmodel.cpp \
     src/fileoperation.cpp \
     src/panelmodel.cpp \
     src/singleinstance.cpp \
