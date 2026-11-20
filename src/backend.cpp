@@ -1948,6 +1948,7 @@ Backend::~Backend()
     cancelDuplicateScan();
     cancelSyncOperation();
     cancelChecksumCalculation();
+    cancelBatchChecksum();
     cancelPreview();
     cancelArchiveOperation();
     cancelRemoteOperation();
@@ -2092,6 +2093,34 @@ void Backend::openItem(const QString &path)
     }
 }
 
+QString Backend::resolvedTerminal(bool fallbackXterm, QStringList *prefixArgs) const
+{
+    if (prefixArgs)
+        prefixArgs->clear();
+
+    auto tryResolveCmd = [prefixArgs](const QString &raw) -> QString {
+        const QString trimmed = raw.trimmed();
+        if (trimmed.isEmpty())
+            return {};
+        const QStringList parts = QProcess::splitCommand(trimmed);
+        if (parts.isEmpty())
+            return {};
+        const QString candidate = parts.first();
+        QString exe = QStandardPaths::findExecutable(candidate);
+        if (exe.isEmpty() && QFileInfo::exists(candidate))
+            exe = candidate;
+        if (!exe.isEmpty() && prefixArgs)
+            *prefixArgs = parts.mid(1);
+        return exe;
+    };
+
+    if (const QString custom = tryResolveCmd(m_customTerminal); !custom.isEmpty())
+        return custom;
+    if (const QString envTerm = tryResolveCmd(qEnvironmentVariable("TERMINAL")); !envTerm.isEmpty())
+        return envTerm;
+    return findTerminalExecutable(fallbackXterm);
+}
+
 void Backend::openWithEditor(const QString &path)
 {
     QString targetPath = path;
@@ -2106,12 +2135,42 @@ void Backend::openWithEditor(const QString &path)
     if (!info.exists())
         return;
 
-    QString editor = qEnvironmentVariable("EDITOR");
-    if (!editor.isEmpty()) {
-        const QString terminal = findTerminalExecutable(false);
-        if (!terminal.isEmpty()) {
-            QProcess::startDetached(terminal, {"-e", editor, targetPath});
-            return;
+    static const QSet<QString> terminalEditors = {
+        QStringLiteral("vi"), QStringLiteral("vim"), QStringLiteral("nvim"),
+        QStringLiteral("neovim"), QStringLiteral("nano"), QStringLiteral("micro"),
+        QStringLiteral("hx"), QStringLiteral("helix"), QStringLiteral("pico"),
+        QStringLiteral("joe"), QStringLiteral("mcedit"), QStringLiteral("kak"),
+        QStringLiteral("ed")
+    };
+
+    const QString custom = m_customEditor.trimmed();
+    const QString rawEditor = !custom.isEmpty() ? custom : qEnvironmentVariable("EDITOR").trimmed();
+    if (!rawEditor.isEmpty()) {
+        const QStringList parts = QProcess::splitCommand(rawEditor);
+        if (!parts.isEmpty()) {
+            const QString prog = parts.first();
+            const QStringList extraArgs = parts.mid(1);
+            const QString baseName = QFileInfo(prog).baseName().toLower();
+            const bool isTerminalEditor = custom.isEmpty()
+                || terminalEditors.contains(baseName)
+                || extraArgs.contains(QStringLiteral("-nw"));
+            if (isTerminalEditor) {
+                QStringList termArgs;
+                const QString terminal = resolvedTerminal(false, &termArgs);
+                if (!terminal.isEmpty()) {
+                    termArgs.append(QStringLiteral("-e"));
+                    termArgs.append(prog);
+                    termArgs.append(extraArgs);
+                    termArgs.append(targetPath);
+                    QProcess::startDetached(terminal, termArgs);
+                    return;
+                }
+            } else {
+                QStringList args = extraArgs;
+                args.append(targetPath);
+                if (QProcess::startDetached(prog, args))
+                    return;
+            }
         }
     }
 
@@ -2129,8 +2188,9 @@ void Backend::openInTerminal(const QString &path)
         dirPath = info.isDir() ? info.absoluteFilePath() : info.absolutePath();
     }
 
-    const QString terminal = findTerminalExecutable(true);
-    QProcess::startDetached(terminal, {}, dirPath);
+    QStringList termArgs;
+    const QString terminal = resolvedTerminal(true, &termArgs);
+    QProcess::startDetached(terminal, termArgs, dirPath);
 }
 
 bool Backend::startFileOperation(FileOperation::Mode mode, const QStringList &sourcePaths, const QString &targetDir)
@@ -3227,6 +3287,351 @@ QVariantMap computeChecksumsImpl(const QString &filePath,
     return res;
 }
 
+QString hashForAlgorithm(const QVariantMap &sums, const QString &algo, int expectedLen = 0)
+{
+    if (expectedLen == 32 || algo == QLatin1String("md5"))
+        return sums.value(QStringLiteral("md5")).toString();
+    if (expectedLen == 40 || algo == QLatin1String("sha1"))
+        return sums.value(QStringLiteral("sha1")).toString();
+    return sums.value(QStringLiteral("sha256")).toString();
+}
+
+QVariantMap verifyChecksumFileImpl(
+    const QString &checksumFilePath,
+    const std::atomic<bool> *cancelFlag = nullptr,
+    const std::function<void(double, const QString &)> &onProgress = {})
+{
+    QVariantMap result;
+    result[QStringLiteral("mode")] = QStringLiteral("verify");
+    result[QStringLiteral("cancelled")] = false;
+
+    const QFileInfo sumFi(checksumFilePath);
+    if (!sumFi.exists() || sumFi.isDir()) {
+        result[QStringLiteral("success")] = false;
+        result[QStringLiteral("message")] = Backend::tr("Checksum file not found.");
+        return result;
+    }
+    result[QStringLiteral("checksumFile")] = sumFi.absoluteFilePath();
+
+    QFile f(checksumFilePath);
+    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        result[QStringLiteral("success")] = false;
+        result[QStringLiteral("message")] = Backend::tr("Could not read checksum file.");
+        return result;
+    }
+
+    struct ManifestEntry {
+        QString hash;
+        QString relName;
+        QString targetPath;
+        qint64 weight = 1;
+    };
+
+    const QDir dir = sumFi.dir();
+    QList<ManifestEntry> entries;
+    qint64 totalWeight = 0;
+
+    static const QRegularExpression rx(QStringLiteral(R"(^([a-fA-F0-9]{32,64})\s+[*]?(.+)$)"));
+    while (!f.atEnd()) {
+        const QString line = QString::fromUtf8(f.readLine()).trimmed();
+        if (line.isEmpty() || line.startsWith(QLatin1Char('#')))
+            continue;
+        const QRegularExpressionMatch match = rx.match(line);
+        if (match.hasMatch()) {
+            ManifestEntry entry;
+            entry.hash = match.captured(1).toLower();
+            entry.relName = match.captured(2).trimmed();
+            entry.targetPath = dir.filePath(entry.relName);
+            const QFileInfo targetFi(entry.targetPath);
+            entry.weight = (targetFi.exists() && !targetFi.isDir()) ? std::max<qint64>(targetFi.size(), 1) : 1;
+            totalWeight += entry.weight;
+            entries.append(entry);
+        }
+    }
+
+    if (totalWeight <= 0)
+        totalWeight = 1;
+
+    int total = entries.size();
+    int matched = 0;
+    int failed = 0;
+    int missing = 0;
+    qint64 completedWeight = 0;
+    QVariantList details;
+
+    for (const ManifestEntry &entry : entries) {
+        if (isTaskCancelled(cancelFlag)) {
+            result[QStringLiteral("success")] = false;
+            result[QStringLiteral("cancelled")] = true;
+            result[QStringLiteral("total")] = total;
+            result[QStringLiteral("matched")] = matched;
+            result[QStringLiteral("failed")] = failed;
+            result[QStringLiteral("missing")] = missing;
+            result[QStringLiteral("details")] = details;
+            result[QStringLiteral("message")] = Backend::tr("Checksum verification cancelled.");
+            return result;
+        }
+
+        if (onProgress) {
+            const double overall = std::clamp(static_cast<double>(completedWeight) / static_cast<double>(totalWeight), 0.0, 1.0);
+            onProgress(overall, entry.relName);
+        }
+
+        QVariantMap item;
+        item[QStringLiteral("file")] = entry.relName;
+        item[QStringLiteral("expected")] = entry.hash;
+
+        const QFileInfo targetFi(entry.targetPath);
+        if (!targetFi.exists() || targetFi.isDir()) {
+            ++missing;
+            item[QStringLiteral("status")] = QStringLiteral("missing");
+        } else {
+            const QVariantMap sums = computeChecksumsImpl(entry.targetPath, cancelFlag, [&](double fileProg) {
+                if (onProgress) {
+                    const double cur = (static_cast<double>(completedWeight) + fileProg * static_cast<double>(entry.weight))
+                                       / static_cast<double>(totalWeight);
+                    onProgress(std::clamp(cur, 0.0, 1.0), entry.relName);
+                }
+            });
+
+            if (isTaskCancelled(cancelFlag)) {
+                result[QStringLiteral("success")] = false;
+                result[QStringLiteral("cancelled")] = true;
+                result[QStringLiteral("total")] = total;
+                result[QStringLiteral("matched")] = matched;
+                result[QStringLiteral("failed")] = failed;
+                result[QStringLiteral("missing")] = missing;
+                result[QStringLiteral("details")] = details;
+                result[QStringLiteral("message")] = Backend::tr("Checksum verification cancelled.");
+                return result;
+            }
+
+            if (sums.isEmpty()) {
+                ++failed;
+                item[QStringLiteral("status")] = QStringLiteral("mismatch");
+            } else {
+                const int hexLen = entry.hash.length();
+                const QString actual = (hexLen == 32 || hexLen == 40 || hexLen == 64)
+                    ? hashForAlgorithm(sums, {}, hexLen)
+                    : sums.value(QStringLiteral("sha256")).toString();
+                item[QStringLiteral("actual")] = actual;
+                const bool ok = (hexLen == 32 || hexLen == 40 || hexLen == 64)
+                    ? (actual == entry.hash)
+                    : (sums.value(QStringLiteral("md5")).toString() == entry.hash
+                       || sums.value(QStringLiteral("sha1")).toString() == entry.hash
+                       || sums.value(QStringLiteral("sha256")).toString() == entry.hash);
+                if (ok) {
+                    ++matched;
+                    item[QStringLiteral("status")] = QStringLiteral("ok");
+                } else {
+                    ++failed;
+                    item[QStringLiteral("status")] = QStringLiteral("mismatch");
+                }
+            }
+        }
+        completedWeight += entry.weight;
+        details.append(item);
+    }
+
+    result[QStringLiteral("success")] = (total > 0 && failed == 0 && missing == 0);
+    result[QStringLiteral("total")] = total;
+    result[QStringLiteral("matched")] = matched;
+    result[QStringLiteral("failed")] = failed;
+    result[QStringLiteral("missing")] = missing;
+    result[QStringLiteral("details")] = details;
+    result[QStringLiteral("message")] = Backend::tr("Checksum verification: %1/%2 matched (%3 failed, %4 missing).")
+                                            .arg(matched).arg(total).arg(failed).arg(missing);
+    return result;
+}
+
+QVariantMap generateBatchChecksumFileImpl(
+    const QStringList &filePaths,
+    const QString &algorithm,
+    const QString &outputFilePath,
+    const std::atomic<bool> *cancelFlag = nullptr,
+    const std::function<void(double, const QString &)> &onProgress = {})
+{
+    QString algo = algorithm.trimmed().toLower();
+    if (algo != QLatin1String("md5") && algo != QLatin1String("sha1"))
+        algo = QStringLiteral("sha256");
+
+    QVariantMap result;
+    result[QStringLiteral("mode")] = QStringLiteral("generate");
+    result[QStringLiteral("cancelled")] = false;
+    result[QStringLiteral("algorithm")] = algo;
+
+    QString outPath = outputFilePath.trimmed();
+    if (outPath.isEmpty()) {
+        for (const QString &raw : filePaths) {
+            const QFileInfo fi(raw);
+            if (fi.exists() && !fi.isDir()) {
+                outPath = fi.dir().filePath(QStringLiteral("checksums.") + algo);
+                break;
+            }
+        }
+    }
+
+    if (outPath.isEmpty()) {
+        result[QStringLiteral("success")] = false;
+        result[QStringLiteral("total")] = filePaths.size();
+        result[QStringLiteral("processed")] = 0;
+        result[QStringLiteral("skipped")] = filePaths.size();
+        result[QStringLiteral("details")] = QVariantList();
+        result[QStringLiteral("message")] = Backend::tr("No valid files selected for checksum generation.");
+        return result;
+    }
+
+    const QFileInfo outFi(outPath);
+    const QString absOutPath = outFi.absoluteFilePath();
+    const QDir outDir = outFi.dir();
+    result[QStringLiteral("outputFile")] = absOutPath;
+
+    struct InputFile {
+        QFileInfo fi;
+        QString relName;
+        qint64 weight = 1;
+    };
+
+    QList<InputFile> inputs;
+    QVariantList details;
+    QSet<QString> seenPaths;
+    int skipped = 0;
+    qint64 totalWeight = 0;
+
+    for (const QString &raw : filePaths) {
+        const QFileInfo fi(raw);
+        const QString absPath = fi.absoluteFilePath();
+        if (absPath == absOutPath || seenPaths.contains(absPath))
+            continue;
+        seenPaths.insert(absPath);
+
+        if (!fi.exists() || fi.isDir()) {
+            ++skipped;
+            QVariantMap item;
+            item[QStringLiteral("file")] = fi.fileName().isEmpty() ? raw : fi.fileName();
+            item[QStringLiteral("algorithm")] = algo;
+            item[QStringLiteral("status")] = QStringLiteral("skipped");
+            details.append(item);
+            continue;
+        }
+
+        InputFile in;
+        in.fi = fi;
+        in.relName = outDir.relativeFilePath(absPath);
+        in.weight = std::max<qint64>(fi.size(), 1);
+        totalWeight += in.weight;
+        inputs.append(in);
+    }
+
+    if (totalWeight <= 0)
+        totalWeight = 1;
+
+    if (inputs.isEmpty()) {
+        result[QStringLiteral("success")] = false;
+        result[QStringLiteral("total")] = skipped;
+        result[QStringLiteral("processed")] = 0;
+        result[QStringLiteral("skipped")] = skipped;
+        result[QStringLiteral("details")] = details;
+        result[QStringLiteral("message")] = Backend::tr("No valid files selected for checksum generation.");
+        return result;
+    }
+
+    QStringList manifestLines;
+    int processed = 0;
+    qint64 completedWeight = 0;
+
+    for (const InputFile &in : inputs) {
+        if (isTaskCancelled(cancelFlag)) {
+            result[QStringLiteral("success")] = false;
+            result[QStringLiteral("cancelled")] = true;
+            result[QStringLiteral("total")] = inputs.size() + skipped;
+            result[QStringLiteral("processed")] = processed;
+            result[QStringLiteral("skipped")] = skipped;
+            result[QStringLiteral("details")] = details;
+            result[QStringLiteral("message")] = Backend::tr("Batch checksum generation cancelled.");
+            return result;
+        }
+
+        if (onProgress) {
+            const double overall = std::clamp(static_cast<double>(completedWeight) / static_cast<double>(totalWeight), 0.0, 1.0);
+            onProgress(overall, in.relName);
+        }
+
+        const QString absPath = in.fi.absoluteFilePath();
+        const QVariantMap sums = computeChecksumsImpl(absPath, cancelFlag, [&](double fileProg) {
+            if (onProgress) {
+                const double cur = (static_cast<double>(completedWeight) + fileProg * static_cast<double>(in.weight))
+                                   / static_cast<double>(totalWeight);
+                onProgress(std::clamp(cur, 0.0, 1.0), in.relName);
+            }
+        });
+
+        if (isTaskCancelled(cancelFlag)) {
+            result[QStringLiteral("success")] = false;
+            result[QStringLiteral("cancelled")] = true;
+            result[QStringLiteral("total")] = inputs.size() + skipped;
+            result[QStringLiteral("processed")] = processed;
+            result[QStringLiteral("skipped")] = skipped;
+            result[QStringLiteral("details")] = details;
+            result[QStringLiteral("message")] = Backend::tr("Batch checksum generation cancelled.");
+            return result;
+        }
+
+        QVariantMap item;
+        item[QStringLiteral("file")] = in.relName;
+        item[QStringLiteral("algorithm")] = algo;
+        item[QStringLiteral("size")] = in.fi.size();
+        item[QStringLiteral("formattedSize")] = PanelModel::formatSize(in.fi.size(), false);
+
+        if (sums.isEmpty()) {
+            ++skipped;
+            item[QStringLiteral("status")] = QStringLiteral("error");
+        } else {
+            const QString hash = hashForAlgorithm(sums, algo);
+            item[QStringLiteral("hash")] = hash;
+            item[QStringLiteral("status")] = QStringLiteral("ok");
+            manifestLines.append(QStringLiteral("%1  %2\n").arg(hash, in.relName));
+            ++processed;
+        }
+        details.append(item);
+        completedWeight += in.weight;
+    }
+
+    if (isTaskCancelled(cancelFlag)) {
+        result[QStringLiteral("success")] = false;
+        result[QStringLiteral("cancelled")] = true;
+        result[QStringLiteral("total")] = inputs.size() + skipped;
+        result[QStringLiteral("processed")] = processed;
+        result[QStringLiteral("skipped")] = skipped;
+        result[QStringLiteral("details")] = details;
+        result[QStringLiteral("message")] = Backend::tr("Batch checksum generation cancelled.");
+        return result;
+    }
+
+    bool wroteFile = false;
+    if (!manifestLines.isEmpty()) {
+        QDir().mkpath(outDir.absolutePath());
+        QFile outFile(absOutPath);
+        if (outFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            outFile.write(manifestLines.join(QString()).toUtf8());
+            outFile.close();
+            wroteFile = true;
+        }
+    }
+
+    const bool ok = wroteFile && processed > 0;
+    result[QStringLiteral("success")] = ok;
+    result[QStringLiteral("total")] = inputs.size() + skipped;
+    result[QStringLiteral("processed")] = processed;
+    result[QStringLiteral("skipped")] = skipped;
+    result[QStringLiteral("details")] = details;
+    result[QStringLiteral("message")] = ok
+        ? Backend::tr("Generated %1 checksums for %2 file(s): %3")
+              .arg(algo.toUpper()).arg(processed).arg(outFi.fileName())
+        : Backend::tr("Could not write checksum file: %1").arg(outFi.fileName());
+    return result;
+}
+
 } // namespace
 
 QVariantMap Backend::calculateChecksums(const QString &filePath) const
@@ -3356,62 +3761,161 @@ bool Backend::saveChecksumFile(const QString &filePath, const QString &algorithm
 
 QVariantMap Backend::verifyChecksumFile(const QString &checksumFilePath) const
 {
-    QVariantMap result;
-    QFileInfo sumFi(checksumFilePath);
-    if (!sumFi.exists()) {
-        result["success"] = false;
-        result["message"] = tr("Checksum file not found.");
-        return result;
-    }
-    QFile f(checksumFilePath);
-    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        result["success"] = false;
-        result["message"] = tr("Could not read checksum file.");
-        return result;
-    }
-    QDir dir = sumFi.dir();
-    int total = 0;
-    int matched = 0;
-    int failed = 0;
-    int missing = 0;
-    QVariantList details;
+    return verifyChecksumFileImpl(checksumFilePath);
+}
 
-    while (!f.atEnd()) {
-        const QString line = QString::fromUtf8(f.readLine()).trimmed();
-        if (line.isEmpty() || line.startsWith('#'))
-            continue;
-        static const QRegularExpression rx(R"(^([a-fA-F0-9]{32,64})\s+[*]?(.+)$)");
-        auto match = rx.match(line);
-        if (match.hasMatch()) {
-            const QString hash = match.captured(1).toLower();
-            const QString relName = match.captured(2).trimmed();
-            const QString targetPath = dir.filePath(relName);
-            ++total;
-            QVariantMap item;
-            item["file"] = relName;
-            item["expected"] = hash;
-            if (!QFile::exists(targetPath)) {
-                ++missing;
-                item["status"] = "missing";
-            } else if (verifyChecksum(targetPath, hash)) {
-                ++matched;
-                item["status"] = "ok";
-            } else {
-                ++failed;
-                item["status"] = "mismatch";
-            }
-            details.append(item);
-        }
+QVariantMap Backend::generateBatchChecksumFile(const QStringList &filePaths,
+                                               const QString &algorithm,
+                                               const QString &outputFilePath) const
+{
+    const QVariantMap res = generateBatchChecksumFileImpl(filePaths, algorithm, outputFilePath);
+    if (res.value(QStringLiteral("success")).toBool()) {
+        const_cast<Backend*>(this)->m_leftPanel.refresh();
+        const_cast<Backend*>(this)->m_rightPanel.refresh();
+        const_cast<Backend*>(this)->showStatus(res.value(QStringLiteral("message")).toString());
     }
-    result["success"] = (total > 0 && failed == 0 && missing == 0);
-    result["total"] = total;
-    result["matched"] = matched;
-    result["failed"] = failed;
-    result["missing"] = missing;
-    result["details"] = details;
-    result["message"] = tr("Checksum verification: %1/%2 matched (%3 failed, %4 missing).")
-                            .arg(matched).arg(total).arg(failed).arg(missing);
-    return result;
+    return res;
+}
+
+void Backend::cancelBatchChecksum()
+{
+    m_batchChecksumGeneration.fetch_add(1, std::memory_order_relaxed);
+    if (m_batchChecksumCancel) {
+        m_batchChecksumCancel->store(true, std::memory_order_relaxed);
+        m_batchChecksumCancel.reset();
+    }
+    if (m_batchChecksumRunning) {
+        m_batchChecksumRunning = false;
+        emit batchChecksumStateChanged();
+    }
+}
+
+void Backend::startBatchChecksumGenerate(const QStringList &filePaths,
+                                         const QString &algorithm,
+                                         const QString &outputFilePath)
+{
+    cancelBatchChecksum();
+    m_batchChecksumResult.clear();
+    m_batchChecksumProgress = 0.0;
+    m_batchChecksumDetail.clear();
+    emit batchChecksumResultChanged();
+    emit batchChecksumProgressChanged();
+
+    const quint64 gen = m_batchChecksumGeneration.fetch_add(1, std::memory_order_relaxed) + 1;
+    auto cancelFlag = std::make_shared<std::atomic<bool>>(false);
+    m_batchChecksumCancel = cancelFlag;
+    m_batchChecksumRunning = true;
+    emit batchChecksumStateChanged();
+
+    QPointer<Backend> self(this);
+    auto *task = QRunnable::create([self, gen, filePaths, algorithm, outputFilePath, cancelFlag]() {
+        const QVariantMap res = generateBatchChecksumFileImpl(
+            filePaths,
+            algorithm,
+            outputFilePath,
+            cancelFlag.get(),
+            [self, gen](double progress, const QString &currentFile) {
+                QMetaObject::invokeMethod(
+                    self,
+                    [self, gen, progress, currentFile]() {
+                        if (!self || self->m_batchChecksumGeneration.load(std::memory_order_relaxed) != gen)
+                            return;
+                        self->m_batchChecksumProgress = progress;
+                        self->m_batchChecksumDetail = currentFile;
+                        emit self->batchChecksumProgressChanged();
+                    },
+                    Qt::QueuedConnection);
+            });
+
+        if (cancelFlag->load(std::memory_order_relaxed) || res.value(QStringLiteral("cancelled")).toBool())
+            return;
+
+        QMetaObject::invokeMethod(
+            self,
+            [self, gen, res]() {
+                if (!self || self->m_batchChecksumGeneration.load(std::memory_order_relaxed) != gen)
+                    return;
+                self->m_batchChecksumRunning = false;
+                self->m_batchChecksumProgress = 1.0;
+                self->m_batchChecksumDetail.clear();
+                self->m_batchChecksumCancel.reset();
+                self->m_batchChecksumResult = res;
+                if (res.value(QStringLiteral("success")).toBool()) {
+                    self->m_leftPanel.refresh();
+                    self->m_rightPanel.refresh();
+                }
+                const QString msg = res.value(QStringLiteral("message")).toString();
+                if (!msg.isEmpty())
+                    self->showStatus(msg);
+                emit self->batchChecksumProgressChanged();
+                emit self->batchChecksumResultChanged();
+                emit self->batchChecksumStateChanged();
+                emit self->batchChecksumFinished(res);
+            },
+            Qt::QueuedConnection);
+    });
+    task->setAutoDelete(true);
+    QThreadPool::globalInstance()->start(task);
+}
+
+void Backend::startBatchChecksumVerify(const QString &checksumFilePath)
+{
+    cancelBatchChecksum();
+    m_batchChecksumResult.clear();
+    m_batchChecksumProgress = 0.0;
+    m_batchChecksumDetail.clear();
+    emit batchChecksumResultChanged();
+    emit batchChecksumProgressChanged();
+
+    const quint64 gen = m_batchChecksumGeneration.fetch_add(1, std::memory_order_relaxed) + 1;
+    auto cancelFlag = std::make_shared<std::atomic<bool>>(false);
+    m_batchChecksumCancel = cancelFlag;
+    m_batchChecksumRunning = true;
+    emit batchChecksumStateChanged();
+
+    QPointer<Backend> self(this);
+    auto *task = QRunnable::create([self, gen, checksumFilePath, cancelFlag]() {
+        const QVariantMap res = verifyChecksumFileImpl(
+            checksumFilePath,
+            cancelFlag.get(),
+            [self, gen](double progress, const QString &currentFile) {
+                QMetaObject::invokeMethod(
+                    self,
+                    [self, gen, progress, currentFile]() {
+                        if (!self || self->m_batchChecksumGeneration.load(std::memory_order_relaxed) != gen)
+                            return;
+                        self->m_batchChecksumProgress = progress;
+                        self->m_batchChecksumDetail = currentFile;
+                        emit self->batchChecksumProgressChanged();
+                    },
+                    Qt::QueuedConnection);
+            });
+
+        if (cancelFlag->load(std::memory_order_relaxed) || res.value(QStringLiteral("cancelled")).toBool())
+            return;
+
+        QMetaObject::invokeMethod(
+            self,
+            [self, gen, res]() {
+                if (!self || self->m_batchChecksumGeneration.load(std::memory_order_relaxed) != gen)
+                    return;
+                self->m_batchChecksumRunning = false;
+                self->m_batchChecksumProgress = 1.0;
+                self->m_batchChecksumDetail.clear();
+                self->m_batchChecksumCancel.reset();
+                self->m_batchChecksumResult = res;
+                const QString msg = res.value(QStringLiteral("message")).toString();
+                if (!msg.isEmpty())
+                    self->showStatus(msg);
+                emit self->batchChecksumProgressChanged();
+                emit self->batchChecksumResultChanged();
+                emit self->batchChecksumStateChanged();
+                emit self->batchChecksumFinished(res);
+            },
+            Qt::QueuedConnection);
+    });
+    task->setAutoDelete(true);
+    QThreadPool::globalInstance()->start(task);
 }
 
 QVariantMap Backend::compareFiles(const QString &path1, const QString &path2) const
@@ -3845,12 +4349,31 @@ void Backend::loadSession()
         }
     }
 
+    auto normalizeLangMode = [](const QString &raw) -> QString {
+        const QString t = raw.trimmed().toLower();
+        if (t == QLatin1String("en") || t == QLatin1String("ro"))
+            return t;
+        return QStringLiteral("auto");
+    };
+    m_fontSize = std::clamp(settings.value("settings/fontSize", 12).toInt(), 10, 16);
+    m_rowHeight = std::clamp(settings.value("settings/rowHeight", 27).toInt(), 22, 38);
+    m_customEditor = settings.value("settings/customEditor", QString()).toString();
+    m_customTerminal = settings.value("settings/customTerminal", QString()).toString();
+    m_confirmCopy = settings.value("settings/confirmCopy", true).toBool();
+    m_confirmMove = settings.value("settings/confirmMove", true).toBool();
+    m_confirmDelete = settings.value("settings/confirmDelete", true).toBool();
+    m_showExtColumn = settings.value("settings/showExtColumn", true).toBool();
+    m_showSizeColumn = settings.value("settings/showSizeColumn", true).toBool();
+    m_showModifiedColumn = settings.value("settings/showModifiedColumn", true).toBool();
+    m_languageMode = normalizeLangMode(settings.value("settings/languageMode", QStringLiteral("auto")).toString());
+
     m_loadingSession = false;
     emit recentDirectoriesChanged();
     emit commandHistoryChanged();
     emit multiRenamePresetsChanged();
     emit remoteConnectionsChanged();
     emit customActionsChanged();
+    emit settingsChanged();
 }
 
 void Backend::saveSession() const
@@ -3865,6 +4388,17 @@ void Backend::saveSession() const
     settings.setValue("window/height", m_windowHeight);
     settings.setValue("window/activePanel", m_activePanel);
     settings.setValue("window/themeMode", m_themeMode);
+    settings.setValue("settings/fontSize", m_fontSize);
+    settings.setValue("settings/rowHeight", m_rowHeight);
+    settings.setValue("settings/customEditor", m_customEditor);
+    settings.setValue("settings/customTerminal", m_customTerminal);
+    settings.setValue("settings/confirmCopy", m_confirmCopy);
+    settings.setValue("settings/confirmMove", m_confirmMove);
+    settings.setValue("settings/confirmDelete", m_confirmDelete);
+    settings.setValue("settings/showExtColumn", m_showExtColumn);
+    settings.setValue("settings/showSizeColumn", m_showSizeColumn);
+    settings.setValue("settings/showModifiedColumn", m_showModifiedColumn);
+    settings.setValue("settings/languageMode", m_languageMode);
     settings.setValue("history/recentDirs", m_recentDirs);
     settings.setValue("history/commandHistory", m_commandHistory);
 
@@ -8050,8 +8584,10 @@ bool Backend::openWithApplication(const QStringList &paths, const QString &deskt
     const QString program = finalArgs.takeFirst();
     bool started = false;
     if (inTerminal) {
-        const QString terminal = findTerminalExecutable(true);
-        QStringList termArgs = {QStringLiteral("-e"), program};
+        QStringList termArgs;
+        const QString terminal = resolvedTerminal(true, &termArgs);
+        termArgs.append(QStringLiteral("-e"));
+        termArgs.append(program);
         termArgs.append(finalArgs);
         started = QProcess::startDetached(terminal, termArgs, activeModel()->path());
     } else {
@@ -8268,8 +8804,10 @@ QVariantMap Backend::executeCustomAction(const QString &idOrName, const QStringL
         workDir = QDir::homePath();
 
     if (inTerm) {
-        const QString terminal = findTerminalExecutable(true);
-        const bool started = QProcess::startDetached(terminal, {QStringLiteral("-e"), QStringLiteral("/bin/sh"), QStringLiteral("-c"), expanded}, workDir);
+        QStringList termArgs;
+        const QString terminal = resolvedTerminal(true, &termArgs);
+        termArgs.append({QStringLiteral("-e"), QStringLiteral("/bin/sh"), QStringLiteral("-c"), expanded});
+        const bool started = QProcess::startDetached(terminal, termArgs, workDir);
         res[QStringLiteral("ok")] = started;
         res[QStringLiteral("exitCode")] = started ? 0 : -1;
         res[QStringLiteral("showOutput")] = false;
@@ -9455,4 +9993,177 @@ void Backend::cancelSplitOperation()
         m_splitOpDetail = tr("Operation cancelled.");
         emit splitOpChanged();
     }
+}
+
+namespace {
+
+QString normalizeSettingsLanguageMode(const QString &raw)
+{
+    const QString t = raw.trimmed().toLower();
+    if (t == QLatin1String("en") || t == QLatin1String("ro"))
+        return t;
+    return QStringLiteral("auto");
+}
+
+} // namespace
+
+void Backend::setFontSize(int size)
+{
+    const int clamped = std::clamp(size, 10, 16);
+    if (m_fontSize == clamped)
+        return;
+    m_fontSize = clamped;
+    emit settingsChanged();
+    saveSession();
+}
+
+void Backend::setRowHeight(int height)
+{
+    const int clamped = std::clamp(height, 22, 38);
+    if (m_rowHeight == clamped)
+        return;
+    m_rowHeight = clamped;
+    emit settingsChanged();
+    saveSession();
+}
+
+void Backend::setCustomEditor(const QString &editor)
+{
+    const QString trimmed = editor.trimmed();
+    if (m_customEditor == trimmed)
+        return;
+    m_customEditor = trimmed;
+    emit settingsChanged();
+    saveSession();
+}
+
+void Backend::setCustomTerminal(const QString &terminal)
+{
+    const QString trimmed = terminal.trimmed();
+    if (m_customTerminal == trimmed)
+        return;
+    m_customTerminal = trimmed;
+    emit settingsChanged();
+    saveSession();
+}
+
+void Backend::setConfirmCopy(bool confirm)
+{
+    if (m_confirmCopy == confirm)
+        return;
+    m_confirmCopy = confirm;
+    emit settingsChanged();
+    saveSession();
+}
+
+void Backend::setConfirmMove(bool confirm)
+{
+    if (m_confirmMove == confirm)
+        return;
+    m_confirmMove = confirm;
+    emit settingsChanged();
+    saveSession();
+}
+
+void Backend::setConfirmDelete(bool confirm)
+{
+    if (m_confirmDelete == confirm)
+        return;
+    m_confirmDelete = confirm;
+    emit settingsChanged();
+    saveSession();
+}
+
+void Backend::setShowExtColumn(bool show)
+{
+    if (m_showExtColumn == show)
+        return;
+    m_showExtColumn = show;
+    emit settingsChanged();
+    saveSession();
+}
+
+void Backend::setShowSizeColumn(bool show)
+{
+    if (m_showSizeColumn == show)
+        return;
+    m_showSizeColumn = show;
+    emit settingsChanged();
+    saveSession();
+}
+
+void Backend::setShowModifiedColumn(bool show)
+{
+    if (m_showModifiedColumn == show)
+        return;
+    m_showModifiedColumn = show;
+    emit settingsChanged();
+    saveSession();
+}
+
+void Backend::setLanguageMode(const QString &mode)
+{
+    const QString normalized = normalizeSettingsLanguageMode(mode);
+    if (m_languageMode == normalized)
+        return;
+    m_languageMode = normalized;
+    emit settingsChanged();
+    saveSession();
+}
+
+void Backend::updateSettings(const QVariantMap &prefs)
+{
+    bool changed = false;
+    auto assign = [&changed](auto &field, const auto &val) {
+        if (field != val) {
+            field = val;
+            changed = true;
+        }
+    };
+
+    if (prefs.contains(QStringLiteral("fontSize")))
+        assign(m_fontSize, std::clamp(prefs.value(QStringLiteral("fontSize")).toInt(), 10, 16));
+    if (prefs.contains(QStringLiteral("rowHeight")))
+        assign(m_rowHeight, std::clamp(prefs.value(QStringLiteral("rowHeight")).toInt(), 22, 38));
+    if (prefs.contains(QStringLiteral("customEditor")))
+        assign(m_customEditor, prefs.value(QStringLiteral("customEditor")).toString().trimmed());
+    if (prefs.contains(QStringLiteral("customTerminal")))
+        assign(m_customTerminal, prefs.value(QStringLiteral("customTerminal")).toString().trimmed());
+    if (prefs.contains(QStringLiteral("confirmCopy")))
+        assign(m_confirmCopy, prefs.value(QStringLiteral("confirmCopy")).toBool());
+    if (prefs.contains(QStringLiteral("confirmMove")))
+        assign(m_confirmMove, prefs.value(QStringLiteral("confirmMove")).toBool());
+    if (prefs.contains(QStringLiteral("confirmDelete")))
+        assign(m_confirmDelete, prefs.value(QStringLiteral("confirmDelete")).toBool());
+    if (prefs.contains(QStringLiteral("showExtColumn")))
+        assign(m_showExtColumn, prefs.value(QStringLiteral("showExtColumn")).toBool());
+    if (prefs.contains(QStringLiteral("showSizeColumn")))
+        assign(m_showSizeColumn, prefs.value(QStringLiteral("showSizeColumn")).toBool());
+    if (prefs.contains(QStringLiteral("showModifiedColumn")))
+        assign(m_showModifiedColumn, prefs.value(QStringLiteral("showModifiedColumn")).toBool());
+    if (prefs.contains(QStringLiteral("languageMode")))
+        assign(m_languageMode, normalizeSettingsLanguageMode(prefs.value(QStringLiteral("languageMode")).toString()));
+
+    if (changed) {
+        emit settingsChanged();
+        saveSession();
+    }
+}
+
+void Backend::resetSettingsToDefaults()
+{
+    QVariantMap defaults;
+    defaults[QStringLiteral("fontSize")] = 12;
+    defaults[QStringLiteral("rowHeight")] = 27;
+    defaults[QStringLiteral("customEditor")] = QString();
+    defaults[QStringLiteral("customTerminal")] = QString();
+    defaults[QStringLiteral("confirmCopy")] = true;
+    defaults[QStringLiteral("confirmMove")] = true;
+    defaults[QStringLiteral("confirmDelete")] = true;
+    defaults[QStringLiteral("showExtColumn")] = true;
+    defaults[QStringLiteral("showSizeColumn")] = true;
+    defaults[QStringLiteral("showModifiedColumn")] = true;
+    defaults[QStringLiteral("languageMode")] = QStringLiteral("auto");
+    updateSettings(defaults);
+    showStatus(tr("Settings reset to defaults."));
 }

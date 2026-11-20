@@ -94,6 +94,10 @@ class Backend : public QObject {
     Q_PROPERTY(bool checksumRunning READ checksumRunning NOTIFY checksumStateChanged)
     Q_PROPERTY(double checksumProgress READ checksumProgress NOTIFY checksumProgressChanged)
     Q_PROPERTY(QVariantMap checksumResult READ checksumResult NOTIFY checksumResultChanged)
+    Q_PROPERTY(bool batchChecksumRunning READ batchChecksumRunning NOTIFY batchChecksumStateChanged)
+    Q_PROPERTY(double batchChecksumProgress READ batchChecksumProgress NOTIFY batchChecksumProgressChanged)
+    Q_PROPERTY(QString batchChecksumDetail READ batchChecksumDetail NOTIFY batchChecksumProgressChanged)
+    Q_PROPERTY(QVariantMap batchChecksumResult READ batchChecksumResult NOTIFY batchChecksumResultChanged)
     Q_PROPERTY(bool previewLoading READ previewLoading NOTIFY previewLoadingChanged)
     Q_PROPERTY(bool quickViewLoading READ quickViewLoading NOTIFY previewLoadingChanged)
     Q_PROPERTY(bool archiveOpRunning READ archiveOpRunning NOTIFY archiveOpChanged)
@@ -112,6 +116,19 @@ class Backend : public QObject {
     Q_PROPERTY(bool splitOpRunning READ splitOpRunning NOTIFY splitOpChanged)
     Q_PROPERTY(double splitOpProgress READ splitOpProgress NOTIFY splitOpChanged)
     Q_PROPERTY(QString splitOpDetail READ splitOpDetail NOTIFY splitOpChanged)
+
+    // User Preferences / Settings (persisted in session INI)
+    Q_PROPERTY(int fontSize READ fontSize WRITE setFontSize NOTIFY settingsChanged)
+    Q_PROPERTY(int rowHeight READ rowHeight WRITE setRowHeight NOTIFY settingsChanged)
+    Q_PROPERTY(QString customEditor READ customEditor WRITE setCustomEditor NOTIFY settingsChanged)
+    Q_PROPERTY(QString customTerminal READ customTerminal WRITE setCustomTerminal NOTIFY settingsChanged)
+    Q_PROPERTY(bool confirmCopy READ confirmCopy WRITE setConfirmCopy NOTIFY settingsChanged)
+    Q_PROPERTY(bool confirmMove READ confirmMove WRITE setConfirmMove NOTIFY settingsChanged)
+    Q_PROPERTY(bool confirmDelete READ confirmDelete WRITE setConfirmDelete NOTIFY settingsChanged)
+    Q_PROPERTY(bool showExtColumn READ showExtColumn WRITE setShowExtColumn NOTIFY settingsChanged)
+    Q_PROPERTY(bool showSizeColumn READ showSizeColumn WRITE setShowSizeColumn NOTIFY settingsChanged)
+    Q_PROPERTY(bool showModifiedColumn READ showModifiedColumn WRITE setShowModifiedColumn NOTIFY settingsChanged)
+    Q_PROPERTY(QString languageMode READ languageMode WRITE setLanguageMode NOTIFY settingsChanged)
 
 public:
     explicit Backend(const QString &bookmarksFile = {}, QObject *parent = nullptr);
@@ -213,6 +230,20 @@ public:
     Q_INVOKABLE bool verifyChecksum(const QString &filePath, const QString &expectedHash) const;
     Q_INVOKABLE bool saveChecksumFile(const QString &filePath, const QString &algorithm, const QString &targetFilePath = {}) const;
     Q_INVOKABLE QVariantMap verifyChecksumFile(const QString &checksumFilePath) const;
+
+    // Batch checksum generation & verification
+    bool batchChecksumRunning() const { return m_batchChecksumRunning; }
+    double batchChecksumProgress() const { return m_batchChecksumProgress; }
+    QString batchChecksumDetail() const { return m_batchChecksumDetail; }
+    QVariantMap batchChecksumResult() const { return m_batchChecksumResult; }
+    Q_INVOKABLE QVariantMap generateBatchChecksumFile(const QStringList &filePaths,
+                                                      const QString &algorithm = QStringLiteral("sha256"),
+                                                      const QString &outputFilePath = {}) const;
+    Q_INVOKABLE void startBatchChecksumGenerate(const QStringList &filePaths,
+                                                const QString &algorithm = QStringLiteral("sha256"),
+                                                const QString &outputFilePath = {});
+    Q_INVOKABLE void startBatchChecksumVerify(const QString &checksumFilePath);
+    Q_INVOKABLE void cancelBatchChecksum();
 
     // System clipboard (text/uri-list + GNOME/KDE cut-copy hints)
     Q_INVOKABLE bool copyToClipboard(const QStringList &paths);
@@ -410,6 +441,32 @@ public:
     Q_INVOKABLE void startCombineFiles(const QString &firstPartOrCrcPath, const QString &targetDir);
     Q_INVOKABLE void cancelSplitOperation();
 
+    // User Preferences / Settings
+    int fontSize() const { return m_fontSize; }
+    void setFontSize(int size);
+    int rowHeight() const { return m_rowHeight; }
+    void setRowHeight(int height);
+    QString customEditor() const { return m_customEditor; }
+    void setCustomEditor(const QString &editor);
+    QString customTerminal() const { return m_customTerminal; }
+    void setCustomTerminal(const QString &terminal);
+    bool confirmCopy() const { return m_confirmCopy; }
+    void setConfirmCopy(bool confirm);
+    bool confirmMove() const { return m_confirmMove; }
+    void setConfirmMove(bool confirm);
+    bool confirmDelete() const { return m_confirmDelete; }
+    void setConfirmDelete(bool confirm);
+    bool showExtColumn() const { return m_showExtColumn; }
+    void setShowExtColumn(bool show);
+    bool showSizeColumn() const { return m_showSizeColumn; }
+    void setShowSizeColumn(bool show);
+    bool showModifiedColumn() const { return m_showModifiedColumn; }
+    void setShowModifiedColumn(bool show);
+    QString languageMode() const { return m_languageMode; }
+    void setLanguageMode(const QString &mode);
+    Q_INVOKABLE void updateSettings(const QVariantMap &prefs);
+    Q_INVOKABLE void resetSettingsToDefaults();
+
 signals:
     void activePanelChanged();
     void windowSizeChanged();
@@ -442,6 +499,10 @@ signals:
     void checksumProgressChanged();
     void checksumResultChanged();
     void checksumFinished(const QVariantMap &result);
+    void batchChecksumStateChanged();
+    void batchChecksumProgressChanged();
+    void batchChecksumResultChanged();
+    void batchChecksumFinished(const QVariantMap &result);
     void previewLoadingChanged();
     void previewReady(const QString &target, const QVariantMap &data);
     void archiveOpChanged();
@@ -460,8 +521,10 @@ signals:
     void commandFinished(bool success, int exitCode);
     void splitOpChanged();
     void splitOperationFinished(const QVariantMap &result);
+    void settingsChanged();
 
 private:
+    QString resolvedTerminal(bool fallbackXterm = true, QStringList *prefixArgs = nullptr) const;
     QString ensureArchiveTempDir();
     static QString extractArchiveEntryToTempDir(const QString &archivePath, const QString &internalPath, const QString &tempDirPath);
     static QVariantMap buildPreviewData(const QString &path, int pdfPage, bool dark, const QString &tempDirPath,
@@ -583,6 +646,14 @@ private:
     double m_checksumProgress = 0.0;
     QVariantMap m_checksumResult;
 
+    // Async batch checksum generate & verify
+    std::atomic<quint64> m_batchChecksumGeneration{0};
+    std::shared_ptr<std::atomic<bool>> m_batchChecksumCancel;
+    bool m_batchChecksumRunning = false;
+    double m_batchChecksumProgress = 0.0;
+    QString m_batchChecksumDetail;
+    QVariantMap m_batchChecksumResult;
+
     // Async preview (modal & quickview tracked independently)
     std::atomic<quint64> m_modalPreviewGen{0};
     std::shared_ptr<std::atomic<bool>> m_modalPreviewCancel;
@@ -618,4 +689,17 @@ private:
     bool m_splitOpRunning = false;
     double m_splitOpProgress = 0.0;
     QString m_splitOpDetail;
+
+    // User Preferences / Settings
+    int m_fontSize = 12;
+    int m_rowHeight = 27;
+    QString m_customEditor;
+    QString m_customTerminal;
+    bool m_confirmCopy = true;
+    bool m_confirmMove = true;
+    bool m_confirmDelete = true;
+    bool m_showExtColumn = true;
+    bool m_showSizeColumn = true;
+    bool m_showModifiedColumn = true;
+    QString m_languageMode = QStringLiteral("auto");
 };

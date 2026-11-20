@@ -85,6 +85,25 @@ QString Translator::translate(const char *, const char *sourceText, const char *
     return {};
 }
 
+void Translator::setLanguageOverride(const QString &overrideCode) {
+    QString normalized = overrideCode.trimmed();
+    if (normalized.isEmpty() || normalized.compare(QLatin1String("auto"), Qt::CaseInsensitive) == 0) {
+        normalized = QStringLiteral("auto");
+    } else {
+        normalized = normalized.toLower();
+        static const QRegularExpression valid(QStringLiteral("^[a-z]{2,3}(-[a-z]{2})?$"));
+        if (!valid.match(normalized).hasMatch())
+            normalized = QStringLiteral("auto");
+    }
+    if (m_languageOverride == normalized)
+        return;
+    m_languageOverride = normalized;
+    const QString prevLanguage = m_language;
+    reload();
+    if (m_language == prevLanguage)
+        emit changed();
+}
+
 void Translator::reload() {
     const auto paths = m_watcher.files() + m_watcher.directories();
     if (!paths.isEmpty())
@@ -96,7 +115,9 @@ void Translator::reload() {
     if (QFileInfo::exists(m_languageFile))
         m_watcher.addPath(m_languageFile);
 
-    const QString language = readLanguage(m_languageFile);
+    const QString language = (m_languageOverride != QLatin1String("auto") && !m_languageOverride.isEmpty())
+        ? m_languageOverride
+        : readLanguage(m_languageFile);
     if (language == m_language)
         return;
 

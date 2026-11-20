@@ -175,6 +175,7 @@ ApplicationWindow {
     property bool remoteConnectionsOpen: false
     property bool openWithOpen: false
     property bool workspacesOpen: false
+    property bool settingsOpen: false
     property bool confirmEmptyTrashOpen: false
     property bool commandDrawerOpen: false
     property int cmdHistoryIndex: -1
@@ -210,6 +211,10 @@ ApplicationWindow {
         function onChecksumFinished(result) {
             if (win.checksumOpen)
                 checksumDialog.hashes = result || ({});
+        }
+        function onBatchChecksumFinished(result) {
+            if (win.checksumOpen)
+                checksumDialog.batchResult = result || ({});
         }
         function onSyncCompareResultsChanged() {
             if (win.syncDirsOpen)
@@ -1668,7 +1673,7 @@ ApplicationWindow {
             rubberBandBox.visible = (rw > 3 || rh > 3);
 
             if (panelModel.viewMode === 0) { // ListView
-                var rowHeight = 27;
+                var rowHeight = Math.max(18, backend.rowHeight);
                 var contentY = fileList.contentY;
                 var count = panelModel.itemCount;
                 var selectedIndices = [];
@@ -2279,8 +2284,13 @@ ApplicationWindow {
                             id: tabsRow
                             height: parent.height
                             spacing: 3
+                            property int draggingTabIndex: -1
+                            property int dropTargetIndex: -1
+                            property real dropIndicatorX: -1
+                            property bool dropToOtherPanel: false
 
                             Repeater {
+                                id: tabRepeater
                                 model: panelRoot.panelModel.tabs
 
                                 delegate: Rectangle {
@@ -2295,6 +2305,7 @@ ApplicationWindow {
                                     height: 22
                                     width: Math.min(200, Math.max(76, tabContentRow.implicitWidth + 14))
                                     radius: win.smallRadius
+                                    opacity: tabsRow.draggingTabIndex === index ? 0.45 : 1.0
                                     color: {
                                         if (dropHover) return Qt.alpha(p.accent, 0.24);
                                         if (isTabActive) return panelRoot.isActive ? p.tabActivePanelBg : p.tabActiveInactivePanelBg;
@@ -2310,9 +2321,99 @@ ApplicationWindow {
                                         id: tabMouse
                                         anchors.fill: parent
                                         hoverEnabled: true
+                                        preventStealing: true
                                         acceptedButtons: Qt.LeftButton | Qt.MiddleButton | Qt.RightButton
-                                        cursorShape: Qt.PointingHandCursor
+                                        cursorShape: dragActive ? Qt.ClosedHandCursor : Qt.PointingHandCursor
+                                        property real pressXInRow: 0
+                                        property real pressYInRow: 0
+                                        property bool dragActive: false
+                                        property bool suppressedClick: false
+
+                                        function clearTabDrag() {
+                                            dragActive = false;
+                                            tabsRow.draggingTabIndex = -1;
+                                            tabsRow.dropTargetIndex = -1;
+                                            tabsRow.dropIndicatorX = -1;
+                                            tabsRow.dropToOtherPanel = false;
+                                        }
+
+                                        onPressed: function(mouse) {
+                                            dragActive = false;
+                                            suppressedClick = false;
+                                            if (mouse.button === Qt.LeftButton && panelRoot.panelModel.tabCount > 1) {
+                                                var pt = tabMouse.mapToItem(tabsRow, mouse.x, mouse.y);
+                                                pressXInRow = pt.x;
+                                                pressYInRow = pt.y;
+                                            }
+                                        }
+
+                                        onPositionChanged: function(mouse) {
+                                            if ((mouse.buttons & Qt.LeftButton) === 0 || panelRoot.panelModel.tabCount <= 1)
+                                                return;
+                                            var pt = tabMouse.mapToItem(tabsRow, mouse.x, mouse.y);
+                                            if (!dragActive && (Math.abs(pt.x - pressXInRow) > 6 || Math.abs(pt.y - pressYInRow) > 10)) {
+                                                dragActive = true;
+                                                suppressedClick = true;
+                                                tabsRow.draggingTabIndex = index;
+                                            }
+                                            if (!dragActive)
+                                                return;
+
+                                            var otherPane = (panelRoot.panelIndex === 0) ? rightPane : leftPane;
+                                            var opt = tabMouse.mapToItem(otherPane, mouse.x, mouse.y);
+                                            if (opt.x >= 0 && opt.x <= otherPane.width && opt.y >= 0 && opt.y <= otherPane.height) {
+                                                tabsRow.dropToOtherPanel = true;
+                                                tabsRow.dropIndicatorX = -1;
+                                                return;
+                                            }
+                                            tabsRow.dropToOtherPanel = false;
+
+                                            var count = tabRepeater.count;
+                                            if (count <= 1)
+                                                return;
+                                            var targetIdx = count - 1;
+                                            var lastItem = tabRepeater.itemAt(count - 1);
+                                            var indX = lastItem ? (lastItem.x + lastItem.width + 1) : 0;
+
+                                            for (var i = 0; i < count; ++i) {
+                                                var item = tabRepeater.itemAt(i);
+                                                if (!item)
+                                                    continue;
+                                                if (pt.x < item.x + item.width * 0.5) {
+                                                    targetIdx = (i <= tabsRow.draggingTabIndex) ? i : (i - 1);
+                                                    indX = item.x - 1;
+                                                    break;
+                                                }
+                                            }
+                                            tabsRow.dropTargetIndex = Math.max(0, Math.min(count - 1, targetIdx));
+                                            tabsRow.dropIndicatorX = indX;
+                                        }
+
+                                        onReleased: function(mouse) {
+                                            if (mouse.button === Qt.LeftButton && dragActive) {
+                                                var fromIdx = tabsRow.draggingTabIndex;
+                                                var toIdx = tabsRow.dropTargetIndex;
+                                                var toOther = tabsRow.dropToOtherPanel;
+                                                clearTabDrag();
+                                                if (fromIdx >= 0) {
+                                                    if (toOther)
+                                                        backend.moveTabToOppositePanel(panelRoot.panelIndex, fromIdx);
+                                                    else if (toIdx >= 0 && fromIdx !== toIdx)
+                                                        panelRoot.panelModel.moveTab(fromIdx, toIdx);
+                                                }
+                                            }
+                                        }
+
+                                        onCanceled: {
+                                            clearTabDrag();
+                                            suppressedClick = false;
+                                        }
+
                                         onClicked: function(mouse) {
+                                            if (suppressedClick) {
+                                                suppressedClick = false;
+                                                return;
+                                            }
                                             if (mouse.button === Qt.RightButton) {
                                                 backend.activePanel = panelRoot.panelIndex;
                                                 tabContextMenu.targetTabIndex = index;
@@ -2421,6 +2522,18 @@ ApplicationWindow {
                                     }
                                 }
                             }
+                        }
+
+                        Rectangle {
+                            id: tabDropIndicator
+                            visible: tabsRow.draggingTabIndex >= 0 && !tabsRow.dropToOtherPanel && tabsRow.dropIndicatorX >= 0
+                            x: tabsRow.dropIndicatorX
+                            y: 2
+                            width: 2
+                            height: tabFlick.height - 4
+                            radius: 1
+                            color: p.accent
+                            z: 5
                         }
                     }
 
@@ -3133,10 +3246,11 @@ ApplicationWindow {
                         }
                     }
 
-                    Rectangle { width: 1; Layout.fillHeight: true; color: p.borderSubtle }
+                    Rectangle { visible: backend.showExtColumn; width: 1; Layout.fillHeight: true; color: p.borderSubtle }
 
                     // Ext Header
                     Rectangle {
+                        visible: backend.showExtColumn
                         Layout.preferredWidth: panelRoot.colExtWidth
                         Layout.fillHeight: true
                         color: extHdrMouse.containsMouse ? p.tableHeaderHoverBg : "transparent"
@@ -3166,10 +3280,11 @@ ApplicationWindow {
                         }
                     }
 
-                    Rectangle { width: 1; Layout.fillHeight: true; color: p.borderSubtle }
+                    Rectangle { visible: backend.showSizeColumn; width: 1; Layout.fillHeight: true; color: p.borderSubtle }
 
                     // Size Header
                     Rectangle {
+                        visible: backend.showSizeColumn
                         Layout.preferredWidth: panelRoot.colSizeWidth
                         Layout.fillHeight: true
                         color: sizeHdrMouse.containsMouse ? p.tableHeaderHoverBg : "transparent"
@@ -3200,10 +3315,11 @@ ApplicationWindow {
                         }
                     }
 
-                    Rectangle { width: 1; Layout.fillHeight: true; color: p.borderSubtle }
+                    Rectangle { visible: backend.showModifiedColumn; width: 1; Layout.fillHeight: true; color: p.borderSubtle }
 
                     // Date Header
                     Rectangle {
+                        visible: backend.showModifiedColumn
                         Layout.preferredWidth: panelRoot.colDateWidth
                         Layout.fillHeight: true
                         color: dateHdrMouse.containsMouse ? p.tableHeaderHoverBg : "transparent"
@@ -3351,7 +3467,7 @@ ApplicationWindow {
                     delegate: Rectangle {
                         id: rowDelegate
                         width: fileList.width
-                        height: 27
+                        height: backend.rowHeight
                         property string itemPermissions: model.permissions || ""
                         readonly property bool isCurrent: fileList.currentIndex === index
                         readonly property bool isCutItem: backend.clipboardIsCut && backend.clipboardPaths.indexOf(model.path) !== -1
@@ -3541,8 +3657,8 @@ ApplicationWindow {
 
                                     VectorIcon {
                                         Layout.alignment: Qt.AlignVCenter
-                                        width: 19
-                                        height: 19
+                                        width: Math.round(Math.max(15, Math.min(21, backend.rowHeight * 0.65)))
+                                        height: width
                                         kind: panelRoot.iconKindFor(model.isParent, model.isDir, model.iconType)
                                         iconColor: panelRoot.iconColorFor(model.isParent, model.isDir, model.iconType, model.isSelected)
                                     }
@@ -3553,7 +3669,7 @@ ApplicationWindow {
                                         Layout.alignment: Qt.AlignVCenter
                                         text: panelRoot.displayStem(model.name, model.extension, model.isDir)
                                         elide: Text.ElideMiddle
-                                        font.pixelSize: 12
+                                        font.pixelSize: backend.fontSize
                                         font.weight: (model.isDir && !model.isParent) || model.isSelected ? Font.DemiBold : Font.Normal
                                         color: {
                                             if (model.isSelected) return p.accent;
@@ -3624,10 +3740,11 @@ ApplicationWindow {
                                 }
                             }
 
-                            Rectangle { width: 1; Layout.fillHeight: true; color: p.cellDivider }
+                            Rectangle { visible: backend.showExtColumn; width: 1; Layout.fillHeight: true; color: p.cellDivider }
 
                             // Ext Cell
                             Item {
+                                visible: backend.showExtColumn
                                 Layout.preferredWidth: panelRoot.colExtWidth
                                 Layout.fillHeight: true
 
@@ -3638,17 +3755,18 @@ ApplicationWindow {
                                     anchors.rightMargin: 6
                                     anchors.verticalCenter: parent.verticalCenter
                                     text: panelRoot.displayExt(model.name, model.extension, model.isDir)
-                                    font.pixelSize: 11
+                                    font.pixelSize: Math.max(9, backend.fontSize - 1)
                                     font.family: "monospace"
                                     color: model.isSelected ? p.accent : p.textMuted
                                     elide: Text.ElideRight
                                 }
                             }
 
-                            Rectangle { width: 1; Layout.fillHeight: true; color: p.cellDivider }
+                            Rectangle { visible: backend.showSizeColumn; width: 1; Layout.fillHeight: true; color: p.cellDivider }
 
                             // Size Cell
                             Item {
+                                visible: backend.showSizeColumn
                                 Layout.preferredWidth: panelRoot.colSizeWidth
                                 Layout.fillHeight: true
 
@@ -3688,7 +3806,7 @@ ApplicationWindow {
                                             return model.formattedSize + " (" + Number(parent.pct).toFixed(parent.pct >= 10 ? 0 : 1) + "%)";
                                         return model.formattedSize;
                                     }
-                                    font.pixelSize: parent.isPlaceholderTag ? 10 : 11
+                                    font.pixelSize: parent.isPlaceholderTag ? Math.max(9, backend.fontSize - 2) : Math.max(9, backend.fontSize - 1)
                                     font.family: "monospace"
                                     font.weight: (model.isDir && !parent.isPlaceholderTag) ? Font.DemiBold : Font.Normal
                                     color: {
@@ -3700,10 +3818,11 @@ ApplicationWindow {
                                 }
                             }
 
-                            Rectangle { width: 1; Layout.fillHeight: true; color: p.cellDivider }
+                            Rectangle { visible: backend.showModifiedColumn; width: 1; Layout.fillHeight: true; color: p.cellDivider }
 
                             // Date Cell
                             Item {
+                                visible: backend.showModifiedColumn
                                 Layout.preferredWidth: panelRoot.colDateWidth
                                 Layout.fillHeight: true
 
@@ -3715,7 +3834,7 @@ ApplicationWindow {
                                     anchors.verticalCenter: parent.verticalCenter
                                     horizontalAlignment: Text.AlignRight
                                     text: model.isParent ? "" : model.modified
-                                    font.pixelSize: 11
+                                    font.pixelSize: Math.max(9, backend.fontSize - 1)
                                     font.family: "monospace"
                                     color: model.isSelected ? Qt.alpha(p.accent, 0.85) : p.textDim
                                 }
@@ -4551,6 +4670,10 @@ ApplicationWindow {
     function triggerF5Copy() {
         var paths = getSelectedOrCurrentPaths();
         if (paths.length > 0) {
+            if (!backend.confirmCopy) {
+                backend.copyItems(paths, targetModel().path);
+                return;
+            }
             copyDestField.text = targetModel().path;
             confirmCopyOpen = true;
             copyDestField.forceFieldFocus();
@@ -4562,6 +4685,10 @@ ApplicationWindow {
     function triggerF6Move() {
         var paths = getSelectedOrCurrentPaths();
         if (paths.length > 0) {
+            if (!backend.confirmMove) {
+                backend.moveItems(paths, targetModel().path);
+                return;
+            }
             moveDestField.text = targetModel().path;
             confirmMoveOpen = true;
             moveDestField.forceFieldFocus();
@@ -4698,10 +4825,15 @@ ApplicationWindow {
 
     function triggerF8Delete() {
         var paths = getSelectedOrCurrentPaths();
-        if (paths.length > 0)
+        if (paths.length > 0) {
+            if (!backend.confirmDelete && !currentModel().isTrashView) {
+                backend.deleteItems(paths, false);
+                return;
+            }
             confirmDeleteOpen = true;
-        else
+        } else {
             backend.showStatus(qsTr("No files selected to delete."));
+        }
     }
 
     function toggleFilterBar() {
@@ -4785,18 +4917,64 @@ ApplicationWindow {
         maskPatternInput.input.selectAll();
     }
 
+    function openSettingsDialog() {
+        win.closeAllMenus();
+        settingsDialog.loadFromBackend();
+        win.settingsOpen = true;
+    }
+
+    function collectSelectedRegularFiles() {
+        var m = currentModel();
+        var files = [];
+        for (var i = 0; i < m.itemCount; ++i) {
+            if (m.itemIsSelected(i) && !m.itemIsDir(i))
+                files.push(m.itemPath(i));
+        }
+        if (files.length === 0) {
+            var idx = currentListView().currentIndex;
+            if (idx >= 0 && idx < m.itemCount && !m.itemIsDir(idx))
+                files.push(m.itemPath(idx));
+        }
+        return files;
+    }
+
     function triggerChecksum() {
-        var p = currentHighlightedPath();
-        if (p.length === 0 || currentModel().itemIsDir(currentListView().currentIndex)) {
-            backend.showStatus(qsTr("Select a file to compute checksum."));
+        var cur = currentHighlightedPath();
+        var curIdx = currentListView().currentIndex;
+        var curIsDir = (curIdx >= 0 && curIdx < currentModel().itemCount) ? currentModel().itemIsDir(curIdx) : true;
+        var files = collectSelectedRegularFiles();
+        var lower = cur.toLowerCase();
+        var isManifest = (!curIsDir && (lower.endsWith(".sha256") || lower.endsWith(".sha1") || lower.endsWith(".md5")));
+
+        if (files.length === 0 && !isManifest) {
+            backend.showStatus(qsTr("Select file(s) to compute checksum."));
             return;
         }
-        checksumDialog.filePath = p;
+
+        checksumDialog.filePath = !curIsDir ? cur : (files.length > 0 ? files[0] : "");
         checksumDialog.hashes = ({});
         checksumDialog.verificationResult = "";
         verifyHashInput.text = "";
-        win.checksumOpen = true;
-        backend.startChecksumCalculation(p);
+        checksumDialog.batchFilePaths = files;
+        checksumDialog.batchResult = ({});
+        var baseDir = currentModel().path;
+        batchOutputField.text = (baseDir.endsWith("/") ? baseDir : baseDir + "/") + "checksums." + checksumDialog.batchAlgorithm;
+
+        if (isManifest && files.length <= 1) {
+            checksumDialog.activeTab = 1;
+            batchVerifyField.text = cur;
+            win.checksumOpen = true;
+            backend.startBatchChecksumVerify(cur);
+        } else if (files.length > 1) {
+            checksumDialog.activeTab = 1;
+            batchVerifyField.text = "";
+            win.checksumOpen = true;
+        } else {
+            checksumDialog.activeTab = 0;
+            batchVerifyField.text = "";
+            win.checksumOpen = true;
+            backend.startChecksumCalculation(checksumDialog.filePath);
+        }
     }
 
     function triggerFileDiff() {
@@ -4919,7 +5097,8 @@ ApplicationWindow {
             { id: "remoteConnections", title: qsTr("Remote Connections (Google Drive / SFTP / SMB)..."), category: qsTr("Network"), shortcut: "Ctrl+Shift+M", run: function() { win.openRemoteConnectionsDialog(""); } },
             { id: "openWith", title: qsTr("Open With / Custom Actions..."), category: qsTr("Files"), shortcut: "Ctrl+Shift+O", run: function() { win.openOpenWithDialog("", 0); } },
             { id: "diffFiles", title: qsTr("Compare Files (Visual Diff)..."), category: qsTr("Commands"), shortcut: "Ctrl+Alt+D", run: function() { triggerFileDiff(); } },
-            { id: "checksum", title: qsTr("Compute File Checksums..."), category: qsTr("Commands"), shortcut: "", run: function() { triggerChecksum(); } },
+            { id: "checksum", title: qsTr("Compute / Batch Verify Checksums..."), category: qsTr("Commands"), shortcut: "", run: function() { triggerChecksum(); } },
+            { id: "settings", title: qsTr("Preferences / Settings..."), category: qsTr("View"), shortcut: "Ctrl+,", run: function() { win.openSettingsDialog(); } },
             { id: "terminal", title: qsTr("Open Terminal in Current Folder"), category: qsTr("Commands"), shortcut: "F9", run: function() { backend.openInTerminal(currentModel().path); } },
             { id: "focusCmdBar", title: qsTr("Focus Command Line Bar"), category: qsTr("Commands"), shortcut: "Ctrl+E", run: function() { cmdLineInput.forceFieldFocus(); } },
             { id: "toggleCmdOutput", title: qsTr("Toggle Command Output Drawer"), category: qsTr("Commands"), shortcut: "Ctrl+O", run: function() { win.commandDrawerOpen = !win.commandDrawerOpen; } },
@@ -5153,6 +5332,7 @@ ApplicationWindow {
     Shortcut { sequence: "Ctrl+Return"; enabled: !win.isTextInputFocused(); context: Qt.ApplicationShortcut; onActivated: win.insertIntoCmdBar(false) }
     Shortcut { sequence: "Ctrl+Shift+Return"; enabled: !win.isTextInputFocused(); context: Qt.ApplicationShortcut; onActivated: win.insertIntoCmdBar(true) }
     Shortcut { sequence: "Ctrl+Alt+S"; context: Qt.ApplicationShortcut; onActivated: win.openSplitCombineDialog() }
+    Shortcut { sequence: "Ctrl+,"; context: Qt.ApplicationShortcut; onActivated: win.openSettingsDialog() }
 
     // Menu Bar Access Shortcuts (Alt+F, Alt+E, Alt+V, Alt+C, Alt+H)
     Shortcut { sequence: "Alt+F"; enabled: !win.isTextInputFocused(); context: Qt.ApplicationShortcut; onActivated: { win.closeAllMenus(); filesMenu.open(); win.menuBarActive = true; } }
@@ -5170,6 +5350,7 @@ ApplicationWindow {
         if (remoteConnectionsOpen) { remoteConnectionsOpen = false; currentListView().forceActiveFocus(); return; }
         if (openWithOpen) { openWithOpen = false; currentListView().forceActiveFocus(); return; }
         if (workspacesOpen) { workspacesOpen = false; currentListView().forceActiveFocus(); return; }
+        if (settingsOpen) { settingsOpen = false; currentListView().forceActiveFocus(); return; }
         if (confirmEmptyTrashOpen) { confirmEmptyTrashOpen = false; currentListView().forceActiveFocus(); return; }
         if (splitCombineOpen) { splitCombineOpen = false; currentListView().forceActiveFocus(); return; }
         if (aboutOpen) { aboutOpen = false; return; }
@@ -5186,7 +5367,12 @@ ApplicationWindow {
         if (newFileOpen) { newFileOpen = false; return; }
         if (symlinkOpen) { symlinkOpen = false; return; }
         if (maskOpen) { maskOpen = false; return; }
-        if (checksumOpen) { checksumOpen = false; return; }
+        if (checksumOpen) {
+            backend.cancelChecksumCalculation();
+            backend.cancelBatchChecksum();
+            checksumOpen = false;
+            return;
+        }
         if (diffOpen) { diffOpen = false; return; }
         if (newFolderOpen) { newFolderOpen = false; return; }
         if (renameOpen) { renameOpen = false; return; }
@@ -5518,6 +5704,14 @@ ApplicationWindow {
                                     text: qsTr("Deselect by Pattern...")
                                     shortcutHint: "Num-"
                                     onTriggered: openMaskDialog(false)
+                                }
+
+                                AppMenuSeparator {}
+
+                                AppMenuItem {
+                                    text: qsTr("Preferences / Settings...")
+                                    shortcutHint: "Ctrl+,"
+                                    onTriggered: win.openSettingsDialog()
                                 }
                             }
                         }
@@ -10444,336 +10638,683 @@ ApplicationWindow {
         }
     }
 
-    // Checksum & Verification Dialog
+    // Checksum & Verification Dialog (Single File + Batch Generate & Verify)
     AppDialog {
         id: checksumDialog
         visible: win.checksumOpen
-        title: qsTr("Checksum (MD5 / SHA256)")
-        width: 580
+        title: qsTr("Checksum & Integrity (MD5 / SHA1 / SHA256)")
+        width: 660
 
+        property int activeTab: 0 // 0 = Single File, 1 = Batch Generate & Verify
         property string filePath: ""
         property var hashes: ({})
         property string verificationResult: ""
         property bool verificationOk: false
+        property var batchFilePaths: []
+        property string batchAlgorithm: "sha256"
+        property var batchResult: ({})
+
+        function setBatchAlgorithm(algo) {
+            checksumDialog.batchAlgorithm = algo;
+            var cur = batchOutputField.text;
+            var replaced = cur.replace(/checksums\.(sha256|sha1|md5)$/i, "checksums." + algo);
+            if (replaced !== cur)
+                batchOutputField.text = replaced;
+        }
 
         ColumnLayout {
             anchors.fill: parent
             spacing: 10
 
+            // Segmented Mode Switcher
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 8
-                VectorIcon { kind: "binary"; width: 20; height: 20; iconColor: p.accent }
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    spacing: 2
-                    Text {
-                        text: backend.fileName(checksumDialog.filePath)
-                        font.bold: true
-                        font.pixelSize: 13
-                        color: p.textPrimary
-                        elide: Text.ElideMiddle
-                        Layout.fillWidth: true
-                    }
-                    Text {
-                        text: checksumDialog.filePath
-                        font.pixelSize: 11
-                        font.family: "monospace"
-                        color: p.textDim
-                        elide: Text.ElideMiddle
-                        Layout.fillWidth: true
-                    }
+                spacing: 6
+
+                FilterPill {
+                    label: qsTr("Single File")
+                    active: checksumDialog.activeTab === 0
+                    onClicked: checksumDialog.activeTab = 0
                 }
-            }
 
-            Rectangle { Layout.fillWidth: true; height: 1; color: p.borderSubtle }
+                FilterPill {
+                    label: qsTr("Batch Generate & Verify")
+                    active: checksumDialog.activeTab === 1
+                    onClicked: checksumDialog.activeTab = 1
+                }
 
-            // Async checksum progress bar + cancel
-            RowLayout {
-                Layout.fillWidth: true
-                visible: backend.checksumRunning
-                spacing: 8
+                Item { Layout.fillWidth: true }
 
                 Text {
-                    text: qsTr("Computing hashes… %1%").arg(Math.round(backend.checksumProgress * 100))
+                    visible: checksumDialog.activeTab === 1
+                    text: qsTr("%1 file(s) queued").arg(checksumDialog.batchFilePaths.length)
                     font.pixelSize: 11
                     font.bold: true
                     color: p.accent
                 }
-
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 6
-                    radius: 3
-                    color: p.borderDefault
-                    Rectangle {
-                        width: parent.width * Math.max(0, Math.min(1, backend.checksumProgress))
-                        height: parent.height
-                        radius: 3
-                        color: p.accent
-                    }
-                }
-
-                ToolbarBtn {
-                    implicitHeight: 22
-                    label: qsTr("Cancel")
-                    onClicked: backend.cancelChecksumCalculation()
-                }
-            }
-
-            // Computed Hashes
-            GridLayout {
-                Layout.fillWidth: true
-                columns: 3
-                columnSpacing: 8
-                rowSpacing: 6
-
-                Text { text: "MD5:"; font.bold: true; font.family: "monospace"; color: p.textMuted }
-                CompactField {
-                    Layout.fillWidth: true
-                    text: checksumDialog.hashes.md5 || ""
-                    readOnly: true
-                    monospace: true
-                }
-                Rectangle {
-                    implicitHeight: 28
-                    implicitWidth: 64
-                    radius: win.smallRadius
-                    color: copyMd5Mouse.containsMouse ? p.btnHoverBg : p.chipBg
-                    border.width: 1
-                    border.color: p.borderDefault
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: qsTr("Copy")
-                        font.pixelSize: 11
-                        font.bold: true
-                        color: p.textPrimary
-                    }
-
-                    MouseArea {
-                        id: copyMd5Mouse
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            backend.copyToClipboard([checksumDialog.hashes.md5 || ""]);
-                            backend.showStatus(qsTr("MD5 hash copied to clipboard."));
-                        }
-                    }
-                }
-
-                Text { text: "SHA1:"; font.bold: true; font.family: "monospace"; color: p.textMuted }
-                CompactField {
-                    Layout.fillWidth: true
-                    text: checksumDialog.hashes.sha1 || ""
-                    readOnly: true
-                    monospace: true
-                }
-                Rectangle {
-                    implicitHeight: 28
-                    implicitWidth: 64
-                    radius: win.smallRadius
-                    color: copySha1Mouse.containsMouse ? p.btnHoverBg : p.chipBg
-                    border.width: 1
-                    border.color: p.borderDefault
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: qsTr("Copy")
-                        font.pixelSize: 11
-                        font.bold: true
-                        color: p.textPrimary
-                    }
-
-                    MouseArea {
-                        id: copySha1Mouse
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            backend.copyToClipboard([checksumDialog.hashes.sha1 || ""]);
-                            backend.showStatus(qsTr("SHA1 hash copied to clipboard."));
-                        }
-                    }
-                }
-
-                Text { text: "SHA256:"; font.bold: true; font.family: "monospace"; color: p.textMuted }
-                CompactField {
-                    Layout.fillWidth: true
-                    text: checksumDialog.hashes.sha256 || ""
-                    readOnly: true
-                    monospace: true
-                }
-                Rectangle {
-                    implicitHeight: 28
-                    implicitWidth: 64
-                    radius: win.smallRadius
-                    color: copySha256Mouse.containsMouse ? p.btnHoverBg : p.chipBg
-                    border.width: 1
-                    border.color: p.borderDefault
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: qsTr("Copy")
-                        font.pixelSize: 11
-                        font.bold: true
-                        color: p.textPrimary
-                    }
-
-                    MouseArea {
-                        id: copySha256Mouse
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            backend.copyToClipboard([checksumDialog.hashes.sha256 || ""]);
-                            backend.showStatus(qsTr("SHA256 hash copied to clipboard."));
-                        }
-                    }
-                }
             }
 
             Rectangle { Layout.fillWidth: true; height: 1; color: p.borderSubtle }
 
-            // Verify live against entered hash
-            Text {
-                text: qsTr("Verify against hash:")
-                font.bold: true
-                font.pixelSize: 11
-                color: p.textSecondary
-            }
-
-            RowLayout {
+            // TAB 0: Single File Checksums
+            ColumnLayout {
+                visible: checksumDialog.activeTab === 0
                 Layout.fillWidth: true
-                spacing: 8
-                CompactField {
-                    id: verifyHashInput
+                spacing: 10
+
+                RowLayout {
                     Layout.fillWidth: true
-                    placeholderText: qsTr("Paste expected MD5 or SHA256 hash to verify...")
-                    monospace: true
-                    onTextEdited: {
-                        var h = verifyHashInput.text.trim().toLowerCase();
-                        if (h.length === 0) {
-                            checksumDialog.verificationResult = "";
-                            return;
+                    spacing: 8
+                    VectorIcon { kind: "binary"; width: 20; height: 20; iconColor: p.accent }
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 2
+                        Text {
+                            text: backend.fileName(checksumDialog.filePath)
+                            font.bold: true
+                            font.pixelSize: 13
+                            color: p.textPrimary
+                            elide: Text.ElideMiddle
+                            Layout.fillWidth: true
                         }
-                        if (h === (checksumDialog.hashes.md5 || "").toLowerCase()
-                                || h === (checksumDialog.hashes.sha1 || "").toLowerCase()
-                                || h === (checksumDialog.hashes.sha256 || "").toLowerCase()) {
-                            checksumDialog.verificationOk = true;
-                            checksumDialog.verificationResult = qsTr("✓ Checksum matches!");
-                        } else {
-                            checksumDialog.verificationOk = false;
-                            checksumDialog.verificationResult = qsTr("✗ Checksum mismatch!");
+                        Text {
+                            text: checksumDialog.filePath
+                            font.pixelSize: 11
+                            font.family: "monospace"
+                            color: p.textDim
+                            elide: Text.ElideMiddle
+                            Layout.fillWidth: true
+                        }
+                    }
+                }
+
+                // Async checksum progress bar + cancel
+                RowLayout {
+                    Layout.fillWidth: true
+                    visible: backend.checksumRunning
+                    spacing: 8
+
+                    Text {
+                        text: qsTr("Computing hashes… %1%").arg(Math.round(backend.checksumProgress * 100))
+                        font.pixelSize: 11
+                        font.bold: true
+                        color: p.accent
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 6
+                        radius: 3
+                        color: p.borderDefault
+                        Rectangle {
+                            width: parent.width * Math.max(0, Math.min(1, backend.checksumProgress))
+                            height: parent.height
+                            radius: 3
+                            color: p.accent
+                        }
+                    }
+
+                    ToolbarBtn {
+                        implicitHeight: 22
+                        label: qsTr("Cancel")
+                        onClicked: backend.cancelChecksumCalculation()
+                    }
+                }
+
+                // Computed Hashes
+                GridLayout {
+                    Layout.fillWidth: true
+                    columns: 3
+                    columnSpacing: 8
+                    rowSpacing: 6
+
+                    Text { text: "MD5:"; font.bold: true; font.family: "monospace"; color: p.textMuted }
+                    CompactField {
+                        Layout.fillWidth: true
+                        text: checksumDialog.hashes.md5 || ""
+                        readOnly: true
+                        monospace: true
+                    }
+                    Rectangle {
+                        implicitHeight: 28
+                        implicitWidth: 64
+                        radius: win.smallRadius
+                        color: copyMd5Mouse.containsMouse ? p.btnHoverBg : p.chipBg
+                        border.width: 1
+                        border.color: p.borderDefault
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: qsTr("Copy")
+                            font.pixelSize: 11
+                            font.bold: true
+                            color: p.textPrimary
+                        }
+
+                        MouseArea {
+                            id: copyMd5Mouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: backend.copyTextToClipboard(checksumDialog.hashes.md5 || "", qsTr("MD5 hash copied to clipboard."))
+                        }
+                    }
+
+                    Text { text: "SHA1:"; font.bold: true; font.family: "monospace"; color: p.textMuted }
+                    CompactField {
+                        Layout.fillWidth: true
+                        text: checksumDialog.hashes.sha1 || ""
+                        readOnly: true
+                        monospace: true
+                    }
+                    Rectangle {
+                        implicitHeight: 28
+                        implicitWidth: 64
+                        radius: win.smallRadius
+                        color: copySha1Mouse.containsMouse ? p.btnHoverBg : p.chipBg
+                        border.width: 1
+                        border.color: p.borderDefault
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: qsTr("Copy")
+                            font.pixelSize: 11
+                            font.bold: true
+                            color: p.textPrimary
+                        }
+
+                        MouseArea {
+                            id: copySha1Mouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: backend.copyTextToClipboard(checksumDialog.hashes.sha1 || "", qsTr("SHA1 hash copied to clipboard."))
+                        }
+                    }
+
+                    Text { text: "SHA256:"; font.bold: true; font.family: "monospace"; color: p.textMuted }
+                    CompactField {
+                        Layout.fillWidth: true
+                        text: checksumDialog.hashes.sha256 || ""
+                        readOnly: true
+                        monospace: true
+                    }
+                    Rectangle {
+                        implicitHeight: 28
+                        implicitWidth: 64
+                        radius: win.smallRadius
+                        color: copySha256Mouse.containsMouse ? p.btnHoverBg : p.chipBg
+                        border.width: 1
+                        border.color: p.borderDefault
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: qsTr("Copy")
+                            font.pixelSize: 11
+                            font.bold: true
+                            color: p.textPrimary
+                        }
+
+                        MouseArea {
+                            id: copySha256Mouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: backend.copyTextToClipboard(checksumDialog.hashes.sha256 || "", qsTr("SHA256 hash copied to clipboard."))
+                        }
+                    }
+                }
+
+                Rectangle { Layout.fillWidth: true; height: 1; color: p.borderSubtle }
+
+                // Verify live against entered hash
+                Text {
+                    text: qsTr("Verify against hash:")
+                    font.bold: true
+                    font.pixelSize: 11
+                    color: p.textSecondary
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 8
+                    CompactField {
+                        id: verifyHashInput
+                        Layout.fillWidth: true
+                        placeholderText: qsTr("Paste expected MD5, SHA1, or SHA256 hash to verify...")
+                        monospace: true
+                        onTextEdited: {
+                            var h = verifyHashInput.text.trim().toLowerCase();
+                            if (h.length === 0) {
+                                checksumDialog.verificationResult = "";
+                                return;
+                            }
+                            if (h === (checksumDialog.hashes.md5 || "").toLowerCase()
+                                    || h === (checksumDialog.hashes.sha1 || "").toLowerCase()
+                                    || h === (checksumDialog.hashes.sha256 || "").toLowerCase()) {
+                                checksumDialog.verificationOk = true;
+                                checksumDialog.verificationResult = qsTr("✓ Checksum matches!");
+                            } else {
+                                checksumDialog.verificationOk = false;
+                                checksumDialog.verificationResult = qsTr("✗ Checksum mismatch!");
+                            }
+                        }
+                    }
+                }
+
+                Text {
+                    visible: checksumDialog.verificationResult.length > 0
+                    text: checksumDialog.verificationResult
+                    font.bold: true
+                    font.pixelSize: 12
+                    color: checksumDialog.verificationOk ? p.successText : p.dangerAccent
+                }
+
+                // Save .sha256 / .md5 / Verify manifest buttons
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 8
+
+                    Rectangle {
+                        implicitHeight: 30
+                        implicitWidth: saveShaText.implicitWidth + 24
+                        radius: win.smallRadius
+                        color: saveShaMouse.containsMouse ? p.accent : p.chipBg
+                        border.width: 1
+                        border.color: saveShaMouse.containsMouse ? p.accent : p.borderDefault
+
+                        Text {
+                            id: saveShaText
+                            anchors.centerIn: parent
+                            text: qsTr("Save .sha256 File")
+                            font.pixelSize: 11
+                            font.bold: true
+                            color: saveShaMouse.containsMouse ? p.accentFg : p.textPrimary
+                        }
+
+                        MouseArea {
+                            id: saveShaMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                var target = checksumDialog.filePath + ".sha256";
+                                if (backend.saveChecksumFile(checksumDialog.filePath, "sha256", target)) {
+                                    backend.showStatus(qsTr("Checksum file saved: %1").arg(backend.fileName(target)));
+                                    currentModel().refresh();
+                                }
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        implicitHeight: 30
+                        implicitWidth: saveMd5Text.implicitWidth + 24
+                        radius: win.smallRadius
+                        color: saveMd5Mouse.containsMouse ? p.accent : p.chipBg
+                        border.width: 1
+                        border.color: saveMd5Mouse.containsMouse ? p.accent : p.borderDefault
+
+                        Text {
+                            id: saveMd5Text
+                            anchors.centerIn: parent
+                            text: qsTr("Save .md5 File")
+                            font.pixelSize: 11
+                            font.bold: true
+                            color: saveMd5Mouse.containsMouse ? p.accentFg : p.textPrimary
+                        }
+
+                        MouseArea {
+                            id: saveMd5Mouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                var target = checksumDialog.filePath + ".md5";
+                                if (backend.saveChecksumFile(checksumDialog.filePath, "md5", target)) {
+                                    backend.showStatus(qsTr("Checksum file saved: %1").arg(backend.fileName(target)));
+                                    currentModel().refresh();
+                                }
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        visible: checksumDialog.filePath.toLowerCase().endsWith(".sha256")
+                              || checksumDialog.filePath.toLowerCase().endsWith(".sha1")
+                              || checksumDialog.filePath.toLowerCase().endsWith(".md5")
+                        implicitHeight: 30
+                        implicitWidth: verifyFileText.implicitWidth + 24
+                        radius: win.smallRadius
+                        color: verifyFileMouse.containsMouse ? p.accent : p.chipBg
+                        border.width: 1
+                        border.color: verifyFileMouse.containsMouse ? p.accent : p.borderDefault
+
+                        Text {
+                            id: verifyFileText
+                            anchors.centerIn: parent
+                            text: qsTr("Verify Checksum File")
+                            font.pixelSize: 11
+                            font.bold: true
+                            color: verifyFileMouse.containsMouse ? p.accentFg : p.textPrimary
+                        }
+
+                        MouseArea {
+                            id: verifyFileMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                checksumDialog.activeTab = 1;
+                                batchVerifyField.text = checksumDialog.filePath;
+                                backend.startBatchChecksumVerify(checksumDialog.filePath);
+                            }
                         }
                     }
                 }
             }
 
-            Text {
-                visible: checksumDialog.verificationResult.length > 0
-                text: checksumDialog.verificationResult
-                font.bold: true
-                font.pixelSize: 12
-                color: checksumDialog.verificationOk ? p.successText : p.dangerAccent
-            }
-
-            // Save .sha256 / .md5 button
-            RowLayout {
+            // TAB 1: Batch Generate & Verify
+            ColumnLayout {
+                visible: checksumDialog.activeTab === 1
                 Layout.fillWidth: true
-                spacing: 8
+                spacing: 10
 
+                // Card 1: Batch Generate
                 Rectangle {
-                    implicitHeight: 30
-                    implicitWidth: saveShaText.implicitWidth + 24
+                    Layout.fillWidth: true
+                    implicitHeight: batchGenCol.implicitHeight + 16
                     radius: win.smallRadius
-                    color: saveShaMouse.containsMouse ? p.accent : p.chipBg
+                    color: p.cardBg
                     border.width: 1
-                    border.color: saveShaMouse.containsMouse ? p.accent : p.borderDefault
+                    border.color: p.borderDefault
 
-                    Text {
-                        id: saveShaText
-                        anchors.centerIn: parent
-                        text: qsTr("Save .sha256 File")
-                        font.pixelSize: 11
-                        font.bold: true
-                        color: saveShaMouse.containsMouse ? p.accentFg : p.textPrimary
-                    }
-
-                    MouseArea {
-                        id: saveShaMouse
+                    ColumnLayout {
+                        id: batchGenCol
                         anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            var target = checksumDialog.filePath + ".sha256";
-                            if (backend.saveChecksumFile(checksumDialog.filePath, "sha256", target)) {
-                                backend.showStatus(qsTr("Checksum file saved: %1").arg(backend.fileName(target)));
-                                currentModel().refresh();
+                        anchors.margins: 8
+                        spacing: 8
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 6
+
+                            Text {
+                                text: qsTr("Generate Checksum Manifest")
+                                font.pixelSize: 12
+                                font.bold: true
+                                color: p.textPrimary
+                            }
+
+                            Item { Layout.fillWidth: true }
+
+                            FilterPill {
+                                label: "SHA256"
+                                active: checksumDialog.batchAlgorithm === "sha256"
+                                onClicked: checksumDialog.setBatchAlgorithm("sha256")
+                            }
+                            FilterPill {
+                                label: "SHA1"
+                                active: checksumDialog.batchAlgorithm === "sha1"
+                                onClicked: checksumDialog.setBatchAlgorithm("sha1")
+                            }
+                            FilterPill {
+                                label: "MD5"
+                                active: checksumDialog.batchAlgorithm === "md5"
+                                onClicked: checksumDialog.setBatchAlgorithm("md5")
+                            }
+
+                            ToolbarBtn {
+                                label: qsTr("Use Selection")
+                                onClicked: {
+                                    checksumDialog.batchFilePaths = win.collectSelectedRegularFiles();
+                                }
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+
+                            CompactField {
+                                id: batchOutputField
+                                Layout.fillWidth: true
+                                monospace: true
+                                placeholderText: qsTr("Output manifest path (e.g. checksums.sha256)...")
+                            }
+
+                            ToolbarBtn {
+                                label: qsTr("Generate")
+                                accentHighlight: true
+                                btnEnabled: !backend.batchChecksumRunning
+                                            && checksumDialog.batchFilePaths.length > 0
+                                            && batchOutputField.text.trim().length > 0
+                                onClicked: {
+                                    backend.startBatchChecksumGenerate(
+                                        checksumDialog.batchFilePaths,
+                                        checksumDialog.batchAlgorithm,
+                                        batchOutputField.text.trim()
+                                    );
+                                }
                             }
                         }
                     }
                 }
 
+                // Card 2: Batch Verify
                 Rectangle {
-                    implicitHeight: 30
-                    implicitWidth: saveMd5Text.implicitWidth + 24
+                    Layout.fillWidth: true
+                    implicitHeight: batchVerCol.implicitHeight + 16
                     radius: win.smallRadius
-                    color: saveMd5Mouse.containsMouse ? p.accent : p.chipBg
+                    color: p.cardBg
                     border.width: 1
-                    border.color: saveMd5Mouse.containsMouse ? p.accent : p.borderDefault
+                    border.color: p.borderDefault
 
-                    Text {
-                        id: saveMd5Text
-                        anchors.centerIn: parent
-                        text: qsTr("Save .md5 File")
-                        font.pixelSize: 11
-                        font.bold: true
-                        color: saveMd5Mouse.containsMouse ? p.accentFg : p.textPrimary
-                    }
-
-                    MouseArea {
-                        id: saveMd5Mouse
+                    ColumnLayout {
+                        id: batchVerCol
                         anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            var target = checksumDialog.filePath + ".md5";
-                            if (backend.saveChecksumFile(checksumDialog.filePath, "md5", target)) {
-                                backend.showStatus(qsTr("Checksum file saved: %1").arg(backend.fileName(target)));
-                                currentModel().refresh();
+                        anchors.margins: 8
+                        spacing: 8
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+
+                            Text {
+                                text: qsTr("Verify Manifest (.sha256 / .sha1 / .md5)")
+                                font.pixelSize: 12
+                                font.bold: true
+                                color: p.textPrimary
+                            }
+
+                            Item { Layout.fillWidth: true }
+
+                            ToolbarBtn {
+                                label: qsTr("Use Active File")
+                                onClicked: {
+                                    var cur = currentHighlightedPath();
+                                    if (cur.length > 0)
+                                        batchVerifyField.text = cur;
+                                }
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+
+                            CompactField {
+                                id: batchVerifyField
+                                Layout.fillWidth: true
+                                monospace: true
+                                placeholderText: qsTr("Path to .sha256 / .sha1 / .md5 manifest...")
+                            }
+
+                            ToolbarBtn {
+                                label: qsTr("Verify")
+                                accentHighlight: true
+                                btnEnabled: !backend.batchChecksumRunning
+                                            && batchVerifyField.text.trim().length > 0
+                                onClicked: backend.startBatchChecksumVerify(batchVerifyField.text.trim())
                             }
                         }
                     }
                 }
 
-                Rectangle {
-                    visible: checksumDialog.filePath.endsWith(".sha256") || checksumDialog.filePath.endsWith(".md5")
-                    implicitHeight: 30
-                    implicitWidth: verifyFileText.implicitWidth + 24
-                    radius: win.smallRadius
-                    color: verifyFileMouse.containsMouse ? p.accent : p.chipBg
-                    border.width: 1
-                    border.color: verifyFileMouse.containsMouse ? p.accent : p.borderDefault
+                // Batch async progress
+                RowLayout {
+                    Layout.fillWidth: true
+                    visible: backend.batchChecksumRunning
+                    spacing: 8
 
                     Text {
-                        id: verifyFileText
-                        anchors.centerIn: parent
-                        text: qsTr("Verify Checksum File")
+                        text: qsTr("Processing %1%").arg(Math.round(backend.batchChecksumProgress * 100))
+                              + (backend.batchChecksumDetail.length > 0 ? (" — " + backend.batchChecksumDetail) : "")
                         font.pixelSize: 11
                         font.bold: true
-                        color: verifyFileMouse.containsMouse ? p.accentFg : p.textPrimary
+                        color: p.accent
+                        elide: Text.ElideMiddle
+                        Layout.maximumWidth: 260
                     }
 
-                    MouseArea {
-                        id: verifyFileMouse
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            var res = backend.verifyChecksumFile(checksumDialog.filePath);
-                            backend.showStatus(res.message || "");
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 6
+                        radius: 3
+                        color: p.borderDefault
+                        Rectangle {
+                            width: parent.width * Math.max(0, Math.min(1, backend.batchChecksumProgress))
+                            height: parent.height
+                            radius: 3
+                            color: p.accent
+                        }
+                    }
+
+                    ToolbarBtn {
+                        implicitHeight: 22
+                        label: qsTr("Cancel")
+                        onClicked: backend.cancelBatchChecksum()
+                    }
+                }
+
+                // Results summary + per-file table
+                ColumnLayout {
+                    visible: Boolean(checksumDialog.batchResult && (checksumDialog.batchResult.message || (checksumDialog.batchResult.details && checksumDialog.batchResult.details.length > 0)))
+                    Layout.fillWidth: true
+                    spacing: 6
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 8
+
+                        Text {
+                            Layout.fillWidth: true
+                            text: (checksumDialog.batchResult && checksumDialog.batchResult.message) ? checksumDialog.batchResult.message : ""
+                            font.pixelSize: 12
+                            font.bold: true
+                            color: (checksumDialog.batchResult && checksumDialog.batchResult.success) ? p.successText : p.dangerAccent
+                            elide: Text.ElideMiddle
+                        }
+
+                        ToolbarBtn {
+                            visible: Boolean(checksumDialog.batchResult && checksumDialog.batchResult.outputFile)
+                            label: qsTr("Copy Path")
+                            onClicked: backend.copyTextToClipboard(checksumDialog.batchResult.outputFile || "", qsTr("Manifest path copied to clipboard."))
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 170
+                        radius: win.smallRadius
+                        color: p.inputBg
+                        border.width: 1
+                        border.color: p.borderDefault
+                        clip: true
+
+                        ListView {
+                            id: batchDetailsList
+                            anchors.fill: parent
+                            anchors.margins: 4
+                            spacing: 3
+                            model: (checksumDialog.batchResult && checksumDialog.batchResult.details) ? checksumDialog.batchResult.details : []
+
+                            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+
+                            delegate: Rectangle {
+                                width: batchDetailsList.width
+                                height: 32
+                                radius: win.smallRadius
+                                color: index % 2 === 0 ? p.cardAltBg : "transparent"
+
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 6
+                                    anchors.rightMargin: 6
+                                    spacing: 8
+
+                                    Rectangle {
+                                        implicitWidth: 68
+                                        implicitHeight: 20
+                                        radius: Math.min(4, win.smallRadius)
+                                        color: {
+                                            if (modelData.status === "ok") return Qt.alpha(p.successText, 0.16);
+                                            if (modelData.status === "missing") return Qt.alpha(p.warningText, 0.18);
+                                            if (modelData.status === "skipped") return p.badgeBg;
+                                            return Qt.alpha(p.dangerAccent, 0.18);
+                                        }
+                                        border.width: 1
+                                        border.color: {
+                                            if (modelData.status === "ok") return p.successText;
+                                            if (modelData.status === "missing") return p.warningText;
+                                            if (modelData.status === "skipped") return p.borderDefault;
+                                            return p.dangerAccent;
+                                        }
+
+                                        Text {
+                                            anchors.centerIn: parent
+                                            text: {
+                                                if (modelData.status === "ok") return "OK";
+                                                if (modelData.status === "missing") return "MISSING";
+                                                if (modelData.status === "skipped") return "SKIPPED";
+                                                if (modelData.status === "error") return "ERROR";
+                                                return "MISMATCH";
+                                            }
+                                            font.pixelSize: 9
+                                            font.bold: true
+                                            font.family: "monospace"
+                                            color: {
+                                                if (modelData.status === "ok") return p.successText;
+                                                if (modelData.status === "missing") return p.warningText;
+                                                if (modelData.status === "skipped") return p.textMuted;
+                                                return p.dangerAccent;
+                                            }
+                                        }
+                                    }
+
+                                    Text {
+                                        Layout.preferredWidth: 190
+                                        text: modelData.file || ""
+                                        font.pixelSize: 11
+                                        font.weight: Font.Medium
+                                        color: p.textPrimary
+                                        elide: Text.ElideMiddle
+                                    }
+
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: modelData.hash
+                                              || (modelData.status === "mismatch"
+                                                  ? (qsTr("got %1").arg((modelData.actual || "").slice(0, 16) + "…"))
+                                                  : (modelData.expected || modelData.status || ""))
+                                        font.pixelSize: 10
+                                        font.family: "monospace"
+                                        color: p.textMuted
+                                        elide: Text.ElideMiddle
+                                        horizontalAlignment: Text.AlignRight
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -10790,6 +11331,7 @@ ApplicationWindow {
 
         onRejected: {
             backend.cancelChecksumCalculation();
+            backend.cancelBatchChecksum();
             win.checksumOpen = false;
         }
     }
@@ -11056,6 +11598,7 @@ ApplicationWindow {
                         { key: "Ctrl + F3..F6", desc: qsTr("Sort by Name, Ext, Date, or Size") },
                         { key: "Ctrl + A / Ctrl + D", desc: qsTr("Select all / Deselect all") },
                         { key: "Ctrl + H", desc: qsTr("Toggle show/hide hidden dotfiles") },
+                        { key: "Ctrl + ,", desc: qsTr("Open Preferences / Settings dialog") },
                         { key: "F10 / Esc", desc: qsTr("Quit TwinForge / Close dialog") }
                     ]
 
@@ -11307,7 +11850,7 @@ ApplicationWindow {
                         && !win.maskOpen && !win.helpOpen && !win.aboutOpen && !win.previewOpen
                         && !win.syncDirsOpen && !win.duplicateFinderOpen && !win.queueDialogOpen
                         && !win.remoteConnectionsOpen && !win.openWithOpen
-                        && !win.workspacesOpen && !win.confirmEmptyTrashOpen
+                        && !win.workspacesOpen && !win.settingsOpen && !win.confirmEmptyTrashOpen
                         && !win.splitCombineOpen && !cmdLineInput.input.activeFocus)
                     currentListView().forceActiveFocus();
             }
@@ -12378,6 +12921,404 @@ ApplicationWindow {
                     onClicked: duplicateFinderDialog.reject()
                 }
             }
+        }
+    }
+
+    // Preferences / Settings Dialog (Ctrl+,)
+    AppDialog {
+        id: settingsDialog
+        visible: win.settingsOpen
+        title: qsTr("Preferences / Settings")
+        width: 580
+
+        property int draftFontSize: 12
+        property int draftRowHeight: 27
+        property string draftLanguageMode: "auto"
+
+        function loadFromBackend() {
+            draftFontSize = backend.fontSize;
+            draftRowHeight = backend.rowHeight;
+            draftLanguageMode = backend.languageMode;
+            customEditorField.text = backend.customEditor;
+            customTerminalField.text = backend.customTerminal;
+            confirmCopyCheck.checked = backend.confirmCopy;
+            confirmMoveCheck.checked = backend.confirmMove;
+            confirmDeleteCheck.checked = backend.confirmDelete;
+            showExtColCheck.checked = backend.showExtColumn;
+            showSizeColCheck.checked = backend.showSizeColumn;
+            showModifiedColCheck.checked = backend.showModifiedColumn;
+        }
+
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: 12
+
+            // Section 1: Appearance & Layout
+            Rectangle {
+                Layout.fillWidth: true
+                implicitHeight: appearanceCol.implicitHeight + 18
+                radius: win.smallRadius
+                color: p.cardBg
+                border.width: 1
+                border.color: p.borderDefault
+
+                ColumnLayout {
+                    id: appearanceCol
+                    anchors.fill: parent
+                    anchors.margins: 9
+                    spacing: 9
+
+                    Text {
+                        text: qsTr("Appearance & Columns")
+                        font.pixelSize: 12
+                        font.bold: true
+                        color: p.accent
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 16
+
+                        // Font size stepper
+                        RowLayout {
+                            spacing: 6
+                            Text {
+                                text: qsTr("Font size:")
+                                font.pixelSize: 12
+                                color: p.textSecondary
+                            }
+                            Rectangle {
+                                implicitWidth: 26
+                                implicitHeight: 24
+                                radius: win.smallRadius
+                                color: fontDecMouse.containsMouse && settingsDialog.draftFontSize > 10 ? p.btnHoverBg : p.chipBg
+                                border.width: 1
+                                border.color: p.borderDefault
+                                opacity: settingsDialog.draftFontSize > 10 ? 1.0 : 0.4
+                                Text { anchors.centerIn: parent; text: "−"; font.pixelSize: 13; font.bold: true; color: p.textPrimary }
+                                MouseArea {
+                                    id: fontDecMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    enabled: settingsDialog.draftFontSize > 10
+                                    onClicked: settingsDialog.draftFontSize--
+                                }
+                            }
+                            Rectangle {
+                                implicitWidth: 52
+                                implicitHeight: 24
+                                radius: win.smallRadius
+                                color: p.badgeBg
+                                border.width: 1
+                                border.color: p.borderDefault
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: settingsDialog.draftFontSize + " px"
+                                    font.pixelSize: 11
+                                    font.family: "monospace"
+                                    font.bold: true
+                                    color: p.textPrimary
+                                }
+                            }
+                            Rectangle {
+                                implicitWidth: 26
+                                implicitHeight: 24
+                                radius: win.smallRadius
+                                color: fontIncMouse.containsMouse && settingsDialog.draftFontSize < 16 ? p.btnHoverBg : p.chipBg
+                                border.width: 1
+                                border.color: p.borderDefault
+                                opacity: settingsDialog.draftFontSize < 16 ? 1.0 : 0.4
+                                Text { anchors.centerIn: parent; text: "+"; font.pixelSize: 13; font.bold: true; color: p.textPrimary }
+                                MouseArea {
+                                    id: fontIncMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    enabled: settingsDialog.draftFontSize < 16
+                                    onClicked: settingsDialog.draftFontSize++
+                                }
+                            }
+                        }
+
+                        // Row height stepper
+                        RowLayout {
+                            spacing: 6
+                            Text {
+                                text: qsTr("Row height:")
+                                font.pixelSize: 12
+                                color: p.textSecondary
+                            }
+                            Rectangle {
+                                implicitWidth: 26
+                                implicitHeight: 24
+                                radius: win.smallRadius
+                                color: rowDecMouse.containsMouse && settingsDialog.draftRowHeight > 22 ? p.btnHoverBg : p.chipBg
+                                border.width: 1
+                                border.color: p.borderDefault
+                                opacity: settingsDialog.draftRowHeight > 22 ? 1.0 : 0.4
+                                Text { anchors.centerIn: parent; text: "−"; font.pixelSize: 13; font.bold: true; color: p.textPrimary }
+                                MouseArea {
+                                    id: rowDecMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    enabled: settingsDialog.draftRowHeight > 22
+                                    onClicked: settingsDialog.draftRowHeight--
+                                }
+                            }
+                            Rectangle {
+                                implicitWidth: 52
+                                implicitHeight: 24
+                                radius: win.smallRadius
+                                color: p.badgeBg
+                                border.width: 1
+                                border.color: p.borderDefault
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: settingsDialog.draftRowHeight + " px"
+                                    font.pixelSize: 11
+                                    font.family: "monospace"
+                                    font.bold: true
+                                    color: p.textPrimary
+                                }
+                            }
+                            Rectangle {
+                                implicitWidth: 26
+                                implicitHeight: 24
+                                radius: win.smallRadius
+                                color: rowIncMouse.containsMouse && settingsDialog.draftRowHeight < 38 ? p.btnHoverBg : p.chipBg
+                                border.width: 1
+                                border.color: p.borderDefault
+                                opacity: settingsDialog.draftRowHeight < 38 ? 1.0 : 0.4
+                                Text { anchors.centerIn: parent; text: "+"; font.pixelSize: 13; font.bold: true; color: p.textPrimary }
+                                MouseArea {
+                                    id: rowIncMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    enabled: settingsDialog.draftRowHeight < 38
+                                    onClicked: settingsDialog.draftRowHeight++
+                                }
+                            }
+                        }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 14
+
+                        Text {
+                            text: qsTr("Visible columns:")
+                            font.pixelSize: 12
+                            color: p.textSecondary
+                        }
+
+                        AppCheckBox {
+                            id: showExtColCheck
+                            text: qsTr("Ext")
+                            checked: true
+                        }
+                        AppCheckBox {
+                            id: showSizeColCheck
+                            text: qsTr("Size")
+                            checked: true
+                        }
+                        AppCheckBox {
+                            id: showModifiedColCheck
+                            text: qsTr("Modified")
+                            checked: true
+                        }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 8
+
+                        Text {
+                            text: qsTr("Language:")
+                            font.pixelSize: 12
+                            color: p.textSecondary
+                        }
+
+                        FilterPill {
+                            label: qsTr("Auto (System)")
+                            active: settingsDialog.draftLanguageMode === "auto"
+                            onClicked: settingsDialog.draftLanguageMode = "auto"
+                        }
+                        FilterPill {
+                            label: "English (EN)"
+                            active: settingsDialog.draftLanguageMode === "en"
+                            onClicked: settingsDialog.draftLanguageMode = "en"
+                        }
+                        FilterPill {
+                            label: "Română (RO)"
+                            active: settingsDialog.draftLanguageMode === "ro"
+                            onClicked: settingsDialog.draftLanguageMode = "ro"
+                        }
+
+                        Item { Layout.fillWidth: true }
+
+                        Text {
+                            readonly property string activeLangCode: (typeof translator !== "undefined" && translator)
+                                ? translator.language
+                                : backend.languageMode
+                            text: qsTr("Active: %1").arg(activeLangCode.toUpperCase())
+                            font.pixelSize: 11
+                            font.family: "monospace"
+                            color: p.textMuted
+                        }
+                    }
+                }
+            }
+
+            // Section 2: External Tools ($EDITOR / $TERMINAL)
+            Rectangle {
+                Layout.fillWidth: true
+                implicitHeight: toolsCol.implicitHeight + 18
+                radius: win.smallRadius
+                color: p.cardBg
+                border.width: 1
+                border.color: p.borderDefault
+
+                ColumnLayout {
+                    id: toolsCol
+                    anchors.fill: parent
+                    anchors.margins: 9
+                    spacing: 8
+
+                    Text {
+                        text: qsTr("External Applications")
+                        font.pixelSize: 12
+                        font.bold: true
+                        color: p.accent
+                    }
+
+                    GridLayout {
+                        Layout.fillWidth: true
+                        columns: 2
+                        columnSpacing: 10
+                        rowSpacing: 8
+
+                        Text {
+                            text: qsTr("Custom $EDITOR:")
+                            font.pixelSize: 12
+                            color: p.textSecondary
+                        }
+                        CompactField {
+                            id: customEditorField
+                            Layout.fillWidth: true
+                            monospace: true
+                            placeholderText: qsTr("Leave blank to use $EDITOR / system default (e.g. nvim, code, kate)")
+                        }
+
+                        Text {
+                            text: qsTr("Custom $TERMINAL:")
+                            font.pixelSize: 12
+                            color: p.textSecondary
+                        }
+                        CompactField {
+                            id: customTerminalField
+                            Layout.fillWidth: true
+                            monospace: true
+                            placeholderText: qsTr("Leave blank to use $TERMINAL or auto-detect (foot, alacritty, kitty)")
+                        }
+                    }
+                }
+            }
+
+            // Section 3: Operation Confirmations
+            Rectangle {
+                Layout.fillWidth: true
+                implicitHeight: confirmCol.implicitHeight + 18
+                radius: win.smallRadius
+                color: p.cardBg
+                border.width: 1
+                border.color: p.borderDefault
+
+                ColumnLayout {
+                    id: confirmCol
+                    anchors.fill: parent
+                    anchors.margins: 9
+                    spacing: 6
+
+                    Text {
+                        text: qsTr("Confirmations")
+                        font.pixelSize: 12
+                        font.bold: true
+                        color: p.accent
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 14
+
+                        AppCheckBox {
+                            id: confirmCopyCheck
+                            text: qsTr("Confirm Copy (F5)")
+                            checked: true
+                        }
+                        AppCheckBox {
+                            id: confirmMoveCheck
+                            text: qsTr("Confirm Move (F6)")
+                            checked: true
+                        }
+                        AppCheckBox {
+                            id: confirmDeleteCheck
+                            text: qsTr("Confirm Delete (F8)")
+                            checked: true
+                        }
+                    }
+                }
+            }
+
+            // Action Buttons Row
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+
+                ToolbarBtn {
+                    label: qsTr("Reset Defaults")
+                    onClicked: {
+                        backend.resetSettingsToDefaults();
+                        settingsDialog.loadFromBackend();
+                    }
+                }
+
+                Item { Layout.fillWidth: true }
+
+                ToolbarBtn {
+                    label: qsTr("Cancel")
+                    onClicked: settingsDialog.reject()
+                }
+
+                ToolbarBtn {
+                    label: qsTr("Apply")
+                    accentHighlight: true
+                    onClicked: {
+                        backend.updateSettings({
+                            fontSize: settingsDialog.draftFontSize,
+                            rowHeight: settingsDialog.draftRowHeight,
+                            customEditor: customEditorField.text,
+                            customTerminal: customTerminalField.text,
+                            confirmCopy: confirmCopyCheck.checked,
+                            confirmMove: confirmMoveCheck.checked,
+                            confirmDelete: confirmDeleteCheck.checked,
+                            showExtColumn: showExtColCheck.checked,
+                            showSizeColumn: showSizeColCheck.checked,
+                            showModifiedColumn: showModifiedColCheck.checked,
+                            languageMode: settingsDialog.draftLanguageMode
+                        });
+                        win.settingsOpen = false;
+                        currentListView().forceActiveFocus();
+                    }
+                }
+            }
+        }
+
+        onRejected: {
+            win.settingsOpen = false;
+            currentListView().forceActiveFocus();
         }
     }
 }

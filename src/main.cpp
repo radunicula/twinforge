@@ -62,6 +62,10 @@ int main(int argc, char *argv[]) {
 
     Theme theme;
     Backend backend;
+    translator.setLanguageOverride(backend.languageMode());
+    QObject::connect(&backend, &Backend::settingsChanged, &translator, [&translator, &backend]() {
+        translator.setLanguageOverride(backend.languageMode());
+    });
 
     QQmlApplicationEngine engine;
     engine.addImageProvider(QStringLiteral("thumb"), new ThumbnailProvider());

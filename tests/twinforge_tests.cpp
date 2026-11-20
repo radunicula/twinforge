@@ -1525,6 +1525,7 @@ private slots:
         engine.addImageProvider(QStringLiteral("thumb"), new ThumbnailProvider());
         engine.rootContext()->setContextProperty("theme", &theme);
         engine.rootContext()->setContextProperty("backend", &backend);
+        engine.rootContext()->setContextProperty("translator", &translator);
         engine.rootContext()->setContextProperty("i18n", &translator);
         engine.load(QUrl(QStringLiteral("qrc:/Main.qml")));
         QVERIFY(!engine.rootObjects().isEmpty());
@@ -3046,6 +3047,180 @@ private slots:
         QCOMPARE(badRes.value("hasCrc").toBool(), true);
         QCOMPARE(badRes.value("verified").toBool(), false);
         QCOMPARE(badRes.value("success").toBool(), false);
+    }
+
+    void settingsPersistenceAndLiveTranslatorOverride()
+    {
+        QTemporaryDir cfg;
+        QVERIFY(cfg.isValid());
+        const QString bookmarks = cfg.filePath("bookmarks.json");
+
+        {
+            Backend b1(bookmarks);
+            // Defaults
+            QCOMPARE(b1.fontSize(), 12);
+            QCOMPARE(b1.rowHeight(), 27);
+            QCOMPARE(b1.customEditor(), QString());
+            QCOMPARE(b1.customTerminal(), QString());
+            QCOMPARE(b1.confirmCopy(), true);
+            QCOMPARE(b1.confirmMove(), true);
+            QCOMPARE(b1.confirmDelete(), true);
+            QCOMPARE(b1.showExtColumn(), true);
+            QCOMPARE(b1.showSizeColumn(), true);
+            QCOMPARE(b1.showModifiedColumn(), true);
+            QCOMPARE(b1.languageMode(), QStringLiteral("auto"));
+
+            // Clamping & normalization
+            b1.setFontSize(4);
+            QCOMPARE(b1.fontSize(), 10);
+            b1.setFontSize(99);
+            QCOMPARE(b1.fontSize(), 16);
+            b1.setRowHeight(5);
+            QCOMPARE(b1.rowHeight(), 22);
+            b1.setRowHeight(99);
+            QCOMPARE(b1.rowHeight(), 38);
+            b1.setLanguageMode(QStringLiteral("fr"));
+            QCOMPARE(b1.languageMode(), QStringLiteral("auto"));
+
+            // Batch updateSettings emits once and saves
+            QSignalSpy spy(&b1, &Backend::settingsChanged);
+            QVariantMap prefs;
+            prefs[QStringLiteral("fontSize")] = 14;
+            prefs[QStringLiteral("rowHeight")] = 32;
+            prefs[QStringLiteral("customEditor")] = QStringLiteral("nvim");
+            prefs[QStringLiteral("customTerminal")] = QStringLiteral("kitty");
+            prefs[QStringLiteral("confirmCopy")] = false;
+            prefs[QStringLiteral("confirmMove")] = false;
+            prefs[QStringLiteral("confirmDelete")] = false;
+            prefs[QStringLiteral("showExtColumn")] = false;
+            prefs[QStringLiteral("showSizeColumn")] = true;
+            prefs[QStringLiteral("showModifiedColumn")] = false;
+            prefs[QStringLiteral("languageMode")] = QStringLiteral("ro");
+            b1.updateSettings(prefs);
+            QCOMPARE(spy.count(), 1);
+        }
+
+        // Reload in fresh Backend and verify persistence
+        {
+            Backend b2(bookmarks);
+            QCOMPARE(b2.fontSize(), 14);
+            QCOMPARE(b2.rowHeight(), 32);
+            QCOMPARE(b2.customEditor(), QStringLiteral("nvim"));
+            QCOMPARE(b2.customTerminal(), QStringLiteral("kitty"));
+            QCOMPARE(b2.confirmCopy(), false);
+            QCOMPARE(b2.confirmMove(), false);
+            QCOMPARE(b2.confirmDelete(), false);
+            QCOMPARE(b2.showExtColumn(), false);
+            QCOMPARE(b2.showSizeColumn(), true);
+            QCOMPARE(b2.showModifiedColumn(), false);
+            QCOMPARE(b2.languageMode(), QStringLiteral("ro"));
+
+            b2.resetSettingsToDefaults();
+            QCOMPARE(b2.fontSize(), 12);
+            QCOMPARE(b2.rowHeight(), 27);
+            QCOMPARE(b2.customEditor(), QString());
+            QCOMPARE(b2.customTerminal(), QString());
+            QCOMPARE(b2.confirmCopy(), true);
+            QCOMPARE(b2.confirmMove(), true);
+            QCOMPARE(b2.confirmDelete(), true);
+            QCOMPARE(b2.showExtColumn(), true);
+            QCOMPARE(b2.showSizeColumn(), true);
+            QCOMPARE(b2.showModifiedColumn(), true);
+            QCOMPARE(b2.languageMode(), QStringLiteral("auto"));
+        }
+
+        // Live Translator override independent of language file
+        const QString langFile = cfg.filePath("language");
+        writeFile(langFile, "en\n");
+        Translator tr(langFile);
+        QCOMPARE(tr.language(), QStringLiteral("en"));
+        QSignalSpy trSpy(&tr, &Translator::changed);
+
+        tr.setLanguageOverride(QStringLiteral("ro"));
+        QCOMPARE(tr.languageOverride(), QStringLiteral("ro"));
+        QCOMPARE(tr.language(), QStringLiteral("ro"));
+        QCOMPARE(trSpy.count(), 1);
+        QCOMPARE(tr.translate("", "Apply"), QStringLiteral("Aplică"));
+
+        tr.setLanguageOverride(QStringLiteral("auto"));
+        QCOMPARE(tr.languageOverride(), QStringLiteral("auto"));
+        QCOMPARE(tr.language(), QStringLiteral("en"));
+        QCOMPARE(trSpy.count(), 2);
+    }
+
+    void batchChecksumGenerateVerifyAndCancellation()
+    {
+        QTemporaryDir root;
+        QTemporaryDir cfg;
+        QVERIFY(root.isValid());
+        QVERIFY(cfg.isValid());
+
+        const QString fileA = root.filePath("alpha.txt");
+        const QString subDir = root.filePath("sub");
+        const QString emptyDir = root.filePath("folder_to_skip");
+        QVERIFY(QDir().mkpath(subDir));
+        QVERIFY(QDir().mkpath(emptyDir));
+        const QString fileB = QDir(subDir).filePath("beta.bin");
+
+        writeFile(fileA, "twinforge-alpha-payload\n");
+        writeFile(fileB, QByteArray(4096, 'B'));
+
+        Backend backend(cfg.filePath("bookmarks.json"));
+
+        // 1. Sync batch generation (2 files + 1 skipped dir -> relative paths in manifest)
+        const QString sha256Manifest = root.filePath("checksums.sha256");
+        const QVariantMap genRes = backend.generateBatchChecksumFile(
+            {fileA, fileB, emptyDir}, QStringLiteral("sha256"), sha256Manifest);
+        QCOMPARE(genRes.value("success").toBool(), true);
+        QCOMPARE(genRes.value("processed").toInt(), 2);
+        QCOMPARE(genRes.value("skipped").toInt(), 1);
+        QVERIFY(QFileInfo::exists(sha256Manifest));
+
+        const QVariantMap syncVer = backend.verifyChecksumFile(sha256Manifest);
+        QCOMPARE(syncVer.value("success").toBool(), true);
+        QCOMPARE(syncVer.value("total").toInt(), 2);
+        QCOMPARE(syncVer.value("matched").toInt(), 2);
+        QCOMPARE(syncVer.value("failed").toInt(), 0);
+        QCOMPARE(syncVer.value("missing").toInt(), 0);
+
+        // 2. Async batch generation (SHA-1) & async verification
+        const QString sha1Manifest = root.filePath("checksums.sha1");
+        QSignalSpy finishSpy(&backend, &Backend::batchChecksumFinished);
+        backend.startBatchChecksumGenerate({fileA, fileB}, QStringLiteral("sha1"), sha1Manifest);
+        QTRY_COMPARE_WITH_TIMEOUT(finishSpy.count(), 1, 5000);
+        const QVariantMap asyncGen = finishSpy.takeFirst().at(0).toMap();
+        QCOMPARE(asyncGen.value("mode").toString(), QStringLiteral("generate"));
+        QCOMPARE(asyncGen.value("success").toBool(), true);
+        QCOMPARE(asyncGen.value("algorithm").toString(), QStringLiteral("sha1"));
+        QCOMPARE(asyncGen.value("processed").toInt(), 2);
+
+        backend.startBatchChecksumVerify(sha1Manifest);
+        QTRY_COMPARE_WITH_TIMEOUT(finishSpy.count(), 1, 5000);
+        const QVariantMap asyncVer = finishSpy.takeFirst().at(0).toMap();
+        QCOMPARE(asyncVer.value("mode").toString(), QStringLiteral("verify"));
+        QCOMPARE(asyncVer.value("success").toBool(), true);
+        QCOMPARE(asyncVer.value("matched").toInt(), 2);
+
+        // 3. Modify alpha & delete beta -> async verify must report 1 mismatch, 1 missing
+        writeFile(fileA, "twinforge-tampered-payload\n");
+        QVERIFY(QFile::remove(fileB));
+        backend.startBatchChecksumVerify(sha256Manifest);
+        QTRY_COMPARE_WITH_TIMEOUT(finishSpy.count(), 1, 5000);
+        const QVariantMap badVer = finishSpy.takeFirst().at(0).toMap();
+        QCOMPARE(badVer.value("success").toBool(), false);
+        QCOMPARE(badVer.value("total").toInt(), 2);
+        QCOMPARE(badVer.value("matched").toInt(), 0);
+        QCOMPARE(badVer.value("failed").toInt(), 1);
+        QCOMPARE(badVer.value("missing").toInt(), 1);
+
+        // 4. Cancellation check
+        const QString bigFile = root.filePath("large.dat");
+        writeFile(bigFile, QByteArray(4 * 1024 * 1024, 'Z'));
+        const QString cancelledManifest = root.filePath("cancelled.sha256");
+        backend.startBatchChecksumGenerate({bigFile}, QStringLiteral("sha256"), cancelledManifest);
+        backend.cancelBatchChecksum();
+        QCOMPARE(backend.batchChecksumRunning(), false);
+        QTest::qWait(80);
     }
 };
 

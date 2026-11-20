@@ -14,7 +14,7 @@
   <img src="https://img.shields.io/badge/C%2B%2B-20-00599C?logo=c%2B%2B&logoColor=white" alt="C++20">
   <img src="https://img.shields.io/badge/Platform-Linux-FCC624?logo=linux&logoColor=black" alt="Linux">
   <img src="https://img.shields.io/badge/CLI-twinforge%20%7C%20tf-00B4D8" alt="CLI twinforge / tf">
-  <img src="https://img.shields.io/badge/Tests-63%20Passing-success" alt="Tests 63 Passing">
+  <img src="https://img.shields.io/badge/Tests-65%20Passing-success" alt="Tests 65 Passing">
   <img src="https://img.shields.io/badge/License-GPLv3-blue" alt="License GPL-3.0">
   <a href="https://revolut.me/radunicula"><img src="https://img.shields.io/badge/Donate-Revolut-0075EB?logo=revolut&logoColor=white" alt="Donate via Revolut"></a>
 </p>
@@ -24,6 +24,8 @@
 ## ✨ About TwinForge
 
 **TwinForge** (`twinforge` / `tf`) is an open-source, native Linux dual-panel orthodox file manager built with **C++20, Qt 6, and QML**. Designed for keyboard-driven speed and modern desktop polish, it pairs classic dual-panel ergonomics (independent panels, F3–F10 function keys, locked tabs, workspaces, multi-rename, file split/combine) with a **100% non-blocking asynchronous architecture**, Freedesktop standards (Thumbnails, Trash `trash://`, XDG MIME / `.desktop` integration), and live **Obsidian Carbon (Dark) / Alabaster Daylight (Light)** theming that syncs automatically with Omarchy / Hyprland accents.
+
+📖 **Technical Deep-Dive:** See [ARCHITECTURE.md](ARCHITECTURE.md) for system diagrams, async worker generation-based cancellation, Single-Instance IPC, and the operation queue lifecycle.
 
 ### 📸 Screenshots
 
@@ -70,7 +72,7 @@ sudo apt install build-essential qmake6 qt6-base-dev qt6-declarative-dev libqt6s
 git clone https://github.com/radunicula/twinforge.git
 cd twinforge
 ./bin/build   # Produces ./build/twinforge (and ./build/tf alias)
-./bin/test    # Runs the 63 automated headless tests
+./bin/test    # Runs the 65 automated headless tests
 ```
 
 ---
@@ -112,8 +114,8 @@ cd twinforge
 - **Removable Drive Mounting:** Discovers unmounted partitions via `lsblk` with 1-click mounting via `udisksctl` and 1-click eject.
 
 ### 📂 Dual-Panel Workflow, Locked Tabs, Workspaces & Trash Manager
-- **Independent Panels:** Dual-panel orthodox layout with swift keyboard switching (<kbd>Tab</kbd>).
-- **Locked / Pinned Tabs & Power Tab Actions:** Right-click any tab (or press <kbd>Ctrl+Alt+L</kbd>) to lock it in **Allow Navigation** mode (click tab to return to its locked root) or **Strict** mode (navigating opens a new tab); plus **Duplicate Tab**, **Move Tab to Opposite Panel**, **Move Left/Right**, **Reopen Closed Tab** (<kbd>Ctrl+Shift+W</kbd>), and **Close Other Unlocked Tabs** — all persisted across sessions.
+- **Independent Panels:** Dual-panel orthodox layout with swift keyboard switching (<kbd>Tab</kbd>) and customizable columns (`Ext`, `Size`, `Modified`), font size (`10–16 px`), and row density (`22–38 px`) via **Preferences / Settings (<kbd>Ctrl+,</kbd>)**.
+- **Locked / Pinned Tabs & Drag-and-Drop Reordering:** Drag tabs directly with the mouse to reorder within a panel or drop across to the opposite panel; right-click any tab (or press <kbd>Ctrl+Alt+L</kbd>) to lock it in **Allow Navigation** or **Strict** mode, **Duplicate**, **Move to Opposite Panel**, **Reopen Closed Tab** (<kbd>Ctrl+Shift+W</kbd>), and **Close Other Unlocked Tabs** — all persisted across sessions.
 - **Named Dual-Panel Workspaces (<kbd>Ctrl+Shift+L</kbd>):** Save, update, load, and delete complete dual-panel tab layouts (including locked tabs, sort order, and hidden-files settings) in `~/.config/twinforge/workspaces.json`.
 - **Freedesktop Trash Manager (`trash://`, <kbd>Ctrl+Shift+Backspace</kbd>):** Browse trashed items directly in either panel (or via the Drives bar chip with live item count), inspect original paths and deletion dates, **Restore** with automatic collision safety, **Delete Permanently**, or **Empty Trash**.
 - **History & Breadcrumbs:** Complete back/forward directory history per tab (<kbd>Alt+Left</kbd>, <kbd>Alt+Right</kbd>) and clickable breadcrumbs (<kbd>Ctrl+L</kbd> for manual path input).
@@ -135,7 +137,8 @@ cd twinforge
 - **Non-Blocking Async Architecture:** Background worker execution with live progress & cancellation for Git status, recursive folder sizes, duplicate scanning, directory compare/sync, checksums, previews (`pdftoppm`/`ffprobe`), archive pack/extract, `lsblk` drive discovery, and remote mounts (`rclone`/`gio`/`sshfs`).
 - **List & Grid Thumbnail Views (Freedesktop Cache):** Toggle between a detailed dual-panel list (<kbd>Ctrl+1</kbd>) and visual thumbnail grid (<kbd>Ctrl+2</kbd>) backed by an asynchronous Freedesktop-compliant thumbnail cache (`~/.cache/thumbnails/{normal,large}`) for images, videos, and PDFs.
 - **Git Status Tracking:** Live repository detection showing branch name, modified/untracked counts, and per-item status badges (`M`, `?`, `A`, `D`).
-- **Checksum Calculation & Verification:** MD5, SHA-1, and SHA-256 calculation, live matching against clipboard hashes, and `.sha256` / `.md5` verification.
+- **Checksum Calculation & Batch Verification:** Single-file MD5/SHA-1/SHA-256 hashing plus async **Batch Checksum & Verify** to generate and verify `.sha256` / `.sha1` / `.md5` manifests across multiple selected files with per-file `OK` / `MISMATCH` / `MISSING` reporting and cancellation.
+- **Configurable Preferences (<kbd>Ctrl+,</kbd>):** Persistent settings for panel font size, row height, visible columns, custom `$EDITOR` & `$TERMINAL` commands, optional F5/F6/F8 operation confirmations, and live UI language switching (`Auto` / `English` / `Română`).
 - **Visual File Diff (<kbd>Ctrl+Alt+D</kbd>):** Side-by-side visual diff between two files or panel selections.
 - **Undo Stack (<kbd>Ctrl+Z</kbd>):** Undo recent renames, moves, and Trash deletions.
 - **Properties & Permissions (<kbd>Alt+Enter</kbd>):** Interactive 3×3 `chmod` matrix, octal permission input, owner/group info, and recursive apply.
@@ -189,6 +192,7 @@ cd twinforge
 | <kbd>Num+</kbd> / <kbd>Num-</kbd> | Select / deselect by wildcard pattern (e.g. `*.jpg`) |
 | <kbd>Num*</kbd> / <kbd>Ctrl+Shift+A</kbd> | Invert selection |
 | <kbd>Ctrl+H</kbd> | Toggle hidden files |
+| <kbd>Ctrl+,</kbd> | Open Preferences / Settings dialog |
 | <kbd>Ctrl+S</kbd> | Quick filter active panel |
 | <kbd>Ctrl+B</kbd> | Bookmark manager |
 | <kbd>Ctrl+U</kbd> / <kbd>Alt+=</kbd> | Swap panels / Sync target to active panel |
@@ -215,7 +219,7 @@ Binary will be created at `./build/twinforge` (with `./build/tf` symlink alias).
 ```bash
 ./bin/test
 ```
-Runs the full automated test suite (**63 test cases**) verifying file operations, operation queue/pause/resume, non-blocking async workers & cancellation, Freedesktop thumbnail cache compliance, CLI parsing & Single-Instance IPC, locked tabs & tab management, dual-panel workspaces, Freedesktop Trash (`trash://`) restore/delete/empty, multi-character type-ahead quick jump, async command runner with built-in `cd` & history, file split/combine with SHA-256 verification, next-gen previews, RegEx multi-rename, Google Drive (`rclone`), remote URIs, XDG Open With/Custom Actions, search, sync, duplicate finder, undo stack, git tracking, diffing, permissions, and full QML UI loading without errors.
+Runs the full automated test suite (**65 test cases**) verifying file operations, operation queue/pause/resume, non-blocking async workers & cancellation, persistent user preferences & live language switching, batch checksum generation/verification, Freedesktop thumbnail cache compliance, CLI parsing & Single-Instance IPC, locked tabs & tab management, dual-panel workspaces, Freedesktop Trash (`trash://`) restore/delete/empty, multi-character type-ahead quick jump, async command runner with built-in `cd` & history, file split/combine with SHA-256 verification, next-gen previews, RegEx multi-rename, Google Drive (`rclone`), remote URIs, XDG Open With/Custom Actions, search, sync, duplicate finder, undo stack, git tracking, diffing, permissions, and full QML UI loading without errors.
 
 ---
 
