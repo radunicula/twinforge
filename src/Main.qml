@@ -131,11 +131,6 @@ ApplicationWindow {
 
     Material.theme: win.isDark ? Material.Dark : Material.Light
     Material.accent: p.accent
-    // Material.roundedScale is an enum, not a pixel radius; map Hyprland's rounding cleanly.
-    Material.roundedScale: theme.radius <= 0 ? Material.NotRounded
-                         : theme.radius <= 5 ? Material.ExtraSmallScale
-                         : theme.radius <= 10 ? Material.SmallScale
-                         : Material.MediumScale
 
     readonly property int panelRadius: Math.min(8, theme.radius)
     readonly property int smallRadius: Math.min(6, theme.radius)
