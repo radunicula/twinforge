@@ -13,6 +13,7 @@ struct CliRequest {
     bool newTab = false;
     bool newWindow = false;
     bool printLastDir = false;
+    bool smokeTest = false;
     bool activate = true;
 
     bool hasNavigation() const
@@ -22,7 +23,7 @@ struct CliRequest {
 
     bool shouldUseSingleInstance() const
     {
-        return !newWindow && lastDirFile.isEmpty() && !printLastDir && shellInit.isEmpty();
+        return !newWindow && !smokeTest && lastDirFile.isEmpty() && !printLastDir && shellInit.isEmpty();
     }
 };
 

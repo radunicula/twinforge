@@ -1,6 +1,7 @@
 #include <QBuffer>
 #include <QClipboard>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QGuiApplication>
@@ -15,11 +16,14 @@
 #include <QQuickWindow>
 #include <QSignalSpy>
 #include <QTemporaryDir>
+#include <QThreadPool>
 #include <QUrl>
 #include <QtTest>
 
+#include <fcntl.h>
 #include <memory>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include "backend.h"
 #include "cli.h"
@@ -2578,6 +2582,17 @@ private slots:
                           root.path(), QStringLiteral("0.1.0"), &err, &exitOk, &out);
         QVERIFY(!err.isEmpty());
         QCOMPARE(exitOk, false);
+
+        // 6. --smoke-test keeps archive file path intact and disables single-instance handoff
+        const CliRequest smokeReq = parseCliArguments(
+            {QStringLiteral("tf"), QStringLiteral("--smoke-test"), sampleFile, root.filePath("right_dir")},
+            root.path(), QStringLiteral("0.1.0"), &err, &exitOk, &out);
+        QVERIFY(err.isEmpty());
+        QCOMPARE(exitOk, false);
+        QCOMPARE(smokeReq.smokeTest, true);
+        QCOMPARE(smokeReq.shouldUseSingleInstance(), false);
+        QCOMPARE(smokeReq.leftPath, QDir::cleanPath(sampleFile));
+        QCOMPARE(smokeReq.rightPath, QDir::cleanPath(root.filePath("right_dir")));
     }
 
     void singleInstanceIpcAndNavigationRequest()
@@ -3547,6 +3562,117 @@ private slots:
 
         QVERIFY(b2.removeSearchFromWorkspace(QStringLiteral("Validare radar"), searchId));
         QCOMPARE(b2.activeWorkspaceSavedSearches().size(), 0);
+    }
+
+    void heavyDirectoryInteractivityAndCancellationBudgets()
+    {
+        QTemporaryDir root;
+        QTemporaryDir cfg;
+        const QString heavyDir = root.filePath(QStringLiteral("heavy_5k"));
+        const QString smallDir = root.filePath(QStringLiteral("small_tab"));
+        QVERIFY(QDir().mkpath(heavyDir));
+        QVERIFY(QDir().mkpath(smallDir));
+
+        const QByteArray payload(128, 'Z');
+        for (int d = 0; d < 20; ++d) {
+            const QString sub = QStringLiteral("%1/sub_%2").arg(heavyDir).arg(d, 2, 10, QLatin1Char('0'));
+            QVERIFY(QDir().mkpath(sub));
+            const QByteArray subPrefix = (sub + QLatin1Char('/')).toUtf8();
+            for (int f = 0; f < 20; ++f) {
+                const QByteArray p = subPrefix + QByteArrayLiteral("nested_") + QByteArray::number(f) + QByteArrayLiteral(".log");
+                const int fd = ::open(p.constData(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                QVERIFY(fd >= 0);
+                ::write(fd, payload.constData(), static_cast<size_t>((f % 5) * 16 + 8));
+                ::close(fd);
+            }
+        }
+        const QByteArray heavyPrefix = (heavyDir + QLatin1Char('/')).toUtf8();
+        for (int i = 0; i < 4600; ++i) {
+            const QByteArray p = heavyPrefix + QByteArrayLiteral("item_")
+                                 + QByteArray::number(i).rightJustified(4, '0')
+                                 + ((i % 2 == 0) ? QByteArrayLiteral(".txt") : QByteArrayLiteral(".log"));
+            const int fd = ::open(p.constData(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            QVERIFY(fd >= 0);
+            ::write(fd, payload.constData(), static_cast<size_t>((i % 7) * 16 + 8));
+            ::close(fd);
+        }
+        writeFile(smallDir + QStringLiteral("/note.txt"), "small");
+
+        // 1. Load, lazy role formatting, filter, and ascending/descending strict sorting
+        PanelModel panel(heavyDir);
+        QCOMPARE(panel.itemCount(), 4621); // 4600 files + 20 subdirs + ".."
+
+        const QModelIndex parentIdx = panel.index(0, 0);
+        QCOMPARE(panel.data(parentIdx, PanelModel::NameRole).toString(), QStringLiteral(".."));
+        QCOMPARE(panel.data(parentIdx, PanelModel::FormattedSizeRole).toString(), QStringLiteral("<UP>"));
+        QCOMPARE(panel.data(parentIdx, PanelModel::PermissionsRole).toString(), QString());
+
+        for (int r = 1; r < 40; ++r) {
+            const QModelIndex idx = panel.index(r, 0);
+            QVERIFY(!panel.data(idx, PanelModel::FormattedSizeRole).toString().isEmpty());
+            QVERIFY(panel.data(idx, PanelModel::ModifiedRole).toString().contains(QLatin1Char('-')));
+            QCOMPARE(panel.data(idx, PanelModel::PermissionsRole).toString().size(), 9);
+        }
+
+        panel.setFilter(QStringLiteral("item_042"));
+        QVERIFY(panel.itemCount() > 1 && panel.itemCount() < 100);
+        panel.setFilter(QString());
+        QCOMPARE(panel.itemCount(), 4621);
+
+        panel.setSortField(PanelModel::SortBySize);
+        panel.setSortAscending(false);
+        const qint64 firstFileSizeDesc = panel.data(panel.index(21, 0), PanelModel::SizeRole).toLongLong();
+        const qint64 lastFileSizeDesc = panel.data(panel.index(panel.itemCount() - 1, 0), PanelModel::SizeRole).toLongLong();
+        QVERIFY(firstFileSizeDesc >= lastFileSizeDesc);
+
+        panel.setSortField(PanelModel::SortByExt);
+        QCOMPARE(panel.itemCount(), 4621);
+
+        // 2. Switching tab while folder sizes are computing cancels cleanly without stale updates
+        panel.addTab(smallDir);
+        panel.setActiveTab(0);
+        panel.calculateAllFolderSizes();
+        QVERIFY(panel.calculatingFolderSizes());
+
+        QElapsedTimer tabTimer;
+        tabTimer.start();
+        panel.setActiveTab(1);
+        const qint64 tabSwitchMs = tabTimer.elapsed();
+        QVERIFY2(tabSwitchMs < 250, qPrintable(QStringLiteral("Tab switch took %1 ms").arg(tabSwitchMs)));
+        QCOMPARE(panel.path(), smallDir);
+        QCOMPARE(panel.calculatingFolderSizes(), false);
+
+        QSignalSpy calcSpy(&panel, &PanelModel::folderSizeCalculationChanged);
+        int staleSizeDataEvents = 0;
+        QObject::connect(&panel, &PanelModel::dataChanged, &panel,
+                         [&staleSizeDataEvents](const QModelIndex &, const QModelIndex &, const QList<int> &roles) {
+                             if (roles.isEmpty() || roles.contains(PanelModel::SizeRole)
+                                 || roles.contains(PanelModel::FormattedSizeRole)) {
+                                 ++staleSizeDataEvents;
+                             }
+                         });
+        QTest::qWait(80);
+        QCOMPARE(calcSpy.count(), 0);
+        QCOMPARE(staleSizeDataEvents, 0);
+        QCOMPARE(panel.path(), smallDir);
+        QVERIFY(QThreadPool::globalInstance()->waitForDone(5000));
+
+        // 3. Cancelling heavy search returns non-blocking on UI thread and drains cleanly
+        Backend backend(cfg.filePath("bookmarks.json"));
+        QVariantMap opts;
+        opts.insert(QStringLiteral("contentQuery"), QStringLiteral("UNLIKELY_TOKEN_999999"));
+        opts.insert(QStringLiteral("typeFilter"), QStringLiteral("files"));
+        backend.startAdvancedSearch(heavyDir, opts);
+        QTest::qWait(10);
+
+        QElapsedTimer cancelTimer;
+        cancelTimer.start();
+        backend.cancelSearch();
+        const qint64 cancelMs = cancelTimer.elapsed();
+        QCOMPARE(backend.searchRunning(), false);
+        QVERIFY2(cancelMs < 50, qPrintable(QStringLiteral("cancelSearch() blocked UI thread for %1 ms").arg(cancelMs)));
+        QVERIFY(QThreadPool::globalInstance()->waitForDone(5000));
+        QVERIFY(backend.searchResultItems().isEmpty());
     }
 };
 

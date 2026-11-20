@@ -152,6 +152,20 @@ On launch, `main.cpp` evaluates arguments via `parseCliArguments(...)` in `src/c
 | **Thumbnail Cache** | [`src/thumbnailprovider.h`](src/thumbnailprovider.h), [`src/thumbnailprovider.cpp`](src/thumbnailprovider.cpp) | Async `image://thumb/` provider implementing Freedesktop `~/.cache/thumbnails/{normal,large}` MD5 PNG specification |
 | **Theming & i18n** | [`src/theme.h`](src/theme.h), [`src/theme.cpp`](src/theme.cpp), [`src/translator.h`](src/translator.h), [`src/translator.cpp`](src/translator.cpp) | Dynamic Omarchy/Hyprland accent/radius watching and JSON translation catalog (`en` / `ro`) with live runtime override |
 | **UI Shell** | [`src/Main.qml`](src/Main.qml), [`src/CommandOutput.qml`](src/CommandOutput.qml) | Dual-panel Qt Quick UI, modular command drawer, themes, Command Palette, previewers, batch tools, settings dialog |
-| **Test Suite** | [`tests/twinforge_tests.cpp`](tests/twinforge_tests.cpp) | 69 `QtTest` offscreen verification tests covering core models, workers, recovery, IPC, archives, settings, standalone QML components, and full QML root instantiation |
+| **Test Suite & Benchmarks** | [`tests/twinforge_tests.cpp`](tests/twinforge_tests.cpp), [`tests/bench_interactivity.cpp`](tests/bench_interactivity.cpp) | 70 `QtTest` offscreen verification tests plus reproducible `./bin/bench` 50,000-file interactivity benchmark harness |
 
-**Qt Compatibility Policy:** Development builds target **Qt 6.12+** (Arch Linux / C++20), while GitHub Actions CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) compiles and executes the full headless test suite under `xvfb-run` on **Ubuntu 24.04 LTS (Qt 6.4.2)** to guarantee broad Linux distribution compatibility.
+**Qt Compatibility Policy:** Development builds target **Qt 6.12+** (Arch Linux / C++20), while GitHub Actions CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) compiles and executes the full headless test suite under `xvfb-run` on **Ubuntu 24.04 LTS (Qt 6.4.2)** and verifies installable `.deb` (`ubuntu:24.04`) and `.rpm` (`fedora:41`) packages in clean Docker containers.
+
+---
+
+## 6. Heavy-Directory Interactivity & Native Distribution Packaging
+
+1. **Lazy Row Formatting & Zero-Allocation Sorting (`src/panelmodel.cpp`):**
+   - `PanelModel::loadDirectory()` enumerates with `QDir::NoSort`, derives executability directly from cached `posixMode` bits (`& 0111`) instead of redundant `access(X_OK)` syscalls, and defers formatted string generation (`FormattedSizeRole`, `ModifiedRole`, `PermissionsRole`) until `PanelModel::data()` renders visible viewport rows (`0.06 ms` for 40 rows).
+   - `PanelModel::sortItems()` and `setFilter()` compare precomputed `nameLower` / `extLower` strings under a strict-weak-ordering comparator (`55.54 ms` sort and `1.90 ms` filter+clear across `50,000` files).
+2. **Batched Size Updates & Non-Blocking Worker Cancellation (`src/panelmodel.cpp`, `src/backend.cpp`):**
+   - `startFolderSizeCalculation()` throttles UI updates via `QElapsedTimer` (`>= 32` directories or `>= 60 ms`) into single `applyCalculatedFolderSizes()` model passes; tab switching calls `cancelFolderSizeCalculation()`, returning in `~19.5 ms` with `0` stale updates.
+   - `Backend::startAdvancedSearchInternal()` runs on `QThreadPool` using streaming `QDirIterator` checks every `32` entries (`(scanned & 31) == 0`); `Backend::cancelSearch()` bumps `m_searchGeneration` and flips `std::shared_ptr<std::atomic<bool>>` without blocking the GUI thread (`0.00 ms` UI return, `0.22 ms` worker drain in `./bin/bench --files 50000`).
+3. **RPM/DEB Packaging & Clean-Container Smoke Verification (`packaging/`):**
+   - `packaging/rpm/twinforge.spec` (`./packaging/build-rpm.sh`) and `packaging/deb/control.in` (`./packaging/build-deb.sh`) produce native Fedora and Ubuntu/Debian packages.
+   - `twinforge --smoke-test <archive> <dest>` loads `qrc:/Main.qml` offscreen with strict QML warning capture, opens the archive in virtual view, extracts an entry via `Backend::copyItems`, and verifies non-empty output — executed automatically by `packaging/smoke-test-package.sh` inside clean `fedora:41` and `ubuntu:24.04` containers on every CI run.

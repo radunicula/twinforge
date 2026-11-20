@@ -6,6 +6,7 @@
 #include <QFileInfo>
 #include <QFileSystemWatcher>
 #include <QHash>
+#include <QPair>
 #include <QSet>
 #include <QStorageInfo>
 #include <QVariantList>
@@ -36,6 +37,7 @@ struct ArchiveEntryInfo {
 
 struct PanelItem {
     QString name;
+    QString nameLower;
     QString path;
     bool isDir = false;
     bool isParent = false;
@@ -45,7 +47,10 @@ struct PanelItem {
     QDateTime modified;
     QString formattedModified;
     QString extension;
+    QString extLower;
     QString permissions;
+    quint16 posixMode = 0;
+    bool hasPosixMode = false;
     QString iconType;
     QString gitStatus; // "", "modified", "untracked", "staged", "deleted"
     QString originalPath; // populated in trash:// view
@@ -293,6 +298,7 @@ private:
     void recalculateSizeMetrics();
     void startFolderSizeCalculation(const QStringList &dirPaths, bool sortWhenDone);
     void applyCalculatedFolderSize(const QString &dirPath, qint64 bytes);
+    void applyCalculatedFolderSizes(const QList<QPair<QString, qint64>> &updates);
     void updateGitStatus();
     void sortItems();
     static qint64 computeDirectorySize(const QString &dirPath, const std::atomic<bool> *cancelFlag = nullptr);

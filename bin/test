@@ -5,6 +5,12 @@ ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 mkdir -p "$ROOT/build/tests"
 cd "$ROOT/build/tests"
 
-qmake6 "$ROOT/tests/twinforge_tests.pro"
+QMAKE="$(command -v qmake6 || command -v qmake-qt6 || true)"
+if [ -z "$QMAKE" ]; then
+  echo "Error: qmake6 (or qmake-qt6) not found in PATH." >&2
+  exit 1
+fi
+
+"$QMAKE" "$ROOT/tests/twinforge_tests.pro"
 make -j"$(nproc)"
 QT_QPA_PLATFORM=offscreen ./twinforge_tests "$@"

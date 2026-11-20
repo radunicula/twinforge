@@ -10,7 +10,13 @@ if [ -f Makefile ] && grep -q "omapanel\.pro" Makefile 2>/dev/null; then
   rm -f Makefile .qmake.stash
 fi
 
-qmake6 "$ROOT/twinforge.pro"
+QMAKE="$(command -v qmake6 || command -v qmake-qt6 || true)"
+if [ -z "$QMAKE" ]; then
+  echo "Error: qmake6 (or qmake-qt6) not found in PATH." >&2
+  exit 1
+fi
+
+"$QMAKE" "$ROOT/twinforge.pro"
 make -j"$(nproc)"
 ln -sf twinforge "$ROOT/build/tf"
 

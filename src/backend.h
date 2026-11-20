@@ -637,8 +637,8 @@ private:
     QStringList m_recentDirs;
     QTemporaryDir *m_archiveTempDir = nullptr;
 
-    QThread *m_searchThread = nullptr;
-    std::atomic<bool> m_searchCancelRequested{false};
+    // Async file search state
+    std::shared_ptr<std::atomic<bool>> m_searchCancel;
     quint64 m_searchGeneration = 0;
     bool m_searchRunning = false;
     int m_searchScannedCount = 0;

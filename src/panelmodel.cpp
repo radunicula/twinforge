@@ -7,6 +7,7 @@
 #include <QDateTime>
 #include <QDir>
 #include <QDirIterator>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QLocale>
@@ -113,13 +114,19 @@ QVariant PanelModel::data(const QModelIndex &index, int role) const
     case SizeRole:
         return item.size;
     case FormattedSizeRole:
-        return item.formattedSize;
+        return !item.formattedSize.isEmpty()
+                   ? item.formattedSize
+                   : formatSize(item.size, item.isDir && !item.dirSizeCalculated);
     case ModifiedRole:
-        return item.formattedModified;
+        return !item.formattedModified.isEmpty()
+                   ? item.formattedModified
+                   : (item.modified.isValid() ? item.modified.toString(QStringLiteral("yyyy-MM-dd hh:mm")) : QString());
     case ExtensionRole:
         return item.extension;
     case PermissionsRole:
-        return item.permissions;
+        return !item.permissions.isEmpty()
+                   ? item.permissions
+                   : (item.hasPosixMode ? formatPosixPermissions(item.posixMode) : QString());
     case IconTypeRole:
         return item.iconType;
     case GitStatusRole:
@@ -882,7 +889,9 @@ void PanelModel::setFilter(const QString &filter)
         m_items.clear();
         const QString lower = m_filter.trimmed().toLower();
         for (const auto &item : m_allItems) {
-            if (item.isParent || item.name.toLower().contains(lower)) {
+            if (item.isParent
+                || (item.nameLower.isEmpty() ? item.name.toLower().contains(lower)
+                                             : item.nameLower.contains(lower))) {
                 m_items.append(item);
             }
         }
@@ -1167,25 +1176,37 @@ void PanelModel::cancelFolderSizeCalculation()
 
 void PanelModel::applyCalculatedFolderSize(const QString &dirPath, qint64 bytes)
 {
-    m_calculatedDirSizes.insert(dirPath, bytes);
-    const QString formatted = formatSize(bytes, false);
+    applyCalculatedFolderSizes({qMakePair(dirPath, bytes)});
+}
+
+void PanelModel::applyCalculatedFolderSizes(const QList<QPair<QString, qint64>> &updates)
+{
+    if (updates.isEmpty())
+        return;
+
+    QHash<QString, qint64> batchMap;
+    batchMap.reserve(updates.size());
+    for (const auto &entry : updates) {
+        m_calculatedDirSizes.insert(entry.first, entry.second);
+        batchMap.insert(entry.first, entry.second);
+    }
 
     bool changed = false;
     for (PanelItem &item : m_items) {
-        if (item.path == dirPath) {
-            item.size = bytes;
+        auto it = batchMap.constFind(item.path);
+        if (it != batchMap.constEnd()) {
+            item.size = it.value();
             item.dirSizeCalculated = true;
-            item.formattedSize = formatted;
+            item.formattedSize = formatSize(it.value(), false);
             changed = true;
-            break;
         }
     }
     for (PanelItem &allItem : m_allItems) {
-        if (allItem.path == dirPath) {
-            allItem.size = bytes;
+        auto it = batchMap.constFind(allItem.path);
+        if (it != batchMap.constEnd()) {
+            allItem.size = it.value();
             allItem.dirSizeCalculated = true;
-            allItem.formattedSize = formatted;
-            break;
+            allItem.formattedSize = formatSize(it.value(), false);
         }
     }
 
@@ -1219,6 +1240,10 @@ void PanelModel::startFolderSizeCalculation(const QStringList &dirPaths, bool so
     QPointer<PanelModel> self(this);
 
     auto *task = QRunnable::create([self, gen, expectedPath, dirPaths, sortWhenDone, cancelFlag]() {
+        QElapsedTimer flushTimer;
+        flushTimer.start();
+        QList<QPair<QString, qint64>> batch;
+        batch.reserve(32);
         int done = 0;
         const int total = dirPaths.size();
         for (const QString &dirPath : dirPaths) {
@@ -1230,25 +1255,32 @@ void PanelModel::startFolderSizeCalculation(const QStringList &dirPaths, bool so
                 return;
 
             ++done;
+            batch.append(qMakePair(dirPath, bytes));
             const bool isLast = (done >= total);
-            QMetaObject::invokeMethod(
-                self,
-                [self, gen, expectedPath, dirPath, bytes, done, isLast, sortWhenDone]() {
-                    if (!self || self->m_sizeCalcGeneration.load(std::memory_order_relaxed) != gen
-                        || self->m_path != expectedPath) {
-                        return;
-                    }
-                    self->applyCalculatedFolderSize(dirPath, bytes);
-                    self->m_folderSizeDone = done;
-                    if (isLast) {
-                        if (sortWhenDone && self->m_sortField == SortBySize)
-                            self->sortItems();
-                        self->m_calculatingFolderSizes = false;
-                        self->m_sizeCalcCancel.reset();
-                    }
-                    emit self->folderSizeCalculationChanged();
-                },
-                Qt::QueuedConnection);
+            if (isLast || batch.size() >= 32 || flushTimer.elapsed() >= 60) {
+                const auto sendBatch = batch;
+                const int doneSnapshot = done;
+                batch.clear();
+                flushTimer.restart();
+                QMetaObject::invokeMethod(
+                    self,
+                    [self, gen, expectedPath, sendBatch, doneSnapshot, isLast, sortWhenDone]() {
+                        if (!self || self->m_sizeCalcGeneration.load(std::memory_order_relaxed) != gen
+                            || self->m_path != expectedPath) {
+                            return;
+                        }
+                        self->applyCalculatedFolderSizes(sendBatch);
+                        self->m_folderSizeDone = doneSnapshot;
+                        if (isLast) {
+                            if (sortWhenDone && self->m_sortField == SortBySize)
+                                self->sortItems();
+                            self->m_calculatingFolderSizes = false;
+                            self->m_sizeCalcCancel.reset();
+                        }
+                        emit self->folderSizeCalculationChanged();
+                    },
+                    Qt::QueuedConnection);
+            }
         }
     });
     task->setAutoDelete(true);
@@ -2046,27 +2078,29 @@ void PanelModel::loadDirectory()
         m_allItems.append(parentItem);
     }
 
-    auto makeItem = [this](const QFileInfo &fi, const QString &displayName) -> PanelItem {
+    const QString dirPrefix = m_path.endsWith('/') ? m_path : (m_path + '/');
+    auto makeItem = [this](const QFileInfo &fi, const QString &displayName, const QString &fullPath) -> PanelItem {
         PanelItem item;
         item.name = displayName;
-        item.path = fi.absoluteFilePath();
+        item.nameLower = displayName.toLower();
+        item.path = fullPath;
         item.isDir = fi.isDir();
         item.isParent = false;
-        if (fi.isDir() && m_calculatedDirSizes.contains(item.path)) {
+        if (item.isDir && m_calculatedDirSizes.contains(item.path)) {
             item.size = m_calculatedDirSizes.value(item.path);
             item.dirSizeCalculated = true;
             item.formattedSize = formatSize(item.size, false);
         } else {
-            item.size = fi.isDir() ? 0 : fi.size();
+            item.size = item.isDir ? 0 : fi.size();
             item.dirSizeCalculated = false;
-            item.formattedSize = formatSize(fi.size(), fi.isDir());
         }
         item.modified = fi.lastModified();
-        item.formattedModified = item.modified.toString("yyyy-MM-dd hh:mm");
         item.extension = fi.suffix();
-        item.iconType = detectIconType(fi);
-        item.isSelected = m_selectedPaths.contains(item.path);
-        item.permissions = formatPosixPermissions(toPosixMode(fi.permissions()));
+        item.extLower = item.extension.toLower();
+        item.posixMode = static_cast<quint16>(toPosixMode(fi.permissions()));
+        item.hasPosixMode = true;
+        item.iconType = detectIconTypeForName(fi.fileName(), item.isDir, !item.isDir && ((item.posixMode & 0111) != 0));
+        item.isSelected = !m_selectedPaths.isEmpty() && m_selectedPaths.contains(item.path);
         return item;
     };
 
@@ -2080,25 +2114,29 @@ void PanelModel::loadDirectory()
         QStringList queue{m_path};
         while (!queue.isEmpty() && flatCount < kMaxFlatItems) {
             const QString currentDir = queue.takeFirst();
-            const QFileInfoList subEntries = QDir(currentDir).entryInfoList(filters);
+            const QFileInfoList subEntries = QDir(currentDir).entryInfoList(filters, QDir::NoSort);
             for (const QFileInfo &fi : subEntries) {
                 if (fi.isDir()) {
                     if (!fi.isSymLink())
                         queue.append(fi.absoluteFilePath());
                     continue;
                 }
-                const QString relName = dir.relativeFilePath(fi.absoluteFilePath());
+                const QString absPath = fi.absoluteFilePath();
+                const QString relName = dir.relativeFilePath(absPath);
                 if (!m_showHidden && hasHiddenSegment(relName))
                     continue;
-                m_allItems.append(makeItem(fi, relName));
+                m_allItems.append(makeItem(fi, relName, absPath));
                 if (++flatCount >= kMaxFlatItems)
                     break;
             }
         }
     } else {
-        const QFileInfoList entries = dir.entryInfoList(filters);
-        for (const QFileInfo &fi : entries)
-            m_allItems.append(makeItem(fi, fi.fileName()));
+        const QFileInfoList entries = dir.entryInfoList(filters, QDir::NoSort);
+        m_allItems.reserve(entries.size() + 1);
+        for (const QFileInfo &fi : entries) {
+            const QString fileName = fi.fileName();
+            m_allItems.append(makeItem(fi, fileName, dirPrefix + fileName));
+        }
     }
 
     sortItems();
@@ -2343,52 +2381,65 @@ void PanelModel::sortItems()
 
     QList<PanelItem> dirs;
     QList<PanelItem> files;
+    dirs.reserve(std::min<int>(m_allItems.size(), 1024));
+    files.reserve(m_allItems.size());
     PanelItem parentItem;
     bool hasParent = false;
 
-    for (const auto &item : m_allItems) {
+    for (auto &item : m_allItems) {
         if (item.isParent) {
             parentItem = item;
             hasParent = true;
-        } else if (item.isDir) {
-            dirs.append(item);
         } else {
-            files.append(item);
+            if (item.nameLower.isEmpty() && !item.name.isEmpty())
+                item.nameLower = item.name.toLower();
+            if (item.extLower.isEmpty() && !item.extension.isEmpty())
+                item.extLower = item.extension.toLower();
+            if (item.isDir)
+                dirs.append(item);
+            else
+                files.append(item);
         }
     }
 
-    auto comparator = [this](const PanelItem &a, const PanelItem &b) -> bool {
-        bool result = false;
-        switch (m_sortField) {
-        case SortByName:
-            result = QString::localeAwareCompare(a.name.toLower(), b.name.toLower()) < 0;
-            break;
-        case SortByExt:
-            if (a.extension == b.extension)
-                result = QString::localeAwareCompare(a.name.toLower(), b.name.toLower()) < 0;
-            else
-                result = QString::localeAwareCompare(a.extension.toLower(), b.extension.toLower()) < 0;
-            break;
-        case SortBySize:
-            if (a.size == b.size)
-                result = QString::localeAwareCompare(a.name.toLower(), b.name.toLower()) < 0;
-            else
-                result = a.size < b.size;
-            break;
-        case SortByDate:
-            if (a.modified == b.modified)
-                result = QString::localeAwareCompare(a.name.toLower(), b.name.toLower()) < 0;
-            else
-                result = a.modified < b.modified;
-            break;
-        default:
-            result = QString::localeAwareCompare(a.name.toLower(), b.name.toLower()) < 0;
-            break;
-        }
-        return m_sortAscending ? result : !result;
+    auto compareByName = [](const PanelItem &x, const PanelItem &y) -> int {
+        const int c = x.nameLower.compare(y.nameLower);
+        return (c != 0) ? c : x.name.compare(y.name);
     };
 
+    auto comparator = [this, &compareByName](const PanelItem &a, const PanelItem &b) -> bool {
+        int cmp = 0;
+        switch (m_sortField) {
+        case SortByName:
+            cmp = compareByName(a, b);
+            break;
+        case SortByExt:
+            cmp = a.extLower.compare(b.extLower);
+            if (cmp == 0)
+                cmp = a.extension.compare(b.extension);
+            if (cmp == 0)
+                cmp = compareByName(a, b);
+            break;
+        case SortBySize:
+            cmp = (a.size < b.size) ? -1 : ((a.size > b.size) ? 1 : 0);
+            if (cmp == 0)
+                cmp = compareByName(a, b);
+            break;
+        case SortByDate:
+            cmp = (a.modified < b.modified) ? -1 : ((a.modified > b.modified) ? 1 : 0);
+            if (cmp == 0)
+                cmp = compareByName(a, b);
+            break;
+        default:
+            cmp = compareByName(a, b);
+            break;
+        }
+        return m_sortAscending ? (cmp < 0) : (cmp > 0);
+    };
+
+    const qsizetype expectedTotal = (hasParent ? 1 : 0) + dirs.size() + files.size();
     m_allItems.clear();
+    m_allItems.reserve(expectedTotal);
     if (hasParent)
         m_allItems.append(parentItem);
 
@@ -2413,7 +2464,9 @@ void PanelModel::sortItems()
         m_items.clear();
         const QString lower = m_filter.trimmed().toLower();
         for (const auto &item : m_allItems) {
-            if (item.isParent || item.name.toLower().contains(lower)) {
+            if (item.isParent
+                || (item.nameLower.isEmpty() ? item.name.toLower().contains(lower)
+                                             : item.nameLower.contains(lower))) {
                 m_items.append(item);
             }
         }

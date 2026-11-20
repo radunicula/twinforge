@@ -101,3 +101,111 @@ jobs:
             echo "::error::Expected 0 skipped and 0 failed tests (got passed=$PASSED, failed=$FAILED, skipped=$SKIPPED)"
             exit 1
           fi
+
+      - name: Run 50,000-File Interactivity Benchmark
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          ./bin/bench --files 50000 | tee bench_output.md
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          cat bench_output.md >> "$GITHUB_STEP_SUMMARY"
+
+  package-deb:
+    name: Package & Smoke-Test (.deb / Ubuntu 24.04)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Qt 6 & Debian packaging tools
+        run: |
+          sudo rm -f /var/lib/man-db/auto-update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get update \
+            -o Acquire::ForceIPv4=true \
+            -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=20
+          sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y --no-install-recommends \
+            -o Acquire::ForceIPv4=true \
+            -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=20 \
+            -o Dpkg::Options::="--force-confdef" \
+            -o Dpkg::Options::="--force-confold" \
+            build-essential \
+            dpkg-dev \
+            desktop-file-utils \
+            qmake6 \
+            qt6-base-dev \
+            qt6-declarative-dev \
+            libqt6svg6-dev \
+            libarchive-dev
+
+      - name: Build .deb package
+        run: ./packaging/build-deb.sh
+
+      - name: Upload .deb package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: twinforge-deb-ubuntu-24.04
+          path: release/*.deb
+          if-no-files-found: error
+
+      - name: Smoke-test .deb in clean Ubuntu 24.04 container
+        run: |
+          docker run --rm \
+            -v "$PWD/release:/work/pkg:ro" \
+            -v "$PWD/packaging/smoke-test-package.sh:/work/smoke-test-package.sh:ro" \
+            ubuntu:24.04 \
+            bash -eux -c '
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update -o Acquire::ForceIPv4=true -o Acquire::Retries=3
+              apt-get install -y --no-install-recommends -o Acquire::ForceIPv4=true \
+                /work/pkg/twinforge_*.deb \
+                python3 \
+                desktop-file-utils
+              /work/smoke-test-package.sh /usr/bin/twinforge
+            '
+
+  package-rpm:
+    name: Package & Smoke-Test (.rpm / Fedora 41)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build .rpm package in Fedora 41 container
+        run: |
+          docker run --rm \
+            -v "$PWD:/work/src:rw" \
+            -w /work/src \
+            fedora:41 \
+            bash -eux -c '
+              dnf install -y --setopt=install_weak_deps=False \
+                rpm-build gcc-c++ make \
+                qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qtsvg-devel \
+                libarchive-devel desktop-file-utils tar gzip findutils
+              ./packaging/build-rpm.sh
+              chmod -R a+rX /work/src/release
+            '
+
+      - name: Upload .rpm package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: twinforge-rpm-fedora-41
+          path: release/*.rpm
+          if-no-files-found: error
+
+      - name: Smoke-test .rpm in clean Fedora 41 container
+        run: |
+          docker run --rm \
+            -v "$PWD/release:/work/pkg:ro" \
+            -v "$PWD/packaging/smoke-test-package.sh:/work/smoke-test-package.sh:ro" \
+            fedora:41 \
+            bash -eux -c '
+              dnf install -y --setopt=install_weak_deps=False \
+                /work/pkg/twinforge-*.rpm \
+                python3 \
+                desktop-file-utils
+              /work/smoke-test-package.sh /usr/bin/twinforge
+            '

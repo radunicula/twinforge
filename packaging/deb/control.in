@@ -1,0 +1,15 @@
+Package: twinforge
+Version: @VERSION@
+Section: utils
+Priority: optional
+Architecture: @ARCH@
+Depends: @DEPENDS@
+Recommends: qt6-wayland, libarchive-tools, zstd, poppler-utils, ffmpeg, p7zip-full, rclone, git
+Maintainer: Radu Nicula <radunicula@users.noreply.github.com>
+Homepage: https://github.com/radunicula/twinforge
+Description: Modern dual-panel orthodox file manager for Linux
+ TwinForge (twinforge / tf) is a fast, native Linux dual-panel orthodox file
+ manager built with C++20, Qt 6, QML, and libarchive. It features a
+ non-blocking async engine, virtual archive browsing, live dark/light theming,
+ workspace-linked saved searches, interrupted transfer recovery, and batch
+ checksums.

@@ -250,9 +250,13 @@ QVariantList runSearchImpl(const QString &rootPath, const SearchSpec &spec,
             break;
 
         const QString dirPath = queue.takeFirst();
-        const QFileInfoList entries = QDir(dirPath).entryInfoList(entryFilters);
-        for (const QFileInfo &fi : entries) {
-            if (cancelFlag && cancelFlag->load(std::memory_order_relaxed))
+        QDirIterator it(dirPath, entryFilters);
+        while (it.hasNext()) {
+            if (cancelFlag && (scanned & 31) == 0 && cancelFlag->load(std::memory_order_relaxed))
+                break;
+            it.next();
+            const QFileInfo fi = it.fileInfo();
+            if (cancelFlag && (scanned & 31) == 0 && cancelFlag->load(std::memory_order_relaxed))
                 break;
 
             const bool isDir = fi.isDir();
@@ -6509,16 +6513,10 @@ void Backend::cancelSearch()
     m_pendingSearchFeedNewTab = false;
     m_pendingSearchFeedTitle.clear();
 
-    if (!m_searchThread && !m_searchRunning)
-        return;
-
-    m_searchCancelRequested.store(true, std::memory_order_relaxed);
     ++m_searchGeneration;
-
-    if (m_searchThread) {
-        m_searchThread->wait();
-        delete m_searchThread;
-        m_searchThread = nullptr;
+    if (m_searchCancel) {
+        m_searchCancel->store(true, std::memory_order_relaxed);
+        m_searchCancel.reset();
     }
 
     if (m_searchRunning) {
@@ -6553,7 +6551,9 @@ void Backend::startAdvancedSearchInternal(const QString &rootPath,
     m_pendingSearchFeedToPanel = feedToPanel;
     m_pendingSearchFeedNewTab = feedNewTab;
     m_pendingSearchFeedTitle = feedTitle;
-    m_searchCancelRequested.store(false, std::memory_order_relaxed);
+
+    auto cancelFlag = std::make_shared<std::atomic<bool>>(false);
+    m_searchCancel = cancelFlag;
     const quint64 gen = ++m_searchGeneration;
     m_searchRunning = true;
     m_searchScannedCount = 0;
@@ -6562,69 +6562,66 @@ void Backend::startAdvancedSearchInternal(const QString &rootPath,
     emit searchProgressChanged();
     emit searchStateChanged();
 
-    QThread *worker = QThread::create([this, gen, cleanRoot, spec]() {
+    QPointer<Backend> self(this);
+    auto *task = QRunnable::create([self, gen, cleanRoot, spec, cancelFlag]() {
         int totalScanned = 0;
-        runSearchImpl(cleanRoot, spec, &m_searchCancelRequested,
-                      [this, gen](int scanned, const QVariantList &batch) {
-                          QMetaObject::invokeMethod(this, [this, gen, scanned, batch]() {
-                              if (gen != m_searchGeneration)
+        runSearchImpl(cleanRoot, spec, cancelFlag.get(),
+                      [self, gen](int scanned, const QVariantList &batch) {
+                          QMetaObject::invokeMethod(self, [self, gen, scanned, batch]() {
+                              if (!self || gen != self->m_searchGeneration)
                                   return;
-                              m_searchScannedCount = scanned;
-                              emit searchProgressChanged();
+                              self->m_searchScannedCount = scanned;
+                              emit self->searchProgressChanged();
                               if (!batch.isEmpty()) {
-                                  m_searchResultItems.append(batch);
-                                  emit searchResultsChanged();
+                                  self->m_searchResultItems.append(batch);
+                                  emit self->searchResultsChanged();
                               }
                           }, Qt::QueuedConnection);
                       },
                       &totalScanned);
 
-        const bool cancelled = m_searchCancelRequested.load(std::memory_order_relaxed);
-        QMetaObject::invokeMethod(this, [this, gen, totalScanned, cancelled]() {
-            if (gen != m_searchGeneration)
+        const bool cancelled = cancelFlag->load(std::memory_order_relaxed);
+        QMetaObject::invokeMethod(self, [self, gen, totalScanned, cancelled]() {
+            if (!self || gen != self->m_searchGeneration)
                 return;
-            m_searchScannedCount = totalScanned;
-            m_searchRunning = false;
-            if (m_searchThread) {
-                m_searchThread->wait();
-                delete m_searchThread;
-                m_searchThread = nullptr;
-            }
-            const bool doFeed = !cancelled && m_pendingSearchFeedToPanel;
-            const bool feedNewTab = m_pendingSearchFeedNewTab;
-            const QString feedTitle = m_pendingSearchFeedTitle;
-            m_pendingSearchFeedToPanel = false;
-            m_pendingSearchFeedNewTab = false;
-            m_pendingSearchFeedTitle.clear();
+            self->m_searchScannedCount = totalScanned;
+            self->m_searchRunning = false;
+            self->m_searchCancel.reset();
+
+            const bool doFeed = !cancelled && self->m_pendingSearchFeedToPanel;
+            const bool feedNewTab = self->m_pendingSearchFeedNewTab;
+            const QString feedTitle = self->m_pendingSearchFeedTitle;
+            self->m_pendingSearchFeedToPanel = false;
+            self->m_pendingSearchFeedNewTab = false;
+            self->m_pendingSearchFeedTitle.clear();
 
             if (doFeed) {
                 QStringList paths;
-                paths.reserve(m_searchResultItems.size());
-                for (const QVariant &v : std::as_const(m_searchResultItems)) {
+                paths.reserve(self->m_searchResultItems.size());
+                for (const QVariant &v : std::as_const(self->m_searchResultItems)) {
                     const QString p = v.toMap().value(QStringLiteral("path")).toString();
                     if (!p.isEmpty())
                         paths.append(p);
                 }
                 if (!paths.isEmpty()) {
-                    feedPathsToPanel(paths, feedTitle, feedNewTab);
+                    self->feedPathsToPanel(paths, feedTitle, feedNewTab);
                 } else {
-                    showStatus(tr("Saved search \"%1\": no matching items found.").arg(feedTitle));
+                    self->showStatus(tr("Saved search \"%1\": no matching items found.").arg(feedTitle));
                 }
             } else {
-                showStatus(cancelled
-                               ? tr("Search stopped (%1 results found).").arg(m_searchResultItems.size())
-                               : tr("Search finished: %1 result(s) across %2 item(s).")
-                                     .arg(m_searchResultItems.size())
-                                     .arg(totalScanned));
+                self->showStatus(cancelled
+                                     ? tr("Search stopped (%1 results found).").arg(self->m_searchResultItems.size())
+                                     : tr("Search finished: %1 result(s) across %2 item(s).")
+                                           .arg(self->m_searchResultItems.size())
+                                           .arg(totalScanned));
             }
 
-            emit searchProgressChanged();
-            emit searchStateChanged();
+            emit self->searchProgressChanged();
+            emit self->searchStateChanged();
         }, Qt::QueuedConnection);
     });
-
-    m_searchThread = worker;
-    worker->start();
+    task->setAutoDelete(true);
+    QThreadPool::globalInstance()->start(task);
 }
 
 void Backend::feedPathsToPanel(const QStringList &paths, const QString &title, bool newTab)

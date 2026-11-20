@@ -14,7 +14,7 @@
   <img src="https://img.shields.io/badge/C%2B%2B-20-00599C?logo=c%2B%2B&logoColor=white" alt="C++20">
   <img src="https://img.shields.io/badge/Platform-Linux-FCC624?logo=linux&logoColor=black" alt="Linux">
   <img src="https://img.shields.io/badge/CLI-twinforge%20%7C%20tf-00B4D8" alt="CLI twinforge / tf">
-  <a href="https://github.com/radunicula/twinforge/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/Tests-69%20Verified%20(0%20Skipped%2C%20Cross--FS%20Active)-success" alt="Tests Verified in CI"></a>
+  <a href="https://github.com/radunicula/twinforge/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/Tests-70%20Verified%20(0%20Skipped%2C%20Cross--FS%20Active)-success" alt="Tests Verified in CI"></a>
   <img src="https://img.shields.io/badge/License-GPLv3-blue" alt="License GPL-3.0">
   <a href="https://revolut.me/radunicula"><img src="https://img.shields.io/badge/Donate-Revolut-0075EB?logo=revolut&logoColor=white" alt="Donate via Revolut"></a>
 </p>
@@ -43,16 +43,23 @@
 
 ## 🚀 Quick Install
 
-### Option 1: Arch Linux / Omarchy (From Source or Prebuilt `.pkg.tar.zst`)
+### Option 1: Native Linux Packages (Fedora `.rpm`, Ubuntu/Debian `.deb`, Arch `.pkg.tar.zst`)
 ```bash
-# Build & install native Arch package directly from the repository:
-git clone https://github.com/radunicula/twinforge.git
-cd twinforge
-./bin/install
+# Fedora 41+ (install prebuilt .rpm from GitHub Releases or build locally):
+sudo dnf install ./twinforge-*.rpm
+./packaging/build-rpm.sh        # Builds release/twinforge-*.rpm
 
+# Ubuntu 24.04+ / Debian (install prebuilt .deb from GitHub Releases or build locally):
+sudo apt install ./twinforge_*.deb
+./packaging/build-deb.sh        # Builds release/twinforge_*.deb
+
+# Arch Linux / Omarchy (from source via PKGBUILD or prebuilt package):
+git clone https://github.com/radunicula/twinforge.git && cd twinforge
+./bin/install
 # Or install the prebuilt package from GitHub Releases:
 sudo pacman -U twinforge-*-x86_64.pkg.tar.zst
 ```
+Both `.rpm` (`fedora:41`) and `.deb` (`ubuntu:24.04`) packages are automatically built and verified in clean minimal Docker containers on every CI push (`twinforge --smoke-test`: full QML launch, archive browsing, and selective extraction).
 
 ### Option 2: Prebuilt Binary Installer (Arch / Rolling Release — `~/.local/`, no `sudo` needed)
 ```bash
@@ -222,7 +229,23 @@ Binary will be created at `./build/twinforge` (with `./build/tf` symlink alias).
 ```bash
 ./bin/test
 ```
-Runs the full automated test suite (**69 test cases** on CI & local with **0 skipped**, verified across distinct filesystems via `TWINFORGE_XDEV_SRC_DIR`) covering file operations, cross-filesystem move cleanup, interrupted transfer recovery, operation queue/pause/resume, non-blocking async workers & cancellation, persistent user preferences & live language switching, batch checksum generation/verification, directional UI actions & sync overwrite filters, modular `CommandOutput.qml` + `CommandLogModel`, workspace saved searches, Freedesktop thumbnail cache compliance, CLI parsing & Single-Instance IPC, locked tabs & tab management, dual-panel workspaces, Freedesktop Trash (`trash://`) restore/delete/empty, multi-character type-ahead quick jump, async command runner with built-in `cd` & history, file split/combine with SHA-256 verification, next-gen previews, RegEx multi-rename, Google Drive (`rclone`), remote URIs, XDG Open With/Custom Actions, search, sync, duplicate finder, undo stack, git tracking, diffing, permissions, and full QML UI loading without errors. Live per-run results (`Passed` / `Failed` / `Skipped` / Qt version) are published in the [CI workflow Step Summary](https://github.com/radunicula/twinforge/actions/workflows/ci.yml).
+Runs the full automated test suite (**70 test cases** on CI & local with **0 skipped**, verified across distinct filesystems via `TWINFORGE_XDEV_SRC_DIR`) covering file operations, cross-filesystem move cleanup, interrupted transfer recovery, operation queue/pause/resume, non-blocking async workers & cancellation, heavy-directory interactivity budgets, persistent user preferences & live language switching, batch checksum generation/verification, directional UI actions & sync overwrite filters, modular `CommandOutput.qml` + `CommandLogModel`, workspace saved searches, Freedesktop thumbnail cache compliance, CLI parsing (including `--smoke-test`) & Single-Instance IPC, locked tabs & tab management, dual-panel workspaces, Freedesktop Trash (`trash://`), type-ahead quick jump, async command runner, file split/combine, next-gen previews, RegEx multi-rename, Google Drive (`rclone`), remote URIs, XDG Open With/Custom Actions, search, sync, duplicate finder, undo stack, git tracking, diffing, permissions, and full QML UI loading without errors. Live per-run results (`Passed` / `Failed` / `Skipped` / Qt version + 50,000-file benchmarks + `.deb`/`.rpm` clean-container smoke tests) are published in the [CI workflow Step Summary](https://github.com/radunicula/twinforge/actions/workflows/ci.yml).
+
+### 📊 Interactivity Benchmarks (50,000 Files)
+Run `./bin/bench` to reproduce heavy-directory interactivity metrics (`50,000` files / `48,041` top-level entries, Qt `6.12.0` release build):
+
+```bash
+./bin/bench --files 50000
+```
+
+| Scenario | Measured | Design Mechanism |
+| :--- | :--- | :--- |
+| Load + Sort `50,000` entries (`PanelModel::setPath`) | **568.75 ms** | `QDir::NoSort`, `posixMode` bit check, lazy row formatting |
+| First Viewport Render (`40 rows × 5 roles`) | **0.06 ms** | Formatted size / date / permissions computed lazily on demand |
+| Live Name Filter + Clear (`50,000` entries) | **1.90 ms** | Pre-lowercased `nameLower` cache (zero allocations per match) |
+| Sort by Size (`50,000` entries) | **55.54 ms** | Zero-allocation strict weak ordering comparator |
+| Tab Switch During Folder Size Calc | **19.49 ms** | Instant generation/token invalidation; **0 stale updates** |
+| Search Cancel (UI Thread / Worker Stop) | **0.00 ms / 0.22 ms** | Non-blocking `cancelSearch()` + streaming `QDirIterator` check |
 
 ---
 

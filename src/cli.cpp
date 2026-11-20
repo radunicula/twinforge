@@ -124,6 +124,9 @@ CliRequest parseCliArguments(const QStringList &arguments,
         QStringLiteral("shell-init"),
         QStringLiteral("Print shell cd-on-exit helper function (bash, zsh, fish) and exit."),
         QStringLiteral("shell"));
+    const QCommandLineOption smokeTestOpt(
+        QStringLiteral("smoke-test"),
+        QStringLiteral("Run headless packaging self-test (load QML, open archive <left_path>, copy entry into <right_path>) and exit."));
 
     parser.addOption(newTabOpt);
     parser.addOption(selectOpt);
@@ -131,6 +134,7 @@ CliRequest parseCliArguments(const QStringList &arguments,
     parser.addOption(lastDirFileOpt);
     parser.addOption(printLastDirOpt);
     parser.addOption(shellInitOpt);
+    parser.addOption(smokeTestOpt);
 
     parser.addPositionalArgument(QStringLiteral("left_path"),
                                  QStringLiteral("Optional directory or file to open in the active/left panel."),
@@ -179,6 +183,7 @@ CliRequest parseCliArguments(const QStringList &arguments,
     req.newTab = parser.isSet(newTabOpt);
     req.newWindow = parser.isSet(newWindowOpt);
     req.printLastDir = parser.isSet(printLastDirOpt);
+    req.smokeTest = parser.isSet(smokeTestOpt);
 
     if (parser.isSet(lastDirFileOpt))
         req.lastDirFile = resolveCliPath(parser.value(lastDirFileOpt), workingDir);
@@ -196,7 +201,7 @@ CliRequest parseCliArguments(const QStringList &arguments,
     if (posArgs.size() >= 1) {
         const QString p1 = resolveCliPath(posArgs.at(0), workingDir);
         const QFileInfo fi1(p1);
-        if (fi1.exists() && fi1.isFile()) {
+        if (!req.smokeTest && fi1.exists() && fi1.isFile()) {
             req.leftPath = fi1.absolutePath();
             if (req.selectPath.isEmpty())
                 req.selectPath = fi1.absoluteFilePath();
@@ -208,7 +213,7 @@ CliRequest parseCliArguments(const QStringList &arguments,
     if (posArgs.size() >= 2) {
         const QString p2 = resolveCliPath(posArgs.at(1), workingDir);
         const QFileInfo fi2(p2);
-        if (fi2.exists() && fi2.isFile()) {
+        if (!req.smokeTest && fi2.exists() && fi2.isFile()) {
             req.rightPath = fi2.absolutePath();
             if (req.selectPath.isEmpty())
                 req.selectPath = fi2.absoluteFilePath();

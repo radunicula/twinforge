@@ -1,0 +1,16 @@
+#!/bin/sh
+set -eu
+
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+mkdir -p "$ROOT/build/bench"
+cd "$ROOT/build/bench"
+
+QMAKE="$(command -v qmake6 || command -v qmake-qt6 || true)"
+if [ -z "$QMAKE" ]; then
+  echo "Error: qmake6 (or qmake-qt6) not found in PATH." >&2
+  exit 1
+fi
+
+"$QMAKE" "$ROOT/tests/twinforge_bench.pro"
+make -j"$(nproc)"
+exec env QT_QPA_PLATFORM=offscreen ./twinforge_bench "$@"

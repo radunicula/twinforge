@@ -3,6 +3,8 @@
 /pkgbuild/pkg/
 /pkgbuild/src/
 *.pkg.tar.*
+*.rpm
+*.deb
 .qmake.stash
 Makefile*
 *.o
