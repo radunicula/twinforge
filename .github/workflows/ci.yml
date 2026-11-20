@@ -10,6 +10,7 @@ jobs:
   build-and-test:
     name: Build & Test (Qt 6 / C++20)
     runs-on: ubuntu-24.04
+    timeout-minutes: 12
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -17,8 +18,14 @@ jobs:
       - name: Install Qt 6 & build dependencies
         run: |
           sudo rm -f /var/lib/man-db/auto-update
-          sudo DEBIAN_FRONTEND=noninteractive apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get update \
+            -o Acquire::ForceIPv4=true \
+            -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=20
           sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y --no-install-recommends \
+            -o Acquire::ForceIPv4=true \
+            -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=20 \
             -o Dpkg::Options::="--force-confdef" \
             -o Dpkg::Options::="--force-confold" \
             build-essential \
