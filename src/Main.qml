@@ -191,6 +191,136 @@ ApplicationWindow {
     property int openWithTab: 0
     property bool menuBarActive: false
 
+    // Single source of truth for global keyboard shortcuts (Shortcuts, Toolbar, Menus, Palette, F1 Help).
+    readonly property var shortcuts: ({
+        commandPalette: "Ctrl+Shift+P",
+        quickJump: "Ctrl+P",
+        quickView: "Ctrl+Q",
+        shortcutsHelp: "?",
+        helpF1: "F1",
+        view: "F3",
+        edit: "F4",
+        copy: "F5",
+        move: "F6",
+        rename: "Shift+F6",
+        newFolder: "F7",
+        deleteItem: "F8",
+        terminal: "F9",
+        terminalAlt: "Alt+T",
+        exitApp: "F10",
+        exitMenu: "Alt+F4",
+        newTab: "Ctrl+T",
+        closeTab: "Ctrl+W",
+        reopenTab: "Ctrl+Shift+W",
+        lockTab: "Ctrl+Alt+L",
+        nextTab: "Ctrl+Tab",
+        prevTab: "Ctrl+Shift+Tab",
+        copyClip: "Ctrl+C",
+        cutClip: "Ctrl+X",
+        pasteClip: "Ctrl+V",
+        undo: "Ctrl+Z",
+        copyNamesCsv: "Ctrl+Shift+C",
+        copyPathsCsv: "Ctrl+Alt+C",
+        properties: "Alt+Enter",
+        editPath: "Ctrl+L",
+        swapPanels: "Ctrl+U",
+        syncPanels: "Alt+=",
+        compareDirs: "Shift+F2",
+        multiRename: "Ctrl+M",
+        packArchive: "Alt+F5",
+        extractArchive: "Alt+F9",
+        calcFolderSizes: "Alt+Shift+Enter",
+        goBack: "Alt+Left",
+        goForward: "Alt+Right",
+        filter: "Ctrl+S",
+        bookmarks: "Ctrl+B",
+        selectAll: "Ctrl+A",
+        deselectAll: "Ctrl+D",
+        invertSelection: "Ctrl+Shift+A",
+        maskSelect: "Num+",
+        maskDeselect: "Num-",
+        maskInvert: "Num*",
+        findFiles: "Alt+F7",
+        diskUsage: "Ctrl+Shift+D",
+        syncDirs: "Ctrl+Shift+S",
+        duplicateFinder: "Ctrl+Shift+F7",
+        operationQueue: "Ctrl+Shift+Q",
+        remoteConnections: "Ctrl+Shift+M",
+        openWith: "Ctrl+Shift+O",
+        showHidden: "Ctrl+H",
+        sortName: "Ctrl+F3",
+        sortExt: "Ctrl+F4",
+        sortDate: "Ctrl+F5",
+        sortSize: "Ctrl+F6",
+        refresh: "Ctrl+R",
+        newFile: "Shift+F4",
+        symlink: "Ctrl+Shift+F5",
+        diffFiles: "Ctrl+Alt+D",
+        viewList: "Ctrl+1",
+        viewGrid: "Ctrl+2",
+        flatView: "Ctrl+Shift+B",
+        themeToggle: "Ctrl+Shift+T",
+        workspaces: "Ctrl+Shift+L",
+        openTrash: "Ctrl+Shift+Backspace",
+        cmdDrawerToggle: "Ctrl+O",
+        cmdBarFocus: "Ctrl+E",
+        cmdInsertName: "Ctrl+Enter",
+        cmdInsertPath: "Ctrl+Shift+Enter",
+        splitCombine: "Ctrl+Alt+S",
+        settings: "Ctrl+,"
+    })
+
+    function formatShortcutDisplay(seq) {
+        return (seq || "").replace(/\+/g, " + ");
+    }
+
+    function folderDisplayName(dirPath) {
+        var raw = (dirPath || "").trim();
+        if (raw.length === 0)
+            return "/";
+        if (raw === "trash://")
+            return qsTr("Trash");
+        var arcSep = raw.indexOf("::");
+        if (arcSep >= 0) {
+            var inner = raw.slice(arcSep + 2).replace(/\/+$/, "");
+            if (inner.length > 0) {
+                var innerParts = inner.split("/");
+                var lastInner = innerParts[innerParts.length - 1];
+                if (lastInner.length > 0)
+                    return lastInner;
+            }
+            raw = raw.slice(0, arcSep);
+        }
+        if (raw === "/")
+            return "/";
+        var stripped = raw.replace(/\/+$/, "");
+        if (stripped.length === 0)
+            return "/";
+        var parts = stripped.split("/");
+        return parts[parts.length - 1] || "/";
+    }
+
+    function formatDriveChipLabel(d) {
+        if (!d)
+            return "";
+        var lbl = d.label || "";
+        if (d.isRemote === true && (d.protocol || "") === "gdrive" && lbl.toLowerCase() === "google drive (gdrive)")
+            return "Google Drive";
+        return lbl;
+    }
+
+    readonly property bool targetIsRight: backend.activePanel === 0
+    readonly property string targetPanelPath: targetIsRight ? backend.rightPanel.path : backend.leftPanel.path
+    readonly property string targetPanelName: folderDisplayName(targetPanelPath)
+    readonly property string f5ActionLabel: targetIsRight
+        ? qsTr("Copy to %1 →").arg(targetPanelName)
+        : qsTr("← Copy to %1").arg(targetPanelName)
+    readonly property string f6ActionLabel: targetIsRight
+        ? qsTr("Move to %1 →").arg(targetPanelName)
+        : qsTr("← Move to %1").arg(targetPanelName)
+    readonly property string f5Tooltip: qsTr("Copy selected items to: %1 (%2)").arg(targetPanelPath).arg(shortcuts.copy)
+    readonly property string f6Tooltip: qsTr("Move selected items to: %1 (%2)").arg(targetPanelPath).arg(shortcuts.move)
+
     Connections {
         target: backend
         function onThemeModeChanged() {
@@ -260,6 +390,7 @@ ApplicationWindow {
                (typeof viewMenu !== "undefined" && viewMenu.visible) ||
                (typeof commandsMenu !== "undefined" && commandsMenu.visible) ||
                (typeof helpMenu !== "undefined" && helpMenu.visible) ||
+               (typeof bookmarksOverflowMenu !== "undefined" && bookmarksOverflowMenu.visible) ||
                (typeof leftPane !== "undefined" && leftPane.contextMenu && leftPane.contextMenu.visible) ||
                (typeof rightPane !== "undefined" && rightPane.contextMenu && rightPane.contextMenu.visible);
     }
@@ -270,6 +401,7 @@ ApplicationWindow {
         if (typeof viewMenu !== "undefined") viewMenu.close();
         if (typeof commandsMenu !== "undefined") commandsMenu.close();
         if (typeof helpMenu !== "undefined") helpMenu.close();
+        if (typeof bookmarksOverflowMenu !== "undefined") bookmarksOverflowMenu.close();
         if (typeof leftPane !== "undefined" && leftPane.contextMenu) leftPane.contextMenu.close();
         if (typeof rightPane !== "undefined" && rightPane.contextMenu) rightPane.contextMenu.close();
         win.menuBarActive = false;
@@ -1584,6 +1716,7 @@ ApplicationWindow {
         id: fkeyBtn
         property string keyLabel: ""
         property string actionLabel: ""
+        property string tooltipText: ""
         signal clicked()
 
         Layout.fillWidth: true
@@ -1598,6 +1731,7 @@ ApplicationWindow {
             spacing: 6
 
             Rectangle {
+                id: fkeyBadge
                 implicitHeight: 18
                 implicitWidth: fkeyText.implicitWidth + 8
                 radius: Math.min(3, theme.radius)
@@ -1618,6 +1752,8 @@ ApplicationWindow {
                 text: fkeyBtn.actionLabel
                 font.pixelSize: 12
                 font.weight: Font.Medium
+                elide: Text.ElideMiddle
+                Layout.maximumWidth: Math.max(36, fkeyBtn.width - fkeyBadge.width - 18)
                 color: fkeyMouse.containsMouse ? p.textPrimary : p.textSecondary
             }
         }
@@ -1629,6 +1765,10 @@ ApplicationWindow {
             cursorShape: Qt.PointingHandCursor
             onClicked: fkeyBtn.clicked()
         }
+
+        ToolTip.visible: fkeyMouse.containsMouse && fkeyBtn.tooltipText.length > 0
+        ToolTip.delay: 350
+        ToolTip.text: fkeyBtn.tooltipText
     }
 
     // Unified Dual-Panel File Browser Pane (used for both Left and Right panels).
@@ -5053,76 +5193,76 @@ ApplicationWindow {
         var flatActive = currentModel().flatView;
         var hiddenActive = currentModel().showHidden;
         return [
-            { id: "quickJump", title: qsTr("Quick Jump to Folder..."), category: qsTr("Navigation"), shortcut: "Ctrl+P", run: function() { win.openCommandPalette("jump"); } },
-            { id: "flatView", title: flatActive ? qsTr("Disable Flat / Branch View") : qsTr("Flat / Branch View (Recursive)"), category: qsTr("View"), shortcut: "Ctrl+Shift+B", run: function() { currentModel().toggleFlatView(); } },
-            { id: "toggleTheme", title: backend.isDarkTheme ? qsTr("Switch to Light Theme") : qsTr("Switch to Dark Theme"), category: qsTr("Appearance"), shortcut: "Ctrl+Shift+T", run: function() { backend.toggleThemeMode(); } },
-            { id: "quickView", title: qsTr("Toggle Quick View Panel"), category: qsTr("View"), shortcut: "Ctrl+Q", run: function() { win.quickViewActive = !win.quickViewActive; if (win.quickViewActive) updateQuickView(); } },
-            { id: "showHidden", title: hiddenActive ? qsTr("Hide Hidden Files") : qsTr("Show Hidden Files"), category: qsTr("View"), shortcut: "Ctrl+H", run: function() { var m = currentModel(); m.setShowHidden(!m.showHidden); } },
-            { id: "listView", title: qsTr("View Mode: List"), category: qsTr("View"), shortcut: "Ctrl+1", run: function() { currentModel().setViewMode(0); } },
-            { id: "gridView", title: qsTr("View Mode: Grid Thumbnails"), category: qsTr("View"), shortcut: "Ctrl+2", run: function() { currentModel().setViewMode(1); } },
-            { id: "quickFilter", title: qsTr("Toggle Quick Filter"), category: qsTr("View"), shortcut: "Ctrl+S", run: function() { toggleFilterBar(); } },
-            { id: "refresh", title: qsTr("Refresh Active Panel"), category: qsTr("View"), shortcut: "Ctrl+R", run: function() { currentModel().refresh(); } },
-            { id: "calcSizes", title: qsTr("Calculate All Folder Sizes"), category: qsTr("View"), shortcut: "Alt+Shift+Enter", run: function() { currentModel().calculateAllFolderSizes(); backend.showStatus(qsTr("Calculating folder sizes…")); } },
-            { id: "sortName", title: qsTr("Sort by Name"), category: qsTr("Sort"), shortcut: "Ctrl+F3", run: function() { currentModel().setSortField(0); } },
-            { id: "sortExt", title: qsTr("Sort by Extension"), category: qsTr("Sort"), shortcut: "Ctrl+F4", run: function() { currentModel().setSortField(1); } },
-            { id: "sortDate", title: qsTr("Sort by Date"), category: qsTr("Sort"), shortcut: "Ctrl+F5", run: function() { currentModel().setSortField(3); } },
-            { id: "sortSize", title: qsTr("Sort by Size"), category: qsTr("Sort"), shortcut: "Ctrl+F6", run: function() { currentModel().setSortField(2); } },
+            { id: "quickJump", title: qsTr("Quick Jump to Folder..."), category: qsTr("Navigation"), shortcut: win.shortcuts.quickJump, run: function() { win.openCommandPalette("jump"); } },
+            { id: "flatView", title: flatActive ? qsTr("Disable Flat / Branch View") : qsTr("Flat / Branch View (Recursive)"), category: qsTr("View"), shortcut: win.shortcuts.flatView, run: function() { currentModel().toggleFlatView(); } },
+            { id: "toggleTheme", title: backend.isDarkTheme ? qsTr("Switch to Light Theme") : qsTr("Switch to Dark Theme"), category: qsTr("Appearance"), shortcut: win.shortcuts.themeToggle, run: function() { backend.toggleThemeMode(); } },
+            { id: "quickView", title: qsTr("Toggle Quick View Panel"), category: qsTr("View"), shortcut: win.shortcuts.quickView, run: function() { win.quickViewActive = !win.quickViewActive; if (win.quickViewActive) updateQuickView(); } },
+            { id: "showHidden", title: hiddenActive ? qsTr("Hide Hidden Files") : qsTr("Show Hidden Files"), category: qsTr("View"), shortcut: win.shortcuts.showHidden, run: function() { var m = currentModel(); m.setShowHidden(!m.showHidden); } },
+            { id: "listView", title: qsTr("View Mode: List"), category: qsTr("View"), shortcut: win.shortcuts.viewList, run: function() { currentModel().setViewMode(0); } },
+            { id: "gridView", title: qsTr("View Mode: Grid Thumbnails"), category: qsTr("View"), shortcut: win.shortcuts.viewGrid, run: function() { currentModel().setViewMode(1); } },
+            { id: "quickFilter", title: qsTr("Toggle Quick Filter"), category: qsTr("View"), shortcut: win.shortcuts.filter, run: function() { toggleFilterBar(); } },
+            { id: "refresh", title: qsTr("Refresh Active Panel"), category: qsTr("View"), shortcut: win.shortcuts.refresh, run: function() { currentModel().refresh(); } },
+            { id: "calcSizes", title: qsTr("Calculate All Folder Sizes"), category: qsTr("View"), shortcut: win.shortcuts.calcFolderSizes, run: function() { currentModel().calculateAllFolderSizes(); backend.showStatus(qsTr("Calculating folder sizes…")); } },
+            { id: "sortName", title: qsTr("Sort by Name"), category: qsTr("Sort"), shortcut: win.shortcuts.sortName, run: function() { currentModel().setSortField(0); } },
+            { id: "sortExt", title: qsTr("Sort by Extension"), category: qsTr("Sort"), shortcut: win.shortcuts.sortExt, run: function() { currentModel().setSortField(1); } },
+            { id: "sortDate", title: qsTr("Sort by Date"), category: qsTr("Sort"), shortcut: win.shortcuts.sortDate, run: function() { currentModel().setSortField(3); } },
+            { id: "sortSize", title: qsTr("Sort by Size"), category: qsTr("Sort"), shortcut: win.shortcuts.sortSize, run: function() { currentModel().setSortField(2); } },
             { id: "switchPanel", title: qsTr("Switch Active Panel"), category: qsTr("Navigation"), shortcut: "Tab", run: function() { backend.switchPanel(); currentListView().forceActiveFocus(); updateQuickView(); } },
-            { id: "editPath", title: qsTr("Edit Active Path Bar"), category: qsTr("Navigation"), shortcut: "Ctrl+L", run: function() { currentPanelItem().openPathEditor(); } },
-            { id: "goBack", title: qsTr("Navigate Back in History"), category: qsTr("Navigation"), shortcut: "Alt+Left", run: function() { currentModel().goBack(); } },
-            { id: "goForward", title: qsTr("Navigate Forward in History"), category: qsTr("Navigation"), shortcut: "Alt+Right", run: function() { currentModel().goForward(); } },
+            { id: "editPath", title: qsTr("Edit Active Path Bar"), category: qsTr("Navigation"), shortcut: win.shortcuts.editPath, run: function() { currentPanelItem().openPathEditor(); } },
+            { id: "goBack", title: qsTr("Navigate Back in History"), category: qsTr("Navigation"), shortcut: win.shortcuts.goBack, run: function() { currentModel().goBack(); } },
+            { id: "goForward", title: qsTr("Navigate Forward in History"), category: qsTr("Navigation"), shortcut: win.shortcuts.goForward, run: function() { currentModel().goForward(); } },
             { id: "goUp", title: qsTr("Go to Parent Directory"), category: qsTr("Navigation"), shortcut: "Backspace", run: function() { currentModel().cdUp(); } },
-            { id: "newTab", title: qsTr("Open New Tab"), category: qsTr("Tabs"), shortcut: "Ctrl+T", run: function() { currentModel().addTab(); currentListView().forceActiveFocus(); } },
-            { id: "closeTab", title: qsTr("Close Active Tab"), category: qsTr("Tabs"), shortcut: "Ctrl+W", run: function() { currentModel().closeTab(); currentListView().forceActiveFocus(); } },
-            { id: "reopenTab", title: qsTr("Reopen Closed Tab"), category: qsTr("Tabs"), shortcut: "Ctrl+Shift+W", run: function() { currentModel().reopenClosedTab(); currentListView().forceActiveFocus(); } },
-            { id: "lockTab", title: currentModel().activeTabLockMode > 0 ? qsTr("Unlock Active Tab") : qsTr("Lock / Pin Active Tab"), category: qsTr("Tabs"), shortcut: "Ctrl+Alt+L", run: function() { currentModel().toggleTabLock(); } },
+            { id: "newTab", title: qsTr("Open New Tab"), category: qsTr("Tabs"), shortcut: win.shortcuts.newTab, run: function() { currentModel().addTab(); currentListView().forceActiveFocus(); } },
+            { id: "closeTab", title: qsTr("Close Active Tab"), category: qsTr("Tabs"), shortcut: win.shortcuts.closeTab, run: function() { currentModel().closeTab(); currentListView().forceActiveFocus(); } },
+            { id: "reopenTab", title: qsTr("Reopen Closed Tab"), category: qsTr("Tabs"), shortcut: win.shortcuts.reopenTab, run: function() { currentModel().reopenClosedTab(); currentListView().forceActiveFocus(); } },
+            { id: "lockTab", title: currentModel().activeTabLockMode > 0 ? qsTr("Unlock Active Tab") : qsTr("Lock / Pin Active Tab"), category: qsTr("Tabs"), shortcut: win.shortcuts.lockTab, run: function() { currentModel().toggleTabLock(); } },
             { id: "lockTabStrict", title: qsTr("Lock Active Tab (Strict)"), category: qsTr("Tabs"), shortcut: "", run: function() { currentModel().setTabLockMode(currentModel().activeTab, 1); } },
             { id: "duplicateTab", title: qsTr("Duplicate Active Tab"), category: qsTr("Tabs"), shortcut: "", run: function() { currentModel().duplicateTab(); currentListView().forceActiveFocus(); } },
             { id: "moveTabOpposite", title: qsTr("Move Active Tab to Opposite Panel"), category: qsTr("Tabs"), shortcut: "", run: function() { backend.moveTabToOppositePanel(backend.activePanel); } },
             { id: "closeOtherTabs", title: qsTr("Close Other Unlocked Tabs"), category: qsTr("Tabs"), shortcut: "", run: function() { currentModel().closeOtherTabs(); } },
-            { id: "nextTab", title: qsTr("Next Tab"), category: qsTr("Tabs"), shortcut: "Ctrl+Tab", run: function() { currentModel().nextTab(); currentListView().forceActiveFocus(); } },
-            { id: "workspaces", title: qsTr("Workspaces (Save / Load Dual-Panel Layout)..."), category: qsTr("Workspaces"), shortcut: "Ctrl+Shift+L", run: function() { win.workspacesOpen = true; } },
-            { id: "openTrash", title: qsTr("Open Trash (trash://)"), category: qsTr("Trash"), shortcut: "Ctrl+Shift+Backspace", run: function() { backend.openTrash(); currentListView().forceActiveFocus(); } },
+            { id: "nextTab", title: qsTr("Next Tab"), category: qsTr("Tabs"), shortcut: win.shortcuts.nextTab, run: function() { currentModel().nextTab(); currentListView().forceActiveFocus(); } },
+            { id: "workspaces", title: qsTr("Workspaces (Save / Load Dual-Panel Layout)..."), category: qsTr("Workspaces"), shortcut: win.shortcuts.workspaces, run: function() { win.workspacesOpen = true; } },
+            { id: "openTrash", title: qsTr("Open Trash (trash://)"), category: qsTr("Trash"), shortcut: win.shortcuts.openTrash, run: function() { backend.openTrash(); currentListView().forceActiveFocus(); } },
             { id: "emptyTrash", title: qsTr("Empty Trash..."), category: qsTr("Trash"), shortcut: "", run: function() { win.confirmEmptyTrashOpen = true; } },
-            { id: "bookmarks", title: qsTr("Open Bookmarks Manager"), category: qsTr("Bookmarks"), shortcut: "Ctrl+B", run: function() { win.bookmarksOpen = true; } },
+            { id: "bookmarks", title: qsTr("Open Bookmarks Manager"), category: qsTr("Bookmarks"), shortcut: win.shortcuts.bookmarks, run: function() { win.bookmarksOpen = true; } },
             { id: "toggleBookmark", title: qsTr("Toggle Bookmark for Current Folder"), category: qsTr("Bookmarks"), shortcut: "", run: function() { backend.toggleBookmark(currentModel().path); } },
-            { id: "swapPanels", title: qsTr("Swap Left & Right Panels"), category: qsTr("Panels"), shortcut: "Ctrl+U", run: function() { backend.swapPanels(); } },
-            { id: "syncPanels", title: qsTr("Sync Target Panel to Active"), category: qsTr("Panels"), shortcut: "Alt+=", run: function() { backend.syncPanels(); } },
-            { id: "compareDirs", title: qsTr("Compare Left & Right Directories"), category: qsTr("Commands"), shortcut: "Shift+F2", run: function() { backend.compareDirectories(); } },
-            { id: "findFiles", title: qsTr("Advanced Find Files (Name / Content / Filter)..."), category: qsTr("Commands"), shortcut: "Alt+F7", run: function() { win.openAdvancedSearchDialog(); } },
-            { id: "diskUsage", title: flatActive ? qsTr("Disk Usage Analyzer (with Sizes)") : qsTr("Disk Usage Analyzer (Ctrl+Shift+D)"), category: qsTr("View"), shortcut: "Ctrl+Shift+D", run: function() { currentModel().toggleDiskUsageMode(); } },
-            { id: "syncDirs", title: qsTr("Synchronize Directories (Recursive)..."), category: qsTr("Commands"), shortcut: "Ctrl+Shift+S", run: function() { win.openSyncDirsDialog(); } },
-            { id: "duplicateFinder", title: qsTr("Find Duplicate Files..."), category: qsTr("Commands"), shortcut: "Ctrl+Shift+F7", run: function() { win.openDuplicateFinderDialog(); } },
-            { id: "operationQueue", title: qsTr("Operation Queue & Transfer Monitor..."), category: qsTr("Commands"), shortcut: "Ctrl+Shift+Q", run: function() { win.openOperationQueueDialog(); } },
-            { id: "remoteConnections", title: qsTr("Remote Connections (Google Drive / SFTP / SMB)..."), category: qsTr("Network"), shortcut: "Ctrl+Shift+M", run: function() { win.openRemoteConnectionsDialog(""); } },
-            { id: "openWith", title: qsTr("Open With / Custom Actions..."), category: qsTr("Files"), shortcut: "Ctrl+Shift+O", run: function() { win.openOpenWithDialog("", 0); } },
-            { id: "diffFiles", title: qsTr("Compare Files (Visual Diff)..."), category: qsTr("Commands"), shortcut: "Ctrl+Alt+D", run: function() { triggerFileDiff(); } },
+            { id: "swapPanels", title: qsTr("Swap Left & Right Panels"), category: qsTr("Panels"), shortcut: win.shortcuts.swapPanels, run: function() { backend.swapPanels(); } },
+            { id: "syncPanels", title: qsTr("Sync Target Panel to Active"), category: qsTr("Panels"), shortcut: win.shortcuts.syncPanels, run: function() { backend.syncPanels(); } },
+            { id: "compareDirs", title: qsTr("Compare Left & Right Directories"), category: qsTr("Commands"), shortcut: win.shortcuts.compareDirs, run: function() { backend.compareDirectories(); } },
+            { id: "findFiles", title: qsTr("Advanced Find Files (Name / Content / Filter)..."), category: qsTr("Commands"), shortcut: win.shortcuts.findFiles, run: function() { win.openAdvancedSearchDialog(); } },
+            { id: "diskUsage", title: flatActive ? qsTr("Disk Usage Analyzer (with Sizes)") : qsTr("Disk Usage Analyzer (Ctrl+Shift+D)"), category: qsTr("View"), shortcut: win.shortcuts.diskUsage, run: function() { currentModel().toggleDiskUsageMode(); } },
+            { id: "syncDirs", title: qsTr("Synchronize Directories (Recursive)..."), category: qsTr("Commands"), shortcut: win.shortcuts.syncDirs, run: function() { win.openSyncDirsDialog(); } },
+            { id: "duplicateFinder", title: qsTr("Find Duplicate Files..."), category: qsTr("Commands"), shortcut: win.shortcuts.duplicateFinder, run: function() { win.openDuplicateFinderDialog(); } },
+            { id: "operationQueue", title: qsTr("Operation Queue & Transfer Monitor..."), category: qsTr("Commands"), shortcut: win.shortcuts.operationQueue, run: function() { win.openOperationQueueDialog(); } },
+            { id: "remoteConnections", title: qsTr("Remote Connections (Google Drive / SFTP / SMB)..."), category: qsTr("Network"), shortcut: win.shortcuts.remoteConnections, run: function() { win.openRemoteConnectionsDialog(""); } },
+            { id: "openWith", title: qsTr("Open With / Custom Actions..."), category: qsTr("Files"), shortcut: win.shortcuts.openWith, run: function() { win.openOpenWithDialog("", 0); } },
+            { id: "diffFiles", title: qsTr("Compare Files (Visual Diff)..."), category: qsTr("Commands"), shortcut: win.shortcuts.diffFiles, run: function() { triggerFileDiff(); } },
             { id: "checksum", title: qsTr("Compute / Batch Verify Checksums..."), category: qsTr("Commands"), shortcut: "", run: function() { triggerChecksum(); } },
-            { id: "settings", title: qsTr("Preferences / Settings..."), category: qsTr("View"), shortcut: "Ctrl+,", run: function() { win.openSettingsDialog(); } },
-            { id: "terminal", title: qsTr("Open Terminal in Current Folder"), category: qsTr("Commands"), shortcut: "F9", run: function() { backend.openInTerminal(currentModel().path); } },
-            { id: "focusCmdBar", title: qsTr("Focus Command Line Bar"), category: qsTr("Commands"), shortcut: "Ctrl+E", run: function() { cmdLineInput.forceFieldFocus(); } },
-            { id: "toggleCmdOutput", title: qsTr("Toggle Command Output Drawer"), category: qsTr("Commands"), shortcut: "Ctrl+O", run: function() { win.commandDrawerOpen = !win.commandDrawerOpen; } },
-            { id: "splitCombine", title: qsTr("Split / Combine File (.001 / .crc)..."), category: qsTr("Files"), shortcut: "Ctrl+Alt+S", run: function() { win.openSplitCombineDialog(); } },
-            { id: "preview", title: qsTr("View / Preview Item"), category: qsTr("Files"), shortcut: "F3", run: function() { triggerF3View(); } },
-            { id: "editFile", title: qsTr("Edit Item with $EDITOR"), category: qsTr("Files"), shortcut: "F4", run: function() { triggerF4Edit(); } },
-            { id: "newFile", title: qsTr("Create New File..."), category: qsTr("Files"), shortcut: "Shift+F4", run: function() { triggerNewFile(); } },
-            { id: "copy", title: qsTr("Copy Selected to Target Panel..."), category: qsTr("Files"), shortcut: "F5", run: function() { triggerF5Copy(); } },
-            { id: "move", title: qsTr("Move Selected to Target Panel..."), category: qsTr("Files"), shortcut: "F6", run: function() { triggerF6Move(); } },
-            { id: "rename", title: qsTr("Rename Item..."), category: qsTr("Files"), shortcut: "Shift+F6", run: function() { triggerRename(); } },
-            { id: "multiRename", title: qsTr("Multi-Rename Tool..."), category: qsTr("Files"), shortcut: "Ctrl+M", run: function() { triggerMultiRename(); } },
-            { id: "symlink", title: qsTr("Create Symbolic Link..."), category: qsTr("Files"), shortcut: "Ctrl+Shift+F5", run: function() { triggerSymlink(); } },
-            { id: "mkdir", title: qsTr("Create New Folder..."), category: qsTr("Files"), shortcut: "F7", run: function() { triggerF7NewFolder(); } },
-            { id: "delete", title: qsTr("Delete Selected Item(s)"), category: qsTr("Files"), shortcut: "F8", run: function() { triggerF8Delete(); } },
-            { id: "pack", title: qsTr("Pack Selected to Archive..."), category: qsTr("Archives"), shortcut: "Alt+F5", run: function() { triggerPackArchive(); } },
-            { id: "extract", title: qsTr("Extract Archive"), category: qsTr("Archives"), shortcut: "Alt+F9", run: function() { triggerExtractArchive(); } },
-            { id: "properties", title: qsTr("Item Properties & Permissions"), category: qsTr("Files"), shortcut: "Alt+Enter", run: function() { triggerProperties(); } },
-            { id: "selectAll", title: qsTr("Select All Items"), category: qsTr("Selection"), shortcut: "Ctrl+A", run: function() { currentModel().selectAll(); } },
-            { id: "deselectAll", title: qsTr("Deselect All Items"), category: qsTr("Selection"), shortcut: "Ctrl+D", run: function() { currentModel().deselectAll(); } },
-            { id: "invertSel", title: qsTr("Invert Selection"), category: qsTr("Selection"), shortcut: "Ctrl+Shift+A", run: function() { currentModel().invertSelection(); } },
-            { id: "selectMask", title: qsTr("Select by Wildcard..."), category: qsTr("Selection"), shortcut: "Num+", run: function() { openMaskDialog(true); } },
-            { id: "deselectMask", title: qsTr("Deselect by Wildcard..."), category: qsTr("Selection"), shortcut: "Num-", run: function() { openMaskDialog(false); } },
-            { id: "undo", title: qsTr("Undo Last Operation"), category: qsTr("Edit"), shortcut: "Ctrl+Z", run: function() { backend.undoLastOperation(); } },
-            { id: "shortcuts", title: qsTr("Keyboard Shortcuts"), category: qsTr("Help"), shortcut: "?", run: function() { win.helpOpen = true; } },
+            { id: "settings", title: qsTr("Preferences / Settings..."), category: qsTr("View"), shortcut: win.shortcuts.settings, run: function() { win.openSettingsDialog(); } },
+            { id: "terminal", title: qsTr("Open Terminal in Current Folder"), category: qsTr("Commands"), shortcut: win.shortcuts.terminal, run: function() { backend.openInTerminal(currentModel().path); } },
+            { id: "focusCmdBar", title: qsTr("Focus Command Line Bar"), category: qsTr("Commands"), shortcut: win.shortcuts.cmdBarFocus, run: function() { cmdLineInput.forceFieldFocus(); } },
+            { id: "toggleCmdOutput", title: qsTr("Toggle Command Output Drawer"), category: qsTr("Commands"), shortcut: win.shortcuts.cmdDrawerToggle, run: function() { win.commandDrawerOpen = !win.commandDrawerOpen; } },
+            { id: "splitCombine", title: qsTr("Split / Combine File (.001 / .crc)..."), category: qsTr("Files"), shortcut: win.shortcuts.splitCombine, run: function() { win.openSplitCombineDialog(); } },
+            { id: "preview", title: qsTr("View / Preview Item"), category: qsTr("Files"), shortcut: win.shortcuts.view, run: function() { triggerF3View(); } },
+            { id: "editFile", title: qsTr("Edit Item with $EDITOR"), category: qsTr("Files"), shortcut: win.shortcuts.edit, run: function() { triggerF4Edit(); } },
+            { id: "newFile", title: qsTr("Create New File..."), category: qsTr("Files"), shortcut: win.shortcuts.newFile, run: function() { triggerNewFile(); } },
+            { id: "copy", title: qsTr("Copy Selected to Target Panel..."), category: qsTr("Files"), shortcut: win.shortcuts.copy, run: function() { triggerF5Copy(); } },
+            { id: "move", title: qsTr("Move Selected to Target Panel..."), category: qsTr("Files"), shortcut: win.shortcuts.move, run: function() { triggerF6Move(); } },
+            { id: "rename", title: qsTr("Rename Item..."), category: qsTr("Files"), shortcut: win.shortcuts.rename, run: function() { triggerRename(); } },
+            { id: "multiRename", title: qsTr("Multi-Rename Tool..."), category: qsTr("Files"), shortcut: win.shortcuts.multiRename, run: function() { triggerMultiRename(); } },
+            { id: "symlink", title: qsTr("Create Symbolic Link..."), category: qsTr("Files"), shortcut: win.shortcuts.symlink, run: function() { triggerSymlink(); } },
+            { id: "mkdir", title: qsTr("Create New Folder..."), category: qsTr("Files"), shortcut: win.shortcuts.newFolder, run: function() { triggerF7NewFolder(); } },
+            { id: "delete", title: qsTr("Delete Selected Item(s)"), category: qsTr("Files"), shortcut: win.shortcuts.deleteItem, run: function() { triggerF8Delete(); } },
+            { id: "pack", title: qsTr("Pack Selected to Archive..."), category: qsTr("Archives"), shortcut: win.shortcuts.packArchive, run: function() { triggerPackArchive(); } },
+            { id: "extract", title: qsTr("Extract Archive"), category: qsTr("Archives"), shortcut: win.shortcuts.extractArchive, run: function() { triggerExtractArchive(); } },
+            { id: "properties", title: qsTr("Item Properties & Permissions"), category: qsTr("Files"), shortcut: win.shortcuts.properties, run: function() { triggerProperties(); } },
+            { id: "selectAll", title: qsTr("Select All Items"), category: qsTr("Selection"), shortcut: win.shortcuts.selectAll, run: function() { currentModel().selectAll(); } },
+            { id: "deselectAll", title: qsTr("Deselect All Items"), category: qsTr("Selection"), shortcut: win.shortcuts.deselectAll, run: function() { currentModel().deselectAll(); } },
+            { id: "invertSel", title: qsTr("Invert Selection"), category: qsTr("Selection"), shortcut: win.shortcuts.invertSelection, run: function() { currentModel().invertSelection(); } },
+            { id: "selectMask", title: qsTr("Select by Wildcard..."), category: qsTr("Selection"), shortcut: win.shortcuts.maskSelect, run: function() { openMaskDialog(true); } },
+            { id: "deselectMask", title: qsTr("Deselect by Wildcard..."), category: qsTr("Selection"), shortcut: win.shortcuts.maskDeselect, run: function() { openMaskDialog(false); } },
+            { id: "undo", title: qsTr("Undo Last Operation"), category: qsTr("Edit"), shortcut: win.shortcuts.undo, run: function() { backend.undoLastOperation(); } },
+            { id: "shortcuts", title: qsTr("Keyboard Shortcuts"), category: qsTr("Help"), shortcut: win.shortcuts.shortcutsHelp, run: function() { win.helpOpen = true; } },
             { id: "about", title: qsTr("About TwinForge"), category: qsTr("Help"), shortcut: "", run: function() { win.aboutOpen = true; } }
         ];
     }
@@ -5201,115 +5341,115 @@ ApplicationWindow {
         currentListView().forceActiveFocus();
         updateQuickView();
     }}
-    Shortcut { sequence: "?"; context: Qt.ApplicationShortcut; onActivated: win.helpOpen = !win.helpOpen }
-    Shortcut { sequence: "F1"; context: Qt.ApplicationShortcut; onActivated: win.helpOpen = !win.helpOpen }
-    Shortcut { sequence: "F3"; context: Qt.ApplicationShortcut; onActivated: triggerF3View() }
-    Shortcut { sequence: "F4"; context: Qt.ApplicationShortcut; onActivated: triggerF4Edit() }
-    Shortcut { sequence: "F5"; context: Qt.ApplicationShortcut; onActivated: triggerF5Copy() }
-    Shortcut { sequence: "F6"; context: Qt.ApplicationShortcut; onActivated: triggerF6Move() }
-    Shortcut { sequence: "Shift+F6"; context: Qt.ApplicationShortcut; onActivated: triggerRename() }
-    Shortcut { sequence: "F7"; context: Qt.ApplicationShortcut; onActivated: triggerF7NewFolder() }
-    Shortcut { sequence: "F8"; context: Qt.ApplicationShortcut; onActivated: triggerF8Delete() }
+    Shortcut { sequence: win.shortcuts.shortcutsHelp; context: Qt.ApplicationShortcut; onActivated: win.helpOpen = !win.helpOpen }
+    Shortcut { sequence: win.shortcuts.helpF1; context: Qt.ApplicationShortcut; onActivated: win.helpOpen = !win.helpOpen }
+    Shortcut { sequence: win.shortcuts.view; context: Qt.ApplicationShortcut; onActivated: triggerF3View() }
+    Shortcut { sequence: win.shortcuts.edit; context: Qt.ApplicationShortcut; onActivated: triggerF4Edit() }
+    Shortcut { sequence: win.shortcuts.copy; context: Qt.ApplicationShortcut; onActivated: triggerF5Copy() }
+    Shortcut { sequence: win.shortcuts.move; context: Qt.ApplicationShortcut; onActivated: triggerF6Move() }
+    Shortcut { sequence: win.shortcuts.rename; context: Qt.ApplicationShortcut; onActivated: triggerRename() }
+    Shortcut { sequence: win.shortcuts.newFolder; context: Qt.ApplicationShortcut; onActivated: triggerF7NewFolder() }
+    Shortcut { sequence: win.shortcuts.deleteItem; context: Qt.ApplicationShortcut; onActivated: triggerF8Delete() }
     Shortcut { sequence: "Delete"; enabled: !win.isTextInputFocused(); context: Qt.ApplicationShortcut; onActivated: triggerF8Delete() }
-    Shortcut { sequences: ["F9", "Alt+T"]; context: Qt.ApplicationShortcut; onActivated: backend.openInTerminal(currentModel().path) }
-    Shortcut { sequence: "F10"; context: Qt.ApplicationShortcut; onActivated: Qt.quit() }
+    Shortcut { sequences: [win.shortcuts.terminal, win.shortcuts.terminalAlt]; context: Qt.ApplicationShortcut; onActivated: backend.openInTerminal(currentModel().path) }
+    Shortcut { sequence: win.shortcuts.exitApp; context: Qt.ApplicationShortcut; onActivated: Qt.quit() }
 
     // Per-panel Tabs
-    Shortcut { sequence: "Ctrl+T"; context: Qt.ApplicationShortcut; onActivated: {
+    Shortcut { sequence: win.shortcuts.newTab; context: Qt.ApplicationShortcut; onActivated: {
         currentModel().addTab();
         currentListView().forceActiveFocus();
     }}
-    Shortcut { sequence: "Ctrl+W"; context: Qt.ApplicationShortcut; onActivated: {
+    Shortcut { sequence: win.shortcuts.closeTab; context: Qt.ApplicationShortcut; onActivated: {
         currentModel().closeTab();
         currentListView().forceActiveFocus();
     }}
-    Shortcut { sequence: "Ctrl+Tab"; context: Qt.ApplicationShortcut; onActivated: {
+    Shortcut { sequence: win.shortcuts.nextTab; context: Qt.ApplicationShortcut; onActivated: {
         currentModel().nextTab();
         currentListView().forceActiveFocus();
     }}
-    Shortcut { sequence: "Ctrl+Shift+Tab"; context: Qt.ApplicationShortcut; onActivated: {
+    Shortcut { sequence: win.shortcuts.prevTab; context: Qt.ApplicationShortcut; onActivated: {
         currentModel().prevTab();
         currentListView().forceActiveFocus();
     }}
 
     // System Clipboard & Undo (yields cleanly when editing text fields)
-    Shortcut { sequence: "Ctrl+C"; enabled: !win.isTextInputFocused(); context: Qt.ApplicationShortcut; onActivated: {
+    Shortcut { sequence: win.shortcuts.copyClip; enabled: !win.isTextInputFocused(); context: Qt.ApplicationShortcut; onActivated: {
         var paths = getSelectedOrCurrentPaths();
         if (paths.length > 0)
             backend.copyToClipboard(paths);
     }}
-    Shortcut { sequence: "Ctrl+X"; enabled: !win.isTextInputFocused(); context: Qt.ApplicationShortcut; onActivated: {
+    Shortcut { sequence: win.shortcuts.cutClip; enabled: !win.isTextInputFocused(); context: Qt.ApplicationShortcut; onActivated: {
         var paths = getSelectedOrCurrentPaths();
         if (paths.length > 0)
             backend.cutToClipboard(paths);
     }}
-    Shortcut { sequence: "Ctrl+V"; enabled: !win.isTextInputFocused(); context: Qt.ApplicationShortcut; onActivated: {
+    Shortcut { sequence: win.shortcuts.pasteClip; enabled: !win.isTextInputFocused(); context: Qt.ApplicationShortcut; onActivated: {
         backend.pasteFromClipboard(currentModel().path);
     }}
-    Shortcut { sequence: "Ctrl+Z"; enabled: !win.isTextInputFocused(); context: Qt.ApplicationShortcut; onActivated: {
+    Shortcut { sequence: win.shortcuts.undo; enabled: !win.isTextInputFocused(); context: Qt.ApplicationShortcut; onActivated: {
         if (!backend.undoLastOperation() && !backend.canUndo)
             backend.showStatus(qsTr("Nothing to undo."));
     }}
-    Shortcut { sequence: "Ctrl+Shift+C"; enabled: !win.isTextInputFocused(); context: Qt.ApplicationShortcut; onActivated: {
+    Shortcut { sequence: win.shortcuts.copyNamesCsv; enabled: !win.isTextInputFocused(); context: Qt.ApplicationShortcut; onActivated: {
         var paths = getSelectedOrCurrentPaths();
         backend.copyNamesAsCsv(paths);
     }}
-    Shortcut { sequence: "Ctrl+Alt+C"; enabled: !win.isTextInputFocused(); context: Qt.ApplicationShortcut; onActivated: {
+    Shortcut { sequence: win.shortcuts.copyPathsCsv; enabled: !win.isTextInputFocused(); context: Qt.ApplicationShortcut; onActivated: {
         var paths = getSelectedOrCurrentPaths();
         backend.copyPathsAsCsv(paths);
     }}
 
     // Item Properties & Permissions
-    Shortcut { sequences: ["Alt+Return", "Alt+Enter"]; enabled: !win.commandPaletteOpen; context: Qt.ApplicationShortcut; onActivated: triggerProperties() }
+    Shortcut { sequences: ["Alt+Return", win.shortcuts.properties]; enabled: !win.commandPaletteOpen; context: Qt.ApplicationShortcut; onActivated: triggerProperties() }
 
-    Shortcut { sequence: "Ctrl+Q"; context: Qt.ApplicationShortcut; onActivated: {
+    Shortcut { sequence: win.shortcuts.quickView; context: Qt.ApplicationShortcut; onActivated: {
         win.quickViewActive = !win.quickViewActive;
         if (win.quickViewActive)
             updateQuickView();
     }}
-    Shortcut { sequence: "Ctrl+L"; context: Qt.ApplicationShortcut; onActivated: currentPanelItem().openPathEditor() }
-    Shortcut { sequence: "Ctrl+U"; context: Qt.ApplicationShortcut; onActivated: backend.swapPanels() }
-    Shortcut { sequence: "Alt+="; context: Qt.ApplicationShortcut; onActivated: backend.syncPanels() }
-    Shortcut { sequence: "Shift+F2"; context: Qt.ApplicationShortcut; onActivated: backend.compareDirectories() }
-    Shortcut { sequence: "Ctrl+M"; context: Qt.ApplicationShortcut; onActivated: triggerMultiRename() }
-    Shortcut { sequence: "Alt+F5"; context: Qt.ApplicationShortcut; onActivated: triggerPackArchive() }
-    Shortcut { sequence: "Alt+F9"; context: Qt.ApplicationShortcut; onActivated: triggerExtractArchive() }
-    Shortcut { sequence: "Alt+Shift+Return"; context: Qt.ApplicationShortcut; onActivated: {
+    Shortcut { sequence: win.shortcuts.editPath; context: Qt.ApplicationShortcut; onActivated: currentPanelItem().openPathEditor() }
+    Shortcut { sequence: win.shortcuts.swapPanels; context: Qt.ApplicationShortcut; onActivated: backend.swapPanels() }
+    Shortcut { sequence: win.shortcuts.syncPanels; context: Qt.ApplicationShortcut; onActivated: backend.syncPanels() }
+    Shortcut { sequence: win.shortcuts.compareDirs; context: Qt.ApplicationShortcut; onActivated: backend.compareDirectories() }
+    Shortcut { sequence: win.shortcuts.multiRename; context: Qt.ApplicationShortcut; onActivated: triggerMultiRename() }
+    Shortcut { sequence: win.shortcuts.packArchive; context: Qt.ApplicationShortcut; onActivated: triggerPackArchive() }
+    Shortcut { sequence: win.shortcuts.extractArchive; context: Qt.ApplicationShortcut; onActivated: triggerExtractArchive() }
+    Shortcut { sequence: win.shortcuts.calcFolderSizes; context: Qt.ApplicationShortcut; onActivated: {
         currentModel().calculateAllFolderSizes();
         backend.showStatus(qsTr("Calculated sizes for all folders."));
     }}
-    Shortcut { sequence: "Alt+Left"; context: Qt.ApplicationShortcut; onActivated: currentModel().goBack() }
-    Shortcut { sequence: "Alt+Right"; context: Qt.ApplicationShortcut; onActivated: currentModel().goForward() }
-    Shortcut { sequence: "Ctrl+S"; context: Qt.ApplicationShortcut; onActivated: toggleFilterBar() }
-    Shortcut { sequence: "Ctrl+B"; context: Qt.ApplicationShortcut; onActivated: win.bookmarksOpen = !win.bookmarksOpen }
-    Shortcut { sequence: "Ctrl+D"; context: Qt.ApplicationShortcut; onActivated: currentModel().deselectAll() }
-    Shortcut { sequence: "Alt+F7"; context: Qt.ApplicationShortcut; onActivated: win.openAdvancedSearchDialog() }
-    Shortcut { sequence: "Ctrl+Shift+D"; context: Qt.ApplicationShortcut; onActivated: currentModel().toggleDiskUsageMode() }
-    Shortcut { sequence: "Ctrl+Shift+S"; context: Qt.ApplicationShortcut; onActivated: win.openSyncDirsDialog() }
-    Shortcut { sequence: "Ctrl+Shift+F7"; context: Qt.ApplicationShortcut; onActivated: win.openDuplicateFinderDialog() }
-    Shortcut { sequence: "Ctrl+Shift+Q"; context: Qt.ApplicationShortcut; onActivated: win.openOperationQueueDialog() }
-    Shortcut { sequence: "Ctrl+Shift+M"; context: Qt.ApplicationShortcut; onActivated: win.openRemoteConnectionsDialog("") }
-    Shortcut { sequence: "Ctrl+Shift+O"; context: Qt.ApplicationShortcut; onActivated: win.openOpenWithDialog("", 0) }
-    Shortcut { sequence: "Ctrl+H"; context: Qt.ApplicationShortcut; onActivated: {
+    Shortcut { sequence: win.shortcuts.goBack; context: Qt.ApplicationShortcut; onActivated: currentModel().goBack() }
+    Shortcut { sequence: win.shortcuts.goForward; context: Qt.ApplicationShortcut; onActivated: currentModel().goForward() }
+    Shortcut { sequence: win.shortcuts.filter; context: Qt.ApplicationShortcut; onActivated: toggleFilterBar() }
+    Shortcut { sequence: win.shortcuts.bookmarks; context: Qt.ApplicationShortcut; onActivated: win.bookmarksOpen = !win.bookmarksOpen }
+    Shortcut { sequence: win.shortcuts.deselectAll; context: Qt.ApplicationShortcut; onActivated: currentModel().deselectAll() }
+    Shortcut { sequence: win.shortcuts.findFiles; context: Qt.ApplicationShortcut; onActivated: win.openAdvancedSearchDialog() }
+    Shortcut { sequence: win.shortcuts.diskUsage; context: Qt.ApplicationShortcut; onActivated: currentModel().toggleDiskUsageMode() }
+    Shortcut { sequence: win.shortcuts.syncDirs; context: Qt.ApplicationShortcut; onActivated: win.openSyncDirsDialog() }
+    Shortcut { sequence: win.shortcuts.duplicateFinder; context: Qt.ApplicationShortcut; onActivated: win.openDuplicateFinderDialog() }
+    Shortcut { sequence: win.shortcuts.operationQueue; context: Qt.ApplicationShortcut; onActivated: win.openOperationQueueDialog() }
+    Shortcut { sequence: win.shortcuts.remoteConnections; context: Qt.ApplicationShortcut; onActivated: win.openRemoteConnectionsDialog("") }
+    Shortcut { sequence: win.shortcuts.openWith; context: Qt.ApplicationShortcut; onActivated: win.openOpenWithDialog("", 0) }
+    Shortcut { sequence: win.shortcuts.showHidden; context: Qt.ApplicationShortcut; onActivated: {
         var m = currentModel();
         m.setShowHidden(!m.showHidden);
     }}
-    Shortcut { sequence: "Ctrl+F3"; context: Qt.ApplicationShortcut; onActivated: currentModel().setSortField(0) }
-    Shortcut { sequence: "Ctrl+F4"; context: Qt.ApplicationShortcut; onActivated: currentModel().setSortField(1) }
-    Shortcut { sequence: "Ctrl+F5"; context: Qt.ApplicationShortcut; onActivated: currentModel().setSortField(3) }
-    Shortcut { sequence: "Ctrl+F6"; context: Qt.ApplicationShortcut; onActivated: currentModel().setSortField(2) }
-    Shortcut { sequence: "Ctrl+R"; context: Qt.ApplicationShortcut; onActivated: currentModel().refresh() }
-    Shortcut { sequence: "Ctrl+A"; enabled: !win.isTextInputFocused(); context: Qt.ApplicationShortcut; onActivated: currentModel().selectAll() }
-    Shortcut { sequence: "Ctrl+Shift+A"; context: Qt.ApplicationShortcut; onActivated: currentModel().invertSelection() }
+    Shortcut { sequence: win.shortcuts.sortName; context: Qt.ApplicationShortcut; onActivated: currentModel().setSortField(0) }
+    Shortcut { sequence: win.shortcuts.sortExt; context: Qt.ApplicationShortcut; onActivated: currentModel().setSortField(1) }
+    Shortcut { sequence: win.shortcuts.sortDate; context: Qt.ApplicationShortcut; onActivated: currentModel().setSortField(3) }
+    Shortcut { sequence: win.shortcuts.sortSize; context: Qt.ApplicationShortcut; onActivated: currentModel().setSortField(2) }
+    Shortcut { sequence: win.shortcuts.refresh; context: Qt.ApplicationShortcut; onActivated: currentModel().refresh() }
+    Shortcut { sequence: win.shortcuts.selectAll; enabled: !win.isTextInputFocused(); context: Qt.ApplicationShortcut; onActivated: currentModel().selectAll() }
+    Shortcut { sequence: win.shortcuts.invertSelection; context: Qt.ApplicationShortcut; onActivated: currentModel().invertSelection() }
 
     // New File (Shift+F4)
-    Shortcut { sequence: "Shift+F4"; context: Qt.ApplicationShortcut; onActivated: triggerNewFile() }
+    Shortcut { sequence: win.shortcuts.newFile; context: Qt.ApplicationShortcut; onActivated: triggerNewFile() }
 
     // Create Symlink (Ctrl+Shift+F5)
-    Shortcut { sequence: "Ctrl+Shift+F5"; context: Qt.ApplicationShortcut; onActivated: triggerSymlink() }
+    Shortcut { sequence: win.shortcuts.symlink; context: Qt.ApplicationShortcut; onActivated: triggerSymlink() }
 
     // Visual Diff (Ctrl+Alt+D)
-    Shortcut { sequence: "Ctrl+Alt+D"; context: Qt.ApplicationShortcut; onActivated: triggerFileDiff() }
+    Shortcut { sequence: win.shortcuts.diffFiles; context: Qt.ApplicationShortcut; onActivated: triggerFileDiff() }
 
     // Select / Deselect by Mask (Num+ / Num-)
     Shortcut { sequences: ["+", "Shift+=", "Num++"]; enabled: !win.isTextInputFocused(); context: Qt.ApplicationShortcut; onActivated: openMaskDialog(true) }
@@ -5317,22 +5457,22 @@ ApplicationWindow {
     Shortcut { sequences: ["*", "Num+*"]; enabled: !win.isTextInputFocused(); context: Qt.ApplicationShortcut; onActivated: currentModel().invertSelection() }
 
     // View Modes (Ctrl+1 / Ctrl+2), Flat View (Ctrl+Shift+B), Palette (Ctrl+Shift+P / Ctrl+P) & Theme Toggle (Ctrl+Shift+T)
-    Shortcut { sequence: "Ctrl+1"; context: Qt.ApplicationShortcut; onActivated: currentModel().setViewMode(0) }
-    Shortcut { sequence: "Ctrl+2"; context: Qt.ApplicationShortcut; onActivated: currentModel().setViewMode(1) }
-    Shortcut { sequence: "Ctrl+Shift+B"; context: Qt.ApplicationShortcut; onActivated: currentModel().toggleFlatView() }
-    Shortcut { sequence: "Ctrl+Shift+P"; context: Qt.ApplicationShortcut; onActivated: win.openCommandPalette("commands") }
-    Shortcut { sequence: "Ctrl+P"; context: Qt.ApplicationShortcut; onActivated: win.openCommandPalette("jump") }
-    Shortcut { sequence: "Ctrl+Shift+T"; context: Qt.ApplicationShortcut; onActivated: backend.toggleThemeMode() }
-    Shortcut { sequence: "Ctrl+Shift+L"; context: Qt.ApplicationShortcut; onActivated: win.workspacesOpen = !win.workspacesOpen }
-    Shortcut { sequence: "Ctrl+Alt+L"; context: Qt.ApplicationShortcut; onActivated: currentModel().toggleTabLock() }
-    Shortcut { sequence: "Ctrl+Shift+W"; context: Qt.ApplicationShortcut; onActivated: { currentModel().reopenClosedTab(); currentListView().forceActiveFocus(); } }
-    Shortcut { sequence: "Ctrl+Shift+Backspace"; context: Qt.ApplicationShortcut; onActivated: { backend.openTrash(); currentListView().forceActiveFocus(); } }
-    Shortcut { sequence: "Ctrl+O"; context: Qt.ApplicationShortcut; onActivated: win.commandDrawerOpen = !win.commandDrawerOpen }
-    Shortcut { sequence: "Ctrl+E"; context: Qt.ApplicationShortcut; onActivated: cmdLineInput.forceFieldFocus() }
-    Shortcut { sequence: "Ctrl+Return"; enabled: !win.isTextInputFocused(); context: Qt.ApplicationShortcut; onActivated: win.insertIntoCmdBar(false) }
-    Shortcut { sequence: "Ctrl+Shift+Return"; enabled: !win.isTextInputFocused(); context: Qt.ApplicationShortcut; onActivated: win.insertIntoCmdBar(true) }
-    Shortcut { sequence: "Ctrl+Alt+S"; context: Qt.ApplicationShortcut; onActivated: win.openSplitCombineDialog() }
-    Shortcut { sequence: "Ctrl+,"; context: Qt.ApplicationShortcut; onActivated: win.openSettingsDialog() }
+    Shortcut { sequence: win.shortcuts.viewList; context: Qt.ApplicationShortcut; onActivated: currentModel().setViewMode(0) }
+    Shortcut { sequence: win.shortcuts.viewGrid; context: Qt.ApplicationShortcut; onActivated: currentModel().setViewMode(1) }
+    Shortcut { sequence: win.shortcuts.flatView; context: Qt.ApplicationShortcut; onActivated: currentModel().toggleFlatView() }
+    Shortcut { sequence: win.shortcuts.commandPalette; context: Qt.ApplicationShortcut; onActivated: win.openCommandPalette("commands") }
+    Shortcut { sequence: win.shortcuts.quickJump; context: Qt.ApplicationShortcut; onActivated: win.openCommandPalette("jump") }
+    Shortcut { sequence: win.shortcuts.themeToggle; context: Qt.ApplicationShortcut; onActivated: backend.toggleThemeMode() }
+    Shortcut { sequence: win.shortcuts.workspaces; context: Qt.ApplicationShortcut; onActivated: win.workspacesOpen = !win.workspacesOpen }
+    Shortcut { sequence: win.shortcuts.lockTab; context: Qt.ApplicationShortcut; onActivated: currentModel().toggleTabLock() }
+    Shortcut { sequence: win.shortcuts.reopenTab; context: Qt.ApplicationShortcut; onActivated: { currentModel().reopenClosedTab(); currentListView().forceActiveFocus(); } }
+    Shortcut { sequence: win.shortcuts.openTrash; context: Qt.ApplicationShortcut; onActivated: { backend.openTrash(); currentListView().forceActiveFocus(); } }
+    Shortcut { sequence: win.shortcuts.cmdDrawerToggle; context: Qt.ApplicationShortcut; onActivated: win.commandDrawerOpen = !win.commandDrawerOpen }
+    Shortcut { sequence: win.shortcuts.cmdBarFocus; context: Qt.ApplicationShortcut; onActivated: cmdLineInput.forceFieldFocus() }
+    Shortcut { sequence: win.shortcuts.cmdInsertName; enabled: !win.isTextInputFocused(); context: Qt.ApplicationShortcut; onActivated: win.insertIntoCmdBar(false) }
+    Shortcut { sequence: win.shortcuts.cmdInsertPath; enabled: !win.isTextInputFocused(); context: Qt.ApplicationShortcut; onActivated: win.insertIntoCmdBar(true) }
+    Shortcut { sequence: win.shortcuts.splitCombine; context: Qt.ApplicationShortcut; onActivated: win.openSplitCombineDialog() }
+    Shortcut { sequence: win.shortcuts.settings; context: Qt.ApplicationShortcut; onActivated: win.openSettingsDialog() }
 
     // Menu Bar Access Shortcuts (Alt+F, Alt+E, Alt+V, Alt+C, Alt+H)
     Shortcut { sequence: "Alt+F"; enabled: !win.isTextInputFocused(); context: Qt.ApplicationShortcut; onActivated: { win.closeAllMenus(); filesMenu.open(); win.menuBarActive = true; } }
@@ -5490,27 +5630,27 @@ ApplicationWindow {
 
                                 AppMenuItem {
                                     text: qsTr("New File...")
-                                    shortcutHint: "Shift+F4"
+                                    shortcutHint: win.shortcuts.newFile
                                     onTriggered: triggerNewFile()
                                 }
                                 AppMenuItem {
                                     text: qsTr("New Folder...")
-                                    shortcutHint: "F7"
+                                    shortcutHint: win.shortcuts.newFolder
                                     onTriggered: triggerF7NewFolder()
                                 }
                                 AppMenuItem {
                                     text: qsTr("View / Preview")
-                                    shortcutHint: "F3"
+                                    shortcutHint: win.shortcuts.view
                                     onTriggered: triggerF3View()
                                 }
                                 AppMenuItem {
                                     text: qsTr("Edit File")
-                                    shortcutHint: "F4"
+                                    shortcutHint: win.shortcuts.edit
                                     onTriggered: triggerF4Edit()
                                 }
                                 AppMenuItem {
                                     text: qsTr("Open With / Custom Actions...")
-                                    shortcutHint: "Ctrl+Shift+O"
+                                    shortcutHint: win.shortcuts.openWith
                                     onTriggered: win.openOpenWithDialog("", 0)
                                 }
 
@@ -5518,27 +5658,27 @@ ApplicationWindow {
 
                                 AppMenuItem {
                                     text: qsTr("Copy...")
-                                    shortcutHint: "F5"
+                                    shortcutHint: win.shortcuts.copy
                                     onTriggered: triggerF5Copy()
                                 }
                                 AppMenuItem {
                                     text: qsTr("Move / Rename...")
-                                    shortcutHint: "F6"
+                                    shortcutHint: win.shortcuts.move
                                     onTriggered: triggerF6Move()
                                 }
                                 AppMenuItem {
                                     text: qsTr("Quick Rename")
-                                    shortcutHint: "Shift+F6"
+                                    shortcutHint: win.shortcuts.rename
                                     onTriggered: triggerRename()
                                 }
                                 AppMenuItem {
                                     text: qsTr("Multi-Rename...")
-                                    shortcutHint: "Ctrl+M"
+                                    shortcutHint: win.shortcuts.multiRename
                                     onTriggered: triggerMultiRename()
                                 }
                                 AppMenuItem {
                                     text: qsTr("Delete...")
-                                    shortcutHint: "F8"
+                                    shortcutHint: win.shortcuts.deleteItem
                                     onTriggered: triggerF8Delete()
                                 }
 
@@ -5546,7 +5686,7 @@ ApplicationWindow {
 
                                 AppMenuItem {
                                     text: qsTr("Create Symlink...")
-                                    shortcutHint: "Ctrl+Shift+F5"
+                                    shortcutHint: win.shortcuts.symlink
                                     onTriggered: triggerSymlink()
                                 }
                                 AppMenuItem {
@@ -5555,7 +5695,7 @@ ApplicationWindow {
                                 }
                                 AppMenuItem {
                                     text: qsTr("Properties & Permissions...")
-                                    shortcutHint: "Alt+Enter"
+                                    shortcutHint: win.shortcuts.properties
                                     onTriggered: triggerProperties()
                                 }
 
@@ -5563,12 +5703,12 @@ ApplicationWindow {
 
                                 AppMenuItem {
                                     text: qsTr("Pack Archive...")
-                                    shortcutHint: "Alt+F5"
+                                    shortcutHint: win.shortcuts.packArchive
                                     onTriggered: triggerPackArchive()
                                 }
                                 AppMenuItem {
                                     text: qsTr("Extract Archive...")
-                                    shortcutHint: "Alt+F9"
+                                    shortcutHint: win.shortcuts.extractArchive
                                     onTriggered: triggerExtractArchive()
                                 }
 
@@ -5576,7 +5716,7 @@ ApplicationWindow {
 
                                 AppMenuItem {
                                     text: qsTr("Exit")
-                                    shortcutHint: "Alt+F4"
+                                    shortcutHint: win.shortcuts.exitMenu
                                     onTriggered: Qt.quit()
                                 }
                             }
@@ -5613,7 +5753,7 @@ ApplicationWindow {
 
                                 AppMenuItem {
                                     text: backend.canUndo ? qsTr("Undo: %1").arg(backend.undoDescription) : qsTr("Undo")
-                                    shortcutHint: "Ctrl+Z"
+                                    shortcutHint: win.shortcuts.undo
                                     enabled: backend.canUndo
                                     onTriggered: backend.undoLastOperation()
                                 }
@@ -5622,7 +5762,7 @@ ApplicationWindow {
 
                                 AppMenuItem {
                                     text: qsTr("Cut to Clipboard")
-                                    shortcutHint: "Ctrl+X"
+                                    shortcutHint: win.shortcuts.cutClip
                                     onTriggered: {
                                         var paths = getSelectedOrCurrentPaths();
                                         if (paths.length > 0)
@@ -5631,7 +5771,7 @@ ApplicationWindow {
                                 }
                                 AppMenuItem {
                                     text: qsTr("Copy to Clipboard")
-                                    shortcutHint: "Ctrl+C"
+                                    shortcutHint: win.shortcuts.copyClip
                                     onTriggered: {
                                         var paths = getSelectedOrCurrentPaths();
                                         if (paths.length > 0)
@@ -5643,7 +5783,7 @@ ApplicationWindow {
                                           ? (backend.clipboardIsCut ? qsTr("Paste Cut (%1)").arg(backend.clipboardPaths.length)
                                                                     : qsTr("Paste (%1)").arg(backend.clipboardPaths.length))
                                           : qsTr("Paste")
-                                    shortcutHint: "Ctrl+V"
+                                    shortcutHint: win.shortcuts.pasteClip
                                     enabled: backend.canPaste
                                     onTriggered: backend.pasteFromClipboard(currentModel().path)
                                 }
@@ -5652,7 +5792,7 @@ ApplicationWindow {
 
                                 AppMenuItem {
                                     text: qsTr("Copy Name(s) as Text (, )")
-                                    shortcutHint: "Ctrl+Shift+C"
+                                    shortcutHint: win.shortcuts.copyNamesCsv
                                     onTriggered: {
                                         var paths = getSelectedOrCurrentPaths();
                                         backend.copyNamesAsCsv(paths);
@@ -5660,7 +5800,7 @@ ApplicationWindow {
                                 }
                                 AppMenuItem {
                                     text: qsTr("Copy Path(s) as Text (, )")
-                                    shortcutHint: "Ctrl+Alt+C"
+                                    shortcutHint: win.shortcuts.copyPathsCsv
                                     onTriggered: {
                                         var paths = getSelectedOrCurrentPaths();
                                         backend.copyPathsAsCsv(paths);
@@ -5679,17 +5819,17 @@ ApplicationWindow {
 
                                 AppMenuItem {
                                     text: qsTr("Select All")
-                                    shortcutHint: "Ctrl+A"
+                                    shortcutHint: win.shortcuts.selectAll
                                     onTriggered: currentModel().selectAll()
                                 }
                                 AppMenuItem {
                                     text: qsTr("Deselect All")
-                                    shortcutHint: "Ctrl+D"
+                                    shortcutHint: win.shortcuts.deselectAll
                                     onTriggered: currentModel().deselectAll()
                                 }
                                 AppMenuItem {
                                     text: qsTr("Invert Selection")
-                                    shortcutHint: "Num*"
+                                    shortcutHint: win.shortcuts.maskInvert
                                     onTriggered: currentModel().invertSelection()
                                 }
 
@@ -5697,12 +5837,12 @@ ApplicationWindow {
 
                                 AppMenuItem {
                                     text: qsTr("Select by Pattern...")
-                                    shortcutHint: "Num+"
+                                    shortcutHint: win.shortcuts.maskSelect
                                     onTriggered: openMaskDialog(true)
                                 }
                                 AppMenuItem {
                                     text: qsTr("Deselect by Pattern...")
-                                    shortcutHint: "Num-"
+                                    shortcutHint: win.shortcuts.maskDeselect
                                     onTriggered: openMaskDialog(false)
                                 }
 
@@ -5710,7 +5850,7 @@ ApplicationWindow {
 
                                 AppMenuItem {
                                     text: qsTr("Preferences / Settings...")
-                                    shortcutHint: "Ctrl+,"
+                                    shortcutHint: win.shortcuts.settings
                                     onTriggered: win.openSettingsDialog()
                                 }
                             }
@@ -5746,21 +5886,21 @@ ApplicationWindow {
 
                                 AppMenuItem {
                                     text: qsTr("Detailed List")
-                                    shortcutHint: "Ctrl+1"
+                                    shortcutHint: win.shortcuts.viewList
                                     checkable: true
                                     checked: currentModel().viewMode === 0
                                     onTriggered: currentModel().setViewMode(0)
                                 }
                                 AppMenuItem {
                                     text: qsTr("Grid / Thumbnails")
-                                    shortcutHint: "Ctrl+2"
+                                    shortcutHint: win.shortcuts.viewGrid
                                     checkable: true
                                     checked: currentModel().viewMode === 1
                                     onTriggered: currentModel().setViewMode(1)
                                 }
                                 AppMenuItem {
                                     text: qsTr("Quick View Panel")
-                                    shortcutHint: "Ctrl+Q"
+                                    shortcutHint: win.shortcuts.quickView
                                     checkable: true
                                     checked: win.quickViewActive
                                     onTriggered: {
@@ -5771,14 +5911,14 @@ ApplicationWindow {
                                 }
                                 AppMenuItem {
                                     text: qsTr("Flat / Branch View")
-                                    shortcutHint: "Ctrl+Shift+B"
+                                    shortcutHint: win.shortcuts.flatView
                                     checkable: true
                                     checked: currentModel().flatView
                                     onTriggered: currentModel().toggleFlatView()
                                 }
                                 AppMenuItem {
                                     text: qsTr("Disk Usage Analyzer")
-                                    shortcutHint: "Ctrl+Shift+D"
+                                    shortcutHint: win.shortcuts.diskUsage
                                     checkable: true
                                     checked: currentModel().diskUsageMode
                                     onTriggered: currentModel().toggleDiskUsageMode()
@@ -5788,7 +5928,7 @@ ApplicationWindow {
 
                                 AppMenuItem {
                                     text: qsTr("Show Hidden Files")
-                                    shortcutHint: "Ctrl+H"
+                                    shortcutHint: win.shortcuts.showHidden
                                     checkable: true
                                     checked: currentModel().showHidden
                                     onTriggered: {
@@ -5798,12 +5938,12 @@ ApplicationWindow {
                                 }
                                 AppMenuItem {
                                     text: qsTr("Quick Filter")
-                                    shortcutHint: "Ctrl+S"
+                                    shortcutHint: win.shortcuts.filter
                                     onTriggered: toggleFilterBar()
                                 }
                                 AppMenuItem {
                                     text: qsTr("Refresh")
-                                    shortcutHint: "Ctrl+R"
+                                    shortcutHint: win.shortcuts.refresh
                                     onTriggered: currentModel().refresh()
                                 }
 
@@ -5838,14 +5978,14 @@ ApplicationWindow {
 
                                 AppMenuItem {
                                     text: qsTr("Theme: Dark")
-                                    shortcutHint: "Ctrl+Shift+T"
+                                    shortcutHint: win.shortcuts.themeToggle
                                     checkable: true
                                     checked: win.isDark
                                     onTriggered: backend.themeMode = "dark"
                                 }
                                 AppMenuItem {
                                     text: qsTr("Theme: Light")
-                                    shortcutHint: "Ctrl+Shift+T"
+                                    shortcutHint: win.shortcuts.themeToggle
                                     checkable: true
                                     checked: !win.isDark
                                     onTriggered: backend.themeMode = "light"
@@ -5883,12 +6023,12 @@ ApplicationWindow {
 
                                 AppMenuItem {
                                     text: qsTr("Command Palette...")
-                                    shortcutHint: "Ctrl+Shift+P"
+                                    shortcutHint: win.shortcuts.commandPalette
                                     onTriggered: win.openCommandPalette("commands")
                                 }
                                 AppMenuItem {
                                     text: qsTr("Quick Jump to Folder...")
-                                    shortcutHint: "Ctrl+P"
+                                    shortcutHint: win.shortcuts.quickJump
                                     onTriggered: win.openCommandPalette("jump")
                                 }
 
@@ -5896,52 +6036,52 @@ ApplicationWindow {
 
                                 AppMenuItem {
                                     text: qsTr("Find Files...")
-                                    shortcutHint: "Alt+F7"
+                                    shortcutHint: win.shortcuts.findFiles
                                     onTriggered: win.openAdvancedSearchDialog()
                                 }
                                 AppMenuItem {
                                     text: qsTr("Find Duplicate Files...")
-                                    shortcutHint: "Ctrl+Shift+F7"
+                                    shortcutHint: win.shortcuts.duplicateFinder
                                     onTriggered: win.openDuplicateFinderDialog()
                                 }
                                 AppMenuItem {
                                     text: qsTr("Synchronize Directories...")
-                                    shortcutHint: "Ctrl+Shift+S"
+                                    shortcutHint: win.shortcuts.syncDirs
                                     onTriggered: win.openSyncDirsDialog()
                                 }
                                 AppMenuItem {
                                     text: qsTr("Operation Queue...")
-                                    shortcutHint: "Ctrl+Shift+Q"
+                                    shortcutHint: win.shortcuts.operationQueue
                                     onTriggered: win.openOperationQueueDialog()
                                 }
                                 AppMenuItem {
                                     text: qsTr("Remote Connections (Google Drive / SFTP / SMB)...")
-                                    shortcutHint: "Ctrl+Shift+M"
+                                    shortcutHint: win.shortcuts.remoteConnections
                                     onTriggered: win.openRemoteConnectionsDialog("")
                                 }
                                 AppMenuItem {
                                     text: qsTr("Compare Directories")
-                                    shortcutHint: "Shift+F2"
+                                    shortcutHint: win.shortcuts.compareDirs
                                     onTriggered: backend.compareDirectories()
                                 }
                                 AppMenuItem {
                                     text: qsTr("Compare Files (Diff)...")
-                                    shortcutHint: "Ctrl+Alt+D"
+                                    shortcutHint: win.shortcuts.diffFiles
                                     onTriggered: triggerFileDiff()
                                 }
                                 AppMenuItem {
                                     text: qsTr("Split / Combine File...")
-                                    shortcutHint: "Ctrl+Alt+S"
+                                    shortcutHint: win.shortcuts.splitCombine
                                     onTriggered: win.openSplitCombineDialog()
                                 }
                                 AppMenuItem {
                                     text: qsTr("Toggle Command Output Drawer")
-                                    shortcutHint: "Ctrl+O"
+                                    shortcutHint: win.shortcuts.cmdDrawerToggle
                                     onTriggered: win.commandDrawerOpen = !win.commandDrawerOpen
                                 }
                                 AppMenuItem {
                                     text: qsTr("Calculate Folder Sizes")
-                                    shortcutHint: "Alt+Shift+Enter"
+                                    shortcutHint: win.shortcuts.calcFolderSizes
                                     onTriggered: {
                                         currentModel().calculateAllFolderSizes();
                                         backend.showStatus(qsTr("Calculated sizes for all folders."));
@@ -5952,7 +6092,7 @@ ApplicationWindow {
 
                                 AppMenuItem {
                                     text: qsTr("New Tab")
-                                    shortcutHint: "Ctrl+T"
+                                    shortcutHint: win.shortcuts.newTab
                                     onTriggered: {
                                         currentModel().addTab();
                                         currentListView().forceActiveFocus();
@@ -5960,7 +6100,7 @@ ApplicationWindow {
                                 }
                                 AppMenuItem {
                                     text: qsTr("Close Tab")
-                                    shortcutHint: "Ctrl+W"
+                                    shortcutHint: win.shortcuts.closeTab
                                     onTriggered: {
                                         currentModel().closeTab();
                                         currentListView().forceActiveFocus();
@@ -5968,7 +6108,7 @@ ApplicationWindow {
                                 }
                                 AppMenuItem {
                                     text: qsTr("Next Tab")
-                                    shortcutHint: "Ctrl+Tab"
+                                    shortcutHint: win.shortcuts.nextTab
                                     onTriggered: {
                                         currentModel().nextTab();
                                         currentListView().forceActiveFocus();
@@ -5976,12 +6116,12 @@ ApplicationWindow {
                                 }
                                 AppMenuItem {
                                     text: currentModel().activeTabLockMode > 0 ? qsTr("Unlock Active Tab") : qsTr("Lock / Pin Active Tab")
-                                    shortcutHint: "Ctrl+Alt+L"
+                                    shortcutHint: win.shortcuts.lockTab
                                     onTriggered: currentModel().toggleTabLock()
                                 }
                                 AppMenuItem {
                                     text: qsTr("Reopen Closed Tab")
-                                    shortcutHint: "Ctrl+Shift+W"
+                                    shortcutHint: win.shortcuts.reopenTab
                                     enabled: currentModel().canReopenClosedTab
                                     onTriggered: {
                                         currentModel().reopenClosedTab();
@@ -5990,12 +6130,12 @@ ApplicationWindow {
                                 }
                                 AppMenuItem {
                                     text: qsTr("Workspaces...")
-                                    shortcutHint: "Ctrl+Shift+L"
+                                    shortcutHint: win.shortcuts.workspaces
                                     onTriggered: win.workspacesOpen = true
                                 }
                                 AppMenuItem {
                                     text: qsTr("Open Trash")
-                                    shortcutHint: "Ctrl+Shift+Backspace"
+                                    shortcutHint: win.shortcuts.openTrash
                                     onTriggered: {
                                         backend.openTrash();
                                         currentListView().forceActiveFocus();
@@ -6006,12 +6146,12 @@ ApplicationWindow {
 
                                 AppMenuItem {
                                     text: qsTr("Swap Panels")
-                                    shortcutHint: "Ctrl+U"
+                                    shortcutHint: win.shortcuts.swapPanels
                                     onTriggered: backend.swapPanels()
                                 }
                                 AppMenuItem {
                                     text: qsTr("Sync Panels")
-                                    shortcutHint: "Alt+="
+                                    shortcutHint: win.shortcuts.syncPanels
                                     onTriggered: backend.syncPanels()
                                 }
 
@@ -6019,12 +6159,15 @@ ApplicationWindow {
 
                                 AppMenuItem {
                                     text: qsTr("Add Bookmark")
-                                    shortcutHint: "Ctrl+B"
-                                    onTriggered: backend.addBookmark(currentModel().path)
+                                    shortcutHint: win.shortcuts.bookmarks
+                                    onTriggered: {
+                                        if (!backend.isBookmarked(currentModel().path))
+                                            backend.toggleBookmark(currentModel().path);
+                                    }
                                 }
                                 AppMenuItem {
                                     text: qsTr("Open Terminal Here")
-                                    shortcutHint: "F9"
+                                    shortcutHint: win.shortcuts.terminal
                                     onTriggered: backend.openInTerminal(currentModel().path)
                                 }
                             }
@@ -6060,7 +6203,7 @@ ApplicationWindow {
 
                                 AppMenuItem {
                                     text: qsTr("Keyboard Shortcuts")
-                                    shortcutHint: "?"
+                                    shortcutHint: win.shortcuts.shortcutsHelp
                                     onTriggered: win.helpOpen = true
                                 }
 
@@ -6084,7 +6227,7 @@ ApplicationWindow {
                         ToolbarBtn {
                             visible: backend.canUndo
                             label: qsTr("Undo")
-                            shortcutHint: "Ctrl+Z"
+                            shortcutHint: win.shortcuts.undo
                             btnEnabled: backend.canUndo
                             accentHighlight: true
                             tooltipText: qsTr("Undo: %1").arg(backend.undoDescription)
@@ -6096,7 +6239,7 @@ ApplicationWindow {
                             label: backend.clipboardIsCut
                                    ? qsTr("Paste Cut (%1)").arg(backend.clipboardPaths.length)
                                    : qsTr("Paste (%1)").arg(backend.clipboardPaths.length)
-                            shortcutHint: "Ctrl+V"
+                            shortcutHint: win.shortcuts.pasteClip
                             accentHighlight: true
                             onClicked: backend.pasteFromClipboard(currentModel().path)
                         }
@@ -6148,9 +6291,9 @@ ApplicationWindow {
 
                         ToolbarBtn {
                             label: qsTr("Quick View")
-                            shortcutHint: "Ctrl+Q"
+                            shortcutHint: win.shortcuts.quickView
                             active: win.quickViewActive
-                            tooltipText: qsTr("Toggle Quick View (Ctrl+Q)")
+                            tooltipText: qsTr("Toggle Quick View (%1)").arg(win.shortcuts.quickView)
                             onClicked: {
                                 win.quickViewActive = !win.quickViewActive;
                                 if (win.quickViewActive)
@@ -6159,17 +6302,18 @@ ApplicationWindow {
                         }
 
                         ToolbarBtn {
+                            objectName: "paletteToolbarBtn"
                             label: qsTr("Palette")
-                            shortcutHint: "Ctrl+P"
-                            tooltipText: qsTr("Command Palette (Ctrl+Shift+P) & Quick Jump (Ctrl+P)")
+                            shortcutHint: win.shortcuts.commandPalette
+                            tooltipText: qsTr("Command Palette (%1) & Quick Jump (%2)").arg(win.shortcuts.commandPalette).arg(win.shortcuts.quickJump)
                             onClicked: win.openCommandPalette("commands")
                         }
 
                         ToolbarBtn {
                             label: qsTr("Shortcuts")
-                            shortcutHint: "?"
+                            shortcutHint: win.shortcuts.shortcutsHelp
                             accentHighlight: true
-                            tooltipText: qsTr("Keyboard Shortcuts (?)")
+                            tooltipText: qsTr("Keyboard Shortcuts (%1)").arg(win.shortcuts.shortcutsHelp)
                             onClicked: win.helpOpen = true
                         }
 
@@ -6287,27 +6431,29 @@ ApplicationWindow {
                 }
             }
 
-            // Drives, Bookmarks & Panel Sync Strip
+            // Drives, Adaptive Bookmarks & Panel Sync Strip
             Rectangle {
                 Layout.fillWidth: true
                 height: 32
                 color: p.subBarBg
 
                 RowLayout {
+                    id: subBarRow
                     anchors.fill: parent
                     anchors.leftMargin: 12
                     anchors.rightMargin: 12
                     spacing: 8
 
                     Flickable {
-                        Layout.fillWidth: true
+                        id: drivesFlick
+                        Layout.preferredWidth: Math.min(contentWidth, Math.max(220, subBarRow.width * 0.56))
                         Layout.fillHeight: true
-                        contentWidth: drivesBookmarksRow.implicitWidth
+                        contentWidth: drivesRow.implicitWidth
                         clip: true
                         boundsBehavior: Flickable.StopAtBounds
 
                         RowLayout {
-                            id: drivesBookmarksRow
+                            id: drivesRow
                             height: parent.height
                             spacing: 5
 
@@ -6324,6 +6470,15 @@ ApplicationWindow {
                                     readonly property bool isDevMounted: modelData.isMounted !== false
                                     readonly property bool isRemoteDev: modelData.isRemote === true
                                     readonly property bool isTrashChip: modelData.isTrash === true
+                                    readonly property string chipLabel: win.formatDriveChipLabel(modelData)
+                                    readonly property string freeBadge: modelData.free || ""
+                                    readonly property bool showFreeBadge: freeBadge.length > 0 && !(
+                                        isRemoteDev && (
+                                            (modelData.protocol || "") === "gdrive"
+                                            || !isDevMounted
+                                            || chipLabel.toUpperCase().indexOf(freeBadge.toUpperCase()) !== -1
+                                        )
+                                    )
                                     implicitHeight: 22
                                     implicitWidth: driveRow.implicitWidth + (modelData.canUnmount ? 24 : 12)
                                     radius: win.smallRadius
@@ -6348,18 +6503,26 @@ ApplicationWindow {
                                         }
 
                                         Text {
-                                            text: modelData.label
+                                            text: chipLabel
                                             font.pixelSize: 11
                                             font.weight: Font.Medium
                                             color: isDevMounted ? p.textPrimary : p.textMuted
                                         }
 
                                         Text {
-                                            visible: (modelData.free || "").length > 0
-                                            text: modelData.free
+                                            visible: showFreeBadge
+                                            text: freeBadge
                                             font.pixelSize: 10
                                             font.family: "monospace"
                                             color: isTrashChip ? p.dangerText : (isRemoteDev ? p.accent : p.textDim)
+                                        }
+
+                                        Text {
+                                            visible: !isDevMounted && isRemoteDev
+                                            text: "·"
+                                            font.pixelSize: 11
+                                            font.bold: true
+                                            color: p.textDim
                                         }
 
                                         // Mount / Connect button for unmounted disks & saved remotes
@@ -6490,10 +6653,50 @@ ApplicationWindow {
 
                                 ToolTip.visible: addRemoteMouse.containsMouse
                                 ToolTip.delay: 450
-                                ToolTip.text: qsTr("Remote Connections — Google Drive / SFTP / SMB (Ctrl+Shift+M)")
+                                ToolTip.text: qsTr("Remote Connections — Google Drive / SFTP / SMB (%1)").arg(win.shortcuts.remoteConnections)
                             }
+                        }
+                    }
 
-                            Rectangle { width: 1; height: 14; color: p.borderDefault }
+                    Rectangle { width: 1; height: 14; color: p.borderDefault }
+
+                    // Adaptive Bookmarks Strip with Automatic "⋯" Overflow Menu
+                    Item {
+                        id: bookmarksStrip
+                        objectName: "bookmarksStrip"
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        clip: true
+
+                        function estimateBookmarkChipWidth(bmPath) {
+                            var label = (bmPath === "/") ? "/" : (bmPath || "").split("/").pop();
+                            return Math.min(148, Math.max(54, label.length * 7 + 34));
+                        }
+
+                        readonly property int visibleBookmarkCount: {
+                            var bms = backend.bookmarks || [];
+                            var avail = Math.max(0, width - 130);
+                            var used = 0;
+                            var count = 0;
+                            for (var i = 0; i < bms.length; ++i) {
+                                var w = estimateBookmarkChipWidth(bms[i]) + 5;
+                                var reserveOverflow = (i < bms.length - 1) ? 54 : 0;
+                                if (used + w + reserveOverflow <= avail) {
+                                    used += w;
+                                    count++;
+                                } else {
+                                    break;
+                                }
+                            }
+                            return count;
+                        }
+                        readonly property var visibleBookmarks: (backend.bookmarks || []).slice(0, visibleBookmarkCount)
+                        readonly property var overflowBookmarks: (backend.bookmarks || []).slice(visibleBookmarkCount)
+
+                        RowLayout {
+                            anchors.left: parent.left
+                            anchors.verticalCenter: parent.verticalCenter
+                            spacing: 5
 
                             Text {
                                 text: qsTr("Bookmarks")
@@ -6503,10 +6706,10 @@ ApplicationWindow {
                             }
 
                             Repeater {
-                                model: backend.bookmarks
+                                model: bookmarksStrip.visibleBookmarks
                                 delegate: Rectangle {
                                     implicitHeight: 22
-                                    implicitWidth: bmRow.implicitWidth + 12
+                                    implicitWidth: Math.min(148, bmRow.implicitWidth + 12)
                                     radius: win.smallRadius
                                     color: bmMouse.containsMouse ? p.chipHoverBg : p.chipBg
                                     border.width: 1
@@ -6526,6 +6729,8 @@ ApplicationWindow {
                                         Text {
                                             text: modelData === "/" ? "/" : modelData.split("/").pop()
                                             font.pixelSize: 11
+                                            elide: Text.ElideMiddle
+                                            Layout.maximumWidth: 116
                                             color: currentModel().path === modelData ? p.accent : p.textSecondary
                                         }
                                     }
@@ -6549,6 +6754,75 @@ ApplicationWindow {
                                     ToolTip.visible: bmMouse.containsMouse
                                     ToolTip.delay: 500
                                     ToolTip.text: modelData + "  (" + qsTr("Right-click to remove") + ")"
+                                }
+                            }
+
+                            Rectangle {
+                                id: bookmarksOverflowBtn
+                                objectName: "bookmarksOverflowBtn"
+                                visible: bookmarksStrip.overflowBookmarks.length > 0
+                                implicitHeight: 22
+                                implicitWidth: overflowText.implicitWidth + 12
+                                radius: win.smallRadius
+                                color: bookmarksOverflowMenu.visible ? Qt.alpha(p.accent, 0.18)
+                                     : (bmOverflowMouse.containsMouse ? p.chipHoverBg : p.chipBg)
+                                border.width: 1
+                                border.color: bookmarksOverflowMenu.visible ? p.accent : p.borderDefault
+
+                                Text {
+                                    id: overflowText
+                                    anchors.centerIn: parent
+                                    text: "⋯ +" + bookmarksStrip.overflowBookmarks.length
+                                    font.pixelSize: 11
+                                    font.bold: true
+                                    color: p.accent
+                                }
+
+                                MouseArea {
+                                    id: bmOverflowMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        if (bookmarksOverflowMenu.visible) {
+                                            bookmarksOverflowMenu.close();
+                                        } else {
+                                            win.closeAllMenus();
+                                            bookmarksOverflowMenu.popup(bookmarksOverflowBtn, 0, bookmarksOverflowBtn.height + 2);
+                                        }
+                                    }
+                                }
+
+                                ToolTip.visible: bmOverflowMouse.containsMouse
+                                ToolTip.delay: 400
+                                ToolTip.text: qsTr("More bookmarks (%1 hidden)").arg(bookmarksStrip.overflowBookmarks.length)
+
+                                AppMenu {
+                                    id: bookmarksOverflowMenu
+
+                                    Instantiator {
+                                        model: bookmarksStrip.overflowBookmarks
+                                        delegate: AppMenuItem {
+                                            required property var modelData
+                                            text: "★ " + (modelData === "/" ? "/" : modelData.split("/").pop()) + "  (" + modelData + ")"
+                                            onTriggered: {
+                                                currentModel().setPath(modelData);
+                                                currentListView().forceActiveFocus();
+                                            }
+                                        }
+                                        onObjectAdded: function(index, object) { bookmarksOverflowMenu.insertItem(index, object); }
+                                        onObjectRemoved: function(index, object) { bookmarksOverflowMenu.removeItem(object); }
+                                    }
+
+                                    AppMenuSeparator {
+                                        visible: bookmarksStrip.overflowBookmarks.length > 0
+                                    }
+
+                                    AppMenuItem {
+                                        text: qsTr("Manage Bookmarks...")
+                                        shortcutHint: win.shortcuts.bookmarks
+                                        onTriggered: win.bookmarksOpen = true
+                                    }
                                 }
                             }
 
@@ -6590,14 +6864,14 @@ ApplicationWindow {
                     ToolbarBtn {
                         implicitHeight: 22
                         label: "⇄ " + qsTr("Swap")
-                        shortcutHint: "Ctrl+U"
+                        shortcutHint: win.shortcuts.swapPanels
                         onClicked: backend.swapPanels()
                     }
 
                     ToolbarBtn {
                         implicitHeight: 22
                         label: "= " + qsTr("Sync")
-                        shortcutHint: "Alt+="
+                        shortcutHint: win.shortcuts.syncPanels
                         onClicked: backend.syncPanels()
                     }
                 }
@@ -7073,14 +7347,14 @@ ApplicationWindow {
                     anchors.bottomMargin: 4
                     spacing: 5
 
-                    FKeyButton { keyLabel: "F3"; actionLabel: qsTr("View"); onClicked: triggerF3View() }
-                    FKeyButton { keyLabel: "F4"; actionLabel: qsTr("Edit"); onClicked: triggerF4Edit() }
-                    FKeyButton { keyLabel: "F5"; actionLabel: qsTr("Copy"); onClicked: triggerF5Copy() }
-                    FKeyButton { keyLabel: "F6"; actionLabel: qsTr("Move"); onClicked: triggerF6Move() }
-                    FKeyButton { keyLabel: "F7"; actionLabel: qsTr("New Folder"); onClicked: triggerF7NewFolder() }
-                    FKeyButton { keyLabel: "F8"; actionLabel: qsTr("Delete"); onClicked: triggerF8Delete() }
-                    FKeyButton { keyLabel: "F9"; actionLabel: qsTr("Terminal"); onClicked: backend.openInTerminal(currentModel().path) }
-                    FKeyButton { keyLabel: "F10"; actionLabel: qsTr("Exit"); onClicked: Qt.quit() }
+                    FKeyButton { Layout.preferredWidth: 96; keyLabel: win.shortcuts.view; actionLabel: qsTr("View"); onClicked: triggerF3View() }
+                    FKeyButton { Layout.preferredWidth: 96; keyLabel: win.shortcuts.edit; actionLabel: qsTr("Edit"); onClicked: triggerF4Edit() }
+                    FKeyButton { objectName: "f5KeyBtn"; Layout.preferredWidth: 196; keyLabel: win.shortcuts.copy; actionLabel: win.f5ActionLabel; tooltipText: win.f5Tooltip; onClicked: triggerF5Copy() }
+                    FKeyButton { objectName: "f6KeyBtn"; Layout.preferredWidth: 196; keyLabel: win.shortcuts.move; actionLabel: win.f6ActionLabel; tooltipText: win.f6Tooltip; onClicked: triggerF6Move() }
+                    FKeyButton { Layout.preferredWidth: 108; keyLabel: win.shortcuts.newFolder; actionLabel: qsTr("New Folder"); onClicked: triggerF7NewFolder() }
+                    FKeyButton { Layout.preferredWidth: 98; keyLabel: win.shortcuts.deleteItem; actionLabel: qsTr("Delete"); onClicked: triggerF8Delete() }
+                    FKeyButton { Layout.preferredWidth: 102; keyLabel: win.shortcuts.terminal; actionLabel: qsTr("Terminal"); onClicked: backend.openInTerminal(currentModel().path) }
+                    FKeyButton { Layout.preferredWidth: 88; keyLabel: win.shortcuts.exitApp; actionLabel: qsTr("Exit"); onClicked: Qt.quit() }
                 }
             }
         }
@@ -11547,59 +11821,59 @@ ApplicationWindow {
 
                 Repeater {
                     model: [
-                        { key: "Ctrl + Shift + P", desc: qsTr("Open Command Palette (fuzzy search actions)") },
-                        { key: "Ctrl + P", desc: qsTr("Quick Jump to Folder (bookmarks, recent, zoxide)") },
-                        { key: "Ctrl + Shift + B", desc: qsTr("Toggle Flat / Branch View (all subfolders in one list)") },
-                        { key: "Ctrl + Shift + D", desc: qsTr("Toggle Disk Usage Analyzer (proportional bars & sorted sizes)") },
-                        { key: "Ctrl + Shift + S", desc: qsTr("Synchronize Directories recursively between panels") },
-                        { key: "Ctrl + Shift + F7", desc: qsTr("Find Duplicate Files by size and SHA-256 hash") },
-                        { key: "Ctrl + Shift + Q", desc: qsTr("Open Operation Queue & Pause / Speed / ETA monitor") },
-                        { key: "Ctrl + Shift + M", desc: qsTr("Connect & manage Google Drive (rclone), SFTP, SMB & SSHFS servers") },
-                        { key: "Ctrl + Shift + O", desc: qsTr("Open With compatible apps & manage Custom Actions") },
+                        { key: win.formatShortcutDisplay(win.shortcuts.commandPalette), desc: qsTr("Open Command Palette (fuzzy search actions)") },
+                        { key: win.formatShortcutDisplay(win.shortcuts.quickJump), desc: qsTr("Quick Jump to Folder (bookmarks, recent, zoxide)") },
+                        { key: win.formatShortcutDisplay(win.shortcuts.flatView), desc: qsTr("Toggle Flat / Branch View (all subfolders in one list)") },
+                        { key: win.formatShortcutDisplay(win.shortcuts.diskUsage), desc: qsTr("Toggle Disk Usage Analyzer (proportional bars & sorted sizes)") },
+                        { key: win.formatShortcutDisplay(win.shortcuts.syncDirs), desc: qsTr("Synchronize Directories recursively between panels") },
+                        { key: win.formatShortcutDisplay(win.shortcuts.duplicateFinder), desc: qsTr("Find Duplicate Files by size and SHA-256 hash") },
+                        { key: win.formatShortcutDisplay(win.shortcuts.operationQueue), desc: qsTr("Open Operation Queue & Pause / Speed / ETA monitor") },
+                        { key: win.formatShortcutDisplay(win.shortcuts.remoteConnections), desc: qsTr("Connect & manage Google Drive (rclone), SFTP, SMB & SSHFS servers") },
+                        { key: win.formatShortcutDisplay(win.shortcuts.openWith), desc: qsTr("Open With compatible apps & manage Custom Actions") },
                         { key: "Enter (on archive)", desc: qsTr("Browse inside .zip / .tar.* / .7z archive as virtual folder") },
                         { key: "Tab", desc: qsTr("Switch active panel (Left / Right)") },
-                        { key: "Ctrl + Shift + T", desc: qsTr("Toggle between Light and Dark theme") },
-                        { key: "Ctrl + T / Ctrl + W", desc: qsTr("Open new tab / Close active tab in panel") },
-                        { key: "Ctrl + Shift + W", desc: qsTr("Reopen last closed tab in active panel") },
-                        { key: "Ctrl + Alt + L", desc: qsTr("Lock / unlock active tab (right-click tab for strict mode & actions)") },
-                        { key: "Ctrl + Shift + L", desc: qsTr("Open Workspaces manager (save & restore dual-panel layouts)") },
-                        { key: "Ctrl + Shift + Backspace", desc: qsTr("Open Trash Manager (trash://) to restore or empty") },
-                        { key: "Ctrl + E / Ctrl + O", desc: qsTr("Focus command bar (↑/↓ history, built-in cd) / Toggle live output drawer") },
-                        { key: "Ctrl + Enter / Ctrl+Shift+Enter", desc: qsTr("Insert highlighted filename / full path into command bar") },
-                        { key: "Ctrl + Alt + S", desc: qsTr("Split large file into .001 parts (+ .crc) or combine parts back") },
+                        { key: win.formatShortcutDisplay(win.shortcuts.themeToggle), desc: qsTr("Toggle between Light and Dark theme") },
+                        { key: win.formatShortcutDisplay(win.shortcuts.newTab) + " / " + win.formatShortcutDisplay(win.shortcuts.closeTab), desc: qsTr("Open new tab / Close active tab in panel") },
+                        { key: win.formatShortcutDisplay(win.shortcuts.reopenTab), desc: qsTr("Reopen last closed tab in active panel") },
+                        { key: win.formatShortcutDisplay(win.shortcuts.lockTab), desc: qsTr("Lock / unlock active tab (right-click tab for strict mode & actions)") },
+                        { key: win.formatShortcutDisplay(win.shortcuts.workspaces), desc: qsTr("Open Workspaces manager (save & restore dual-panel layouts)") },
+                        { key: win.formatShortcutDisplay(win.shortcuts.openTrash), desc: qsTr("Open Trash Manager (trash://) to restore or empty") },
+                        { key: win.formatShortcutDisplay(win.shortcuts.cmdBarFocus) + " / " + win.formatShortcutDisplay(win.shortcuts.cmdDrawerToggle), desc: qsTr("Focus command bar (↑/↓ history, built-in cd) / Toggle live output drawer") },
+                        { key: win.formatShortcutDisplay(win.shortcuts.cmdInsertName) + " / " + win.shortcuts.cmdInsertPath, desc: qsTr("Insert highlighted filename / full path into command bar") },
+                        { key: win.formatShortcutDisplay(win.shortcuts.splitCombine), desc: qsTr("Split large file into .001 parts (+ .crc) or combine parts back") },
                         { key: "Type letters", desc: qsTr("Multi-character Type-Ahead quick jump inside active panel") },
-                        { key: "Ctrl + Tab", desc: qsTr("Switch between open tabs in active panel") },
-                        { key: "Ctrl + 1 / Ctrl + 2", desc: qsTr("Toggle List / Grid thumbnail view mode") },
+                        { key: win.formatShortcutDisplay(win.shortcuts.nextTab), desc: qsTr("Switch between open tabs in active panel") },
+                        { key: win.formatShortcutDisplay(win.shortcuts.viewList) + " / " + win.formatShortcutDisplay(win.shortcuts.viewGrid), desc: qsTr("Toggle List / Grid thumbnail view mode") },
                         { key: "Ctrl + C / X / V", desc: qsTr("Copy / Cut / Paste files via system clipboard") },
-                        { key: "Ctrl+Shift+C / Ctrl+Alt+C", desc: qsTr("Copy names or paths as comma-separated text") },
-                        { key: "Ctrl + Z", desc: qsTr("Undo last rename, move, or trash delete") },
-                        { key: "Shift + F4", desc: qsTr("Create new file (or files via comma) and open in editor") },
-                        { key: "Ctrl + Shift + F5", desc: qsTr("Create symbolic link in target panel") },
+                        { key: win.shortcuts.copyNamesCsv + " / " + win.shortcuts.copyPathsCsv, desc: qsTr("Copy names or paths as comma-separated text") },
+                        { key: win.formatShortcutDisplay(win.shortcuts.undo), desc: qsTr("Undo last rename, move, or trash delete") },
+                        { key: win.formatShortcutDisplay(win.shortcuts.newFile), desc: qsTr("Create new file (or files via comma) and open in editor") },
+                        { key: win.formatShortcutDisplay(win.shortcuts.symlink), desc: qsTr("Create symbolic link in target panel") },
                         { key: "Num+ / Num-", desc: qsTr("Select / deselect items by wildcard pattern (*.jpg)") },
-                        { key: "Num* / Ctrl+Shift+A", desc: qsTr("Invert selection in active panel") },
-                        { key: "Ctrl + Alt + D", desc: qsTr("Compare two text files with visual side-by-side diff") },
-                        { key: "Alt + Enter", desc: qsTr("Item properties & editable chmod permissions") },
+                        { key: "Num* / " + win.shortcuts.invertSelection, desc: qsTr("Invert selection in active panel") },
+                        { key: win.formatShortcutDisplay(win.shortcuts.diffFiles), desc: qsTr("Compare two text files with visual side-by-side diff") },
+                        { key: win.formatShortcutDisplay(win.shortcuts.properties), desc: qsTr("Item properties & editable chmod permissions") },
                         { key: "Space / Insert", desc: qsTr("Select item (and calculate folder size) + advance") },
-                        { key: "Alt + Shift + Enter", desc: qsTr("Calculate sizes for all folders in panel") },
-                        { key: "Ctrl + L", desc: qsTr("Edit path of active panel") },
-                        { key: "Ctrl + Q", desc: qsTr("Toggle live Quick View in opposite panel") },
-                        { key: "Ctrl + S", desc: qsTr("Toggle real-time quick filter bar") },
-                        { key: "Ctrl + B", desc: qsTr("Open Bookmarks manager") },
-                        { key: "Ctrl + U / Alt + =", desc: qsTr("Swap panels / Sync target panel") },
-                        { key: "Shift + F2", desc: qsTr("Compare Left & Right directories (select differences)") },
-                        { key: "Ctrl + M", desc: qsTr("Multi-Rename Tool for selected items") },
-                        { key: "Alt + F5 / Alt + F9", desc: qsTr("Pack files to archive / Extract archive") },
+                        { key: win.formatShortcutDisplay(win.shortcuts.calcFolderSizes), desc: qsTr("Calculate sizes for all folders in panel") },
+                        { key: win.formatShortcutDisplay(win.shortcuts.editPath), desc: qsTr("Edit path of active panel") },
+                        { key: win.formatShortcutDisplay(win.shortcuts.quickView), desc: qsTr("Toggle live Quick View in opposite panel") },
+                        { key: win.formatShortcutDisplay(win.shortcuts.filter), desc: qsTr("Toggle real-time quick filter bar") },
+                        { key: win.formatShortcutDisplay(win.shortcuts.bookmarks), desc: qsTr("Open Bookmarks manager") },
+                        { key: win.formatShortcutDisplay(win.shortcuts.swapPanels) + " / " + win.formatShortcutDisplay(win.shortcuts.syncPanels), desc: qsTr("Swap panels / Sync target panel") },
+                        { key: win.formatShortcutDisplay(win.shortcuts.compareDirs), desc: qsTr("Compare Left & Right directories (select differences)") },
+                        { key: win.formatShortcutDisplay(win.shortcuts.multiRename), desc: qsTr("Multi-Rename Tool for selected items") },
+                        { key: win.formatShortcutDisplay(win.shortcuts.packArchive) + " / " + win.formatShortcutDisplay(win.shortcuts.extractArchive), desc: qsTr("Pack files to archive / Extract archive") },
                         { key: "Alt + Left / Right", desc: qsTr("Navigate directory history Back / Forward") },
-                        { key: "F3 / F4", desc: qsTr("Preview item (Text/Image/Hex) / Edit with $EDITOR") },
-                        { key: "F5 / F6 / Shift+F6", desc: qsTr("Copy / Move / Rename item(s)") },
-                        { key: "F7 / F8", desc: qsTr("Create new folder / Delete selected item(s)") },
-                        { key: "F9 / Alt + T", desc: qsTr("Open terminal in active folder") },
-                        { key: "Alt + F7", desc: qsTr("Search files recursively") },
+                        { key: win.shortcuts.view + " / " + win.shortcuts.edit, desc: qsTr("Preview item (Text/Image/Hex) / Edit with $EDITOR") },
+                        { key: win.shortcuts.copy + " / " + win.shortcuts.move + " / " + win.shortcuts.rename, desc: qsTr("Copy / Move / Rename item(s)") },
+                        { key: win.shortcuts.newFolder + " / " + win.shortcuts.deleteItem, desc: qsTr("Create new folder / Delete selected item(s)") },
+                        { key: win.shortcuts.terminal + " / " + win.formatShortcutDisplay(win.shortcuts.terminalAlt), desc: qsTr("Open terminal in active folder") },
+                        { key: win.formatShortcutDisplay(win.shortcuts.findFiles), desc: qsTr("Search files recursively") },
                         { key: "Ctrl + F3..F6", desc: qsTr("Sort by Name, Ext, Date, or Size") },
-                        { key: "Ctrl + A / Ctrl + D", desc: qsTr("Select all / Deselect all") },
-                        { key: "Ctrl + H", desc: qsTr("Toggle show/hide hidden dotfiles") },
-                        { key: "Ctrl + ,", desc: qsTr("Open Preferences / Settings dialog") },
-                        { key: "F10 / Esc", desc: qsTr("Quit TwinForge / Close dialog") }
+                        { key: win.formatShortcutDisplay(win.shortcuts.selectAll) + " / " + win.formatShortcutDisplay(win.shortcuts.deselectAll), desc: qsTr("Select all / Deselect all") },
+                        { key: win.formatShortcutDisplay(win.shortcuts.showHidden), desc: qsTr("Toggle show/hide hidden dotfiles") },
+                        { key: win.formatShortcutDisplay(win.shortcuts.settings), desc: qsTr("Open Preferences / Settings dialog") },
+                        { key: win.shortcuts.exitApp + " / Esc", desc: qsTr("Quit TwinForge / Close dialog") }
                     ]
 
                     delegate: Rectangle {
@@ -12191,6 +12465,7 @@ ApplicationWindow {
     // Ctrl+Shift+S Recursive Directory Synchronization Dialog
     AppDialog {
         id: syncDirsDialog
+        objectName: "syncDirsDialog"
         visible: win.syncDirsOpen
         title: qsTr("Synchronize Directories (Ctrl+Shift+S)")
         width: Math.min(860, win.width - 40)
@@ -12203,12 +12478,26 @@ ApplicationWindow {
         property bool showRightToLeft: true
         property bool showEqual: false
         property bool showConflicts: true
+        property string quickFocusFilter: "all" // "all" | "copy_right" | "copy_left" | "overwrites" | "conflicts" | "equal"
         property var allItems: []
         property var visibleItems: []
         property int copyRightCount: 0
         property int copyLeftCount: 0
+        property int overwriteCount: 0
+        property int newRightCount: 0
+        property int newLeftCount: 0
         property int equalCount: 0
         property int conflictCount: 0
+
+        function isOverwriteItem(it) {
+            return Boolean(it && ((it.action === "copy_to_right" && it.rightExists === true)
+                                  || (it.action === "copy_to_left" && it.leftExists === true)));
+        }
+
+        function toggleQuickFocus(bucket) {
+            quickFocusFilter = (quickFocusFilter === bucket) ? "all" : bucket;
+            rebuildVisible();
+        }
 
         function applyCompareResults(raw) {
             var list = raw || [];
@@ -12230,6 +12519,7 @@ ApplicationWindow {
                     action: r.action
                 });
             }
+            quickFocusFilter = "all";
             allItems = indexed;
             rebuildVisible();
         }
@@ -12237,6 +12527,7 @@ ApplicationWindow {
         function refreshCompare() {
             if (backend.leftPanel.isArchiveView || backend.rightPanel.isArchiveView) {
                 backend.cancelSyncOperation();
+                quickFocusFilter = "all";
                 allItems = [];
                 rebuildVisible();
                 return;
@@ -12247,30 +12538,53 @@ ApplicationWindow {
         }
 
         function rebuildVisible() {
-            var cr = 0, cl = 0, eq = 0, cf = 0;
+            var cr = 0, cl = 0, ow = 0, nr = 0, nl = 0, eq = 0, cf = 0;
             var filtered = [];
             for (var i = 0; i < allItems.length; i++) {
                 var it = allItems[i];
-                if (it.action === "copy_to_right") cr++;
-                else if (it.action === "copy_to_left") cl++;
+                var isOw = isOverwriteItem(it);
+                if (it.action === "copy_to_right") {
+                    cr++;
+                    if (isOw) ow++;
+                    else nr++;
+                } else if (it.action === "copy_to_left") {
+                    cl++;
+                    if (isOw) ow++;
+                    else nl++;
+                }
                 if (it.status === "equal") eq++;
                 else if (it.status === "different" && it.action === "skip") cf++;
 
                 var show = false;
-                if (it.status === "equal")
-                    show = showEqual;
-                else if (it.action === "copy_to_right")
-                    show = showLeftToRight;
-                else if (it.action === "copy_to_left")
-                    show = showRightToLeft;
-                else
-                    show = showConflicts;
+                if (quickFocusFilter === "copy_right") {
+                    show = (it.action === "copy_to_right");
+                } else if (quickFocusFilter === "copy_left") {
+                    show = (it.action === "copy_to_left");
+                } else if (quickFocusFilter === "overwrites") {
+                    show = isOw;
+                } else if (quickFocusFilter === "conflicts") {
+                    show = (it.status === "different" && it.action === "skip");
+                } else if (quickFocusFilter === "equal") {
+                    show = (it.status === "equal");
+                } else {
+                    if (it.status === "equal")
+                        show = showEqual;
+                    else if (it.action === "copy_to_right")
+                        show = showLeftToRight;
+                    else if (it.action === "copy_to_left")
+                        show = showRightToLeft;
+                    else
+                        show = showConflicts;
+                }
 
                 if (show)
                     filtered.push(it);
             }
             copyRightCount = cr;
             copyLeftCount = cl;
+            overwriteCount = ow;
+            newRightCount = nr;
+            newLeftCount = nl;
             equalCount = eq;
             conflictCount = cf;
             visibleItems = filtered;
@@ -12393,20 +12707,113 @@ ApplicationWindow {
                 }
             }
 
-            RowLayout {
+            // Pre-Execution Summary & Clickable Filters Bar
+            Rectangle {
                 Layout.fillWidth: true
-                spacing: 6
+                implicitHeight: summaryFlow.implicitHeight + 10
+                radius: win.smallRadius
+                color: p.cardAltBg
+                border.width: 1
+                border.color: p.borderSubtle
 
-                FilterPill { label: "→ " + syncDirsDialog.copyRightCount; active: syncDirsDialog.showLeftToRight; onClicked: { syncDirsDialog.showLeftToRight = !syncDirsDialog.showLeftToRight; syncDirsDialog.rebuildVisible(); } }
-                FilterPill { label: "← " + syncDirsDialog.copyLeftCount; active: syncDirsDialog.showRightToLeft; onClicked: { syncDirsDialog.showRightToLeft = !syncDirsDialog.showRightToLeft; syncDirsDialog.rebuildVisible(); } }
-                FilterPill { label: "≠ " + syncDirsDialog.conflictCount; active: syncDirsDialog.showConflicts; onClicked: { syncDirsDialog.showConflicts = !syncDirsDialog.showConflicts; syncDirsDialog.rebuildVisible(); } }
-                FilterPill { label: "= " + syncDirsDialog.equalCount; active: syncDirsDialog.showEqual; onClicked: { syncDirsDialog.showEqual = !syncDirsDialog.showEqual; syncDirsDialog.rebuildVisible(); } }
+                RowLayout {
+                    id: summaryFlow
+                    anchors.fill: parent
+                    anchors.leftMargin: 8
+                    anchors.rightMargin: 8
+                    anchors.topMargin: 5
+                    anchors.bottomMargin: 5
+                    spacing: 6
 
-                Item { Layout.fillWidth: true }
-                Text {
-                    text: qsTr("Click direction badge (→ / ← / Skip) to override per file")
-                    font.pixelSize: 10
-                    color: p.textDim
+                    FilterPill {
+                        label: qsTr("%1 → right").arg(syncDirsDialog.copyRightCount)
+                        active: syncDirsDialog.quickFocusFilter === "copy_right"
+                        onClicked: syncDirsDialog.toggleQuickFocus("copy_right")
+                    }
+
+                    Text { text: "·"; font.pixelSize: 12; color: p.textDim }
+
+                    FilterPill {
+                        label: qsTr("%1 ← left").arg(syncDirsDialog.copyLeftCount)
+                        active: syncDirsDialog.quickFocusFilter === "copy_left"
+                        onClicked: syncDirsDialog.toggleQuickFocus("copy_left")
+                    }
+
+                    Text { text: "·"; font.pixelSize: 12; color: p.textDim }
+
+                    // Warning-highlighted overwrite counter pill
+                    Rectangle {
+                        id: overwriteSummaryPill
+                        objectName: "syncOverwriteFilterBtn"
+                        implicitHeight: 24
+                        implicitWidth: owPillText.implicitWidth + 14
+                        radius: win.smallRadius
+                        color: syncDirsDialog.quickFocusFilter === "overwrites"
+                               ? Qt.alpha(p.warningText, win.isDark ? 0.28 : 0.22)
+                               : (owPillMouse.containsMouse ? p.btnHoverBg
+                                  : (syncDirsDialog.overwriteCount > 0 ? Qt.alpha(p.warningText, 0.12) : p.cardBg))
+                        border.width: 1
+                        border.color: syncDirsDialog.quickFocusFilter === "overwrites" || syncDirsDialog.overwriteCount > 0
+                                      ? p.warningText : p.borderDefault
+
+                        Text {
+                            id: owPillText
+                            anchors.centerIn: parent
+                            text: qsTr("%1 overwrite(s)").arg(syncDirsDialog.overwriteCount)
+                            font.pixelSize: 11
+                            font.weight: (syncDirsDialog.quickFocusFilter === "overwrites" || syncDirsDialog.overwriteCount > 0)
+                                         ? Font.DemiBold : Font.Normal
+                            color: syncDirsDialog.overwriteCount > 0 || syncDirsDialog.quickFocusFilter === "overwrites"
+                                   ? p.warningText : p.textSecondary
+                        }
+
+                        MouseArea {
+                            id: owPillMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: syncDirsDialog.toggleQuickFocus("overwrites")
+                        }
+
+                        ToolTip.visible: owPillMouse.containsMouse
+                        ToolTip.delay: 350
+                        ToolTip.text: qsTr("Show only files that will overwrite an existing target")
+                    }
+
+                    Text { text: "·"; font.pixelSize: 12; color: p.textDim }
+
+                    FilterPill {
+                        label: qsTr("%1 conflict(s)").arg(syncDirsDialog.conflictCount)
+                        active: syncDirsDialog.quickFocusFilter === "conflicts"
+                        onClicked: syncDirsDialog.toggleQuickFocus("conflicts")
+                    }
+
+                    Text { text: "·"; font.pixelSize: 12; color: p.textDim }
+
+                    FilterPill {
+                        label: qsTr("%1 equal").arg(syncDirsDialog.equalCount)
+                        active: syncDirsDialog.quickFocusFilter === "equal"
+                        onClicked: syncDirsDialog.toggleQuickFocus("equal")
+                    }
+
+                    ToolbarBtn {
+                        visible: syncDirsDialog.quickFocusFilter !== "all"
+                        implicitHeight: 22
+                        label: qsTr("Show all")
+                        accentHighlight: true
+                        onClicked: {
+                            syncDirsDialog.quickFocusFilter = "all";
+                            syncDirsDialog.rebuildVisible();
+                        }
+                    }
+
+                    Item { Layout.fillWidth: true }
+
+                    Text {
+                        text: qsTr("Click badge to override")
+                        font.pixelSize: 10
+                        color: p.textDim
+                    }
                 }
             }
 
@@ -12490,6 +12897,26 @@ ApplicationWindow {
                                         if (modelData && modelData.syncIdx !== undefined)
                                             syncDirsDialog.cycleAction(modelData.syncIdx);
                                     }
+                                }
+                            }
+
+                            Rectangle {
+                                visible: syncDirsDialog.isOverwriteItem(modelData)
+                                implicitHeight: 20
+                                implicitWidth: owRowTag.implicitWidth + 10
+                                radius: 3
+                                color: Qt.alpha(p.warningText, 0.16)
+                                border.width: 1
+                                border.color: Qt.alpha(p.warningText, 0.55)
+
+                                Text {
+                                    id: owRowTag
+                                    anchors.centerIn: parent
+                                    text: qsTr("OVERWRITE")
+                                    font.pixelSize: 9
+                                    font.bold: true
+                                    font.family: "monospace"
+                                    color: p.warningText
                                 }
                             }
 

@@ -14,7 +14,7 @@
   <img src="https://img.shields.io/badge/C%2B%2B-20-00599C?logo=c%2B%2B&logoColor=white" alt="C++20">
   <img src="https://img.shields.io/badge/Platform-Linux-FCC624?logo=linux&logoColor=black" alt="Linux">
   <img src="https://img.shields.io/badge/CLI-twinforge%20%7C%20tf-00B4D8" alt="CLI twinforge / tf">
-  <img src="https://img.shields.io/badge/Tests-65%20Passing-success" alt="Tests 65 Passing">
+  <a href="https://github.com/radunicula/twinforge/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/Tests-66%20Verified%20(0%20Skipped%2C%20Cross--FS%20Active)-success" alt="Tests Verified in CI"></a>
   <img src="https://img.shields.io/badge/License-GPLv3-blue" alt="License GPL-3.0">
   <a href="https://revolut.me/radunicula"><img src="https://img.shields.io/badge/Donate-Revolut-0075EB?logo=revolut&logoColor=white" alt="Donate via Revolut"></a>
 </p>
@@ -72,7 +72,7 @@ sudo apt install build-essential qmake6 qt6-base-dev qt6-declarative-dev libqt6s
 git clone https://github.com/radunicula/twinforge.git
 cd twinforge
 ./bin/build   # Produces ./build/twinforge (and ./build/tf alias)
-./bin/test    # Runs the 65 automated headless tests
+./bin/test    # Runs the automated headless test suite (0 skipped, including cross-FS move)
 ```
 
 ---
@@ -83,6 +83,7 @@ cd twinforge
 - **Obsidian Carbon (Dark) & Alabaster Daylight (Light):** Instant dark/light palette switching (<kbd>Ctrl+Shift+T</kbd> or header toggle) with semantic badges, custom-themed controls (`AppCheckBox`, `AppComboBox`, `AppProgressBar`, `AppMenu`, slim `AppScrollBar`), smooth micro-animations, and live Omarchy / Hyprland accent synchronization.
 - **Vibrant Multi-Tone SVG Iconography:** Cohesive gradient vector icons for folders, file types, drives, cloud mounts, bookmarks, filters, disk usage analytics, and toolbar actions — sharp at every DPI in both Dark and Light themes.
 - **Resizable Dual-Panel Splitter & Clean Empty States:** Drag the central splitter handle to adjust panel width (`22%–78%`) or double-click to reset `50/50`, with an animated top accent indicator on the active panel, an **Active Workspace** pill in the header, and helpful empty-state hints.
+- **Quick Action Bar & Adaptive Sub-Bar:** Bottom <kbd>F5</kbd>/<kbd>F6</kbd> buttons dynamically indicate target direction and folder name (`Copy to Backup →` / `← Move to Source`, with full path tooltips), shortcuts share a single source of truth across toolbar/menus/<kbd>F1</kbd> help (`Ctrl+Shift+P` Command Palette, `Ctrl+P` Quick Jump), and the Bookmarks bar gracefully collapses overflowing chips into a `⋯` menu.
 
 ### ⚡ Power-User Productivity
 - **Command Palette (<kbd>Ctrl+Shift+P</kbd>) & Quick Jump (<kbd>Ctrl+P</kbd>):** Fuzzy-searchable action launcher and instant folder jump powered by bookmarks, tab/visit history, and `zoxide` frecency integration.
@@ -95,7 +96,7 @@ cd twinforge
 ### 🔍 Search, Compare & Disk Space Analysis
 - **Async Content & RegEx Search (<kbd>Alt+F7</kbd>) + Feed to Panel:** Background search with live cancellation, file content / RegEx matching, size range, modification date, and type filters, plus **Feed to Panel** to send results into a virtual tab for selection, copying, or multi-rename.
 - **Disk Usage Bars & Analyzer (<kbd>Ctrl+Shift+D</kbd>):** Proportional usage bars rendered directly behind the Size column and recursive directory space breakdown (`Alt+Shift+Enter` to calculate all folder sizes).
-- **Recursive Directory Synchronization (<kbd>Ctrl+Shift+S</kbd>):** Compare left and right directory trees by Date & Size or SHA-256 hash, review directional actions (`→`, `←`, `≠`, `=`), and synchronize in one click.
+- **Recursive Directory Synchronization (<kbd>Ctrl+Shift+S</kbd>):** Compare left and right directory trees by Date & Size or SHA-256 hash, inspect the clickable pre-execution summary (`N → right · N ← left · N overwrite(s) · N conflict(s)` — click `overwrites` to filter directly to files being replaced), review `OVERWRITE` badges and directional arrows, and synchronize in one click.
 - **Duplicate File Finder (<kbd>Ctrl+Shift+F7</kbd>):** Two-stage size + SHA-256 hash grouping across folders to locate and clean up duplicate files safely.
 
 ### 🚀 Transfers, Next-Gen Previews & Multi-Rename
@@ -219,7 +220,7 @@ Binary will be created at `./build/twinforge` (with `./build/tf` symlink alias).
 ```bash
 ./bin/test
 ```
-Runs the full automated test suite (**65 test cases**) verifying file operations, operation queue/pause/resume, non-blocking async workers & cancellation, persistent user preferences & live language switching, batch checksum generation/verification, Freedesktop thumbnail cache compliance, CLI parsing & Single-Instance IPC, locked tabs & tab management, dual-panel workspaces, Freedesktop Trash (`trash://`) restore/delete/empty, multi-character type-ahead quick jump, async command runner with built-in `cd` & history, file split/combine with SHA-256 verification, next-gen previews, RegEx multi-rename, Google Drive (`rclone`), remote URIs, XDG Open With/Custom Actions, search, sync, duplicate finder, undo stack, git tracking, diffing, permissions, and full QML UI loading without errors.
+Runs the full automated test suite (**66 test cases** on CI & local with **0 skipped**, verified across distinct filesystems via `TWINFORGE_XDEV_SRC_DIR`) covering file operations, cross-filesystem move cleanup, operation queue/pause/resume, non-blocking async workers & cancellation, persistent user preferences & live language switching, batch checksum generation/verification, directional UI actions & sync overwrite filters, Freedesktop thumbnail cache compliance, CLI parsing & Single-Instance IPC, locked tabs & tab management, dual-panel workspaces, Freedesktop Trash (`trash://`) restore/delete/empty, multi-character type-ahead quick jump, async command runner with built-in `cd` & history, file split/combine with SHA-256 verification, next-gen previews, RegEx multi-rename, Google Drive (`rclone`), remote URIs, XDG Open With/Custom Actions, search, sync, duplicate finder, undo stack, git tracking, diffing, permissions, and full QML UI loading without errors. Live per-run results (`Passed` / `Failed` / `Skipped` / Qt version) are published in the [CI workflow Step Summary](https://github.com/radunicula/twinforge/actions/workflows/ci.yml).
 
 ---
 

@@ -17,6 +17,7 @@
 #include <QUrl>
 #include <QtTest>
 
+#include <memory>
 #include <sys/stat.h>
 
 #include "backend.h"
@@ -410,22 +411,38 @@ private slots:
 
     void moveAcrossFilesystemsCopiesThenRemovesSource()
     {
-        QTemporaryDir src; // usually /tmp (tmpfs)
-        QTemporaryDir dst(QDir::currentPath() + "/omapanel-xdev-XXXXXX");
+        QTemporaryDir dst(QDir::currentPath() + "/twinforge-xdev-dst-XXXXXX");
+        QVERIFY(dst.isValid());
         struct stat a{}, b{};
-        QVERIFY(::stat(QFile::encodeName(src.path()).constData(), &a) == 0);
         QVERIFY(::stat(QFile::encodeName(dst.path()).constData(), &b) == 0);
-        if (a.st_dev == b.st_dev)
+
+        auto tryCandidateRoot = [&](const QString &baseRoot) -> std::unique_ptr<QTemporaryDir> {
+            if (baseRoot.isEmpty() || !QFileInfo(baseRoot).isDir() || !QFileInfo(baseRoot).isWritable())
+                return nullptr;
+            auto cand = std::make_unique<QTemporaryDir>(QDir(baseRoot).filePath("twinforge-xdev-src-XXXXXX"));
+            if (!cand->isValid())
+                return nullptr;
+            if (::stat(QFile::encodeName(cand->path()).constData(), &a) == 0 && a.st_dev != b.st_dev)
+                return cand;
+            return nullptr;
+        };
+
+        std::unique_ptr<QTemporaryDir> src = tryCandidateRoot(qEnvironmentVariable("TWINFORGE_XDEV_SRC_DIR"));
+        if (!src)
+            src = tryCandidateRoot(QDir::tempPath());
+        if (!src)
+            src = tryCandidateRoot(QStringLiteral("/dev/shm"));
+        if (!src)
             QSKIP("Source and destination are on the same filesystem");
 
-        QDir(src.path()).mkpath("folder/sub");
-        writeFile(src.filePath("folder/sub/f.txt"), "content");
-        QVERIFY(QFile::link("sub/f.txt", src.filePath("folder/link")));
+        QDir(src->path()).mkpath("folder/sub");
+        writeFile(src->filePath("folder/sub/f.txt"), "content");
+        QVERIFY(QFile::link("sub/f.txt", src->filePath("folder/link")));
 
-        FileOperation op(FileOperation::Move, {src.filePath("folder")}, dst.path());
+        FileOperation op(FileOperation::Move, {src->filePath("folder")}, dst.path());
         op.run();
         QCOMPARE(op.completedCount(), 1);
-        QVERIFY(!QFileInfo::exists(src.filePath("folder")));
+        QVERIFY(!QFileInfo::exists(src->filePath("folder")));
         QCOMPARE(readFile(dst.filePath("folder/sub/f.txt")), QByteArray("content"));
         QCOMPARE(FileOperation::readRawSymLink(QFileInfo(dst.filePath("folder/link"))), QString("sub/f.txt"));
     }
@@ -3221,6 +3238,118 @@ private slots:
         backend.cancelBatchChecksum();
         QCOMPARE(backend.batchChecksumRunning(), false);
         QTest::qWait(80);
+    }
+
+    void uiDirectionalKeysShortcutsAndSyncFilters()
+    {
+        QTemporaryDir root;
+        QTemporaryDir cfg;
+        QVERIFY(root.isValid());
+        QVERIFY(cfg.isValid());
+
+        const QString leftDir = root.filePath("SourceDocs");
+        const QString rightDir = root.filePath("BackupVideos");
+        QVERIFY(QDir().mkpath(leftDir));
+        QVERIFY(QDir().mkpath(rightDir));
+
+        Theme theme(cfg.path());
+        Translator translator(cfg.filePath("language"), cfg.path());
+        Backend backend(cfg.filePath("bookmarks.json"));
+        backend.leftPanel()->setPath(leftDir);
+        backend.rightPanel()->setPath(rightDir);
+        backend.setActivePanel(0);
+
+        QQmlApplicationEngine engine;
+        engine.addImageProvider(QStringLiteral("thumb"), new ThumbnailProvider());
+        engine.rootContext()->setContextProperty("theme", &theme);
+        engine.rootContext()->setContextProperty("backend", &backend);
+        engine.rootContext()->setContextProperty("translator", &translator);
+        engine.load(QUrl(QStringLiteral("qrc:/Main.qml")));
+        QVERIFY(!engine.rootObjects().isEmpty());
+
+        QObject *rootObj = engine.rootObjects().first();
+        auto *win = qobject_cast<QQuickWindow *>(rootObj);
+        QVERIFY(win != nullptr);
+
+        // 1. Directional F5 / F6 labels & full-path tooltips
+        QObject *f5Btn = rootObj->findChild<QObject *>(QStringLiteral("f5KeyBtn"));
+        QObject *f6Btn = rootObj->findChild<QObject *>(QStringLiteral("f6KeyBtn"));
+        QVERIFY(f5Btn != nullptr);
+        QVERIFY(f6Btn != nullptr);
+        QCOMPARE(f5Btn->property("actionLabel").toString(), QStringLiteral("Copy to BackupVideos →"));
+        QCOMPARE(f6Btn->property("actionLabel").toString(), QStringLiteral("Move to BackupVideos →"));
+        QVERIFY(f5Btn->property("tooltipText").toString().contains(rightDir));
+
+        backend.switchPanel();
+        QCOMPARE(backend.activePanel(), 1);
+        QCOMPARE(f5Btn->property("actionLabel").toString(), QStringLiteral("← Copy to SourceDocs"));
+        QCOMPARE(f6Btn->property("actionLabel").toString(), QStringLiteral("← Move to SourceDocs"));
+        QVERIFY(f6Btn->property("tooltipText").toString().contains(leftDir));
+
+        // 2. Single source of truth for shortcuts (Palette must advertise Ctrl+Shift+P, not Ctrl+P)
+        const QVariantMap shortcutsMap = rootObj->property("shortcuts").toMap();
+        QCOMPARE(shortcutsMap.value(QStringLiteral("commandPalette")).toString(), QStringLiteral("Ctrl+Shift+P"));
+        QCOMPARE(shortcutsMap.value(QStringLiteral("quickJump")).toString(), QStringLiteral("Ctrl+P"));
+
+        QObject *paletteBtn = rootObj->findChild<QObject *>(QStringLiteral("paletteToolbarBtn"));
+        QVERIFY(paletteBtn != nullptr);
+        QCOMPARE(paletteBtn->property("shortcutHint").toString(), QStringLiteral("Ctrl+Shift+P"));
+
+        // 3. Sync pre-execution summary counts & clickable overwrite focus filter
+        QObject *syncDlg = rootObj->findChild<QObject *>(QStringLiteral("syncDirsDialog"));
+        QVERIFY(syncDlg != nullptr);
+
+        QVariantList rows;
+        auto mkRow = [](const QString &rel, bool lEx, bool rEx, const QString &st, const QString &act) {
+            QVariantMap m;
+            m["relPath"] = rel;
+            m["leftPath"] = "/tmp/l/" + rel;
+            m["rightPath"] = "/tmp/r/" + rel;
+            m["leftExists"] = lEx;
+            m["rightExists"] = rEx;
+            m["leftFormattedSize"] = lEx ? QStringLiteral("10 B") : QString();
+            m["rightFormattedSize"] = rEx ? QStringLiteral("12 B") : QString();
+            m["leftModified"] = QStringLiteral("2026-11-20 10:00");
+            m["rightModified"] = QStringLiteral("2026-11-20 09:00");
+            m["status"] = st;
+            m["action"] = act;
+            return m;
+        };
+        rows << mkRow("new_on_left.txt", true, false, "left_only", "copy_to_right")
+             << mkRow("overwrite_right.txt", true, true, "left_newer", "copy_to_right")
+             << mkRow("overwrite_left.txt", true, true, "right_newer", "copy_to_left")
+             << mkRow("conflict.txt", true, true, "different", "skip")
+             << mkRow("same.txt", true, true, "equal", "skip");
+
+        QVERIFY(QMetaObject::invokeMethod(syncDlg, "applyCompareResults", Q_ARG(QVariant, QVariant::fromValue(rows))));
+        QCOMPARE(syncDlg->property("copyRightCount").toInt(), 2);
+        QCOMPARE(syncDlg->property("copyLeftCount").toInt(), 1);
+        QCOMPARE(syncDlg->property("overwriteCount").toInt(), 2);
+        QCOMPARE(syncDlg->property("conflictCount").toInt(), 1);
+        QCOMPARE(syncDlg->property("equalCount").toInt(), 1);
+        QCOMPARE(syncDlg->property("visibleItems").toList().size(), 4);
+
+        QVERIFY(QMetaObject::invokeMethod(syncDlg, "toggleQuickFocus", Q_ARG(QVariant, QStringLiteral("overwrites"))));
+        QCOMPARE(syncDlg->property("quickFocusFilter").toString(), QStringLiteral("overwrites"));
+        const QVariantList owItems = syncDlg->property("visibleItems").toList();
+        QCOMPARE(owItems.size(), 2);
+        QCOMPARE(owItems.at(0).toMap().value("relPath").toString(), QStringLiteral("overwrite_right.txt"));
+        QCOMPARE(owItems.at(1).toMap().value("relPath").toString(), QStringLiteral("overwrite_left.txt"));
+
+        // 4. Adaptive bookmarks bar overflows gracefully on narrow width
+        for (int i = 0; i < 12; ++i) {
+            const QString bDir = root.filePath(QStringLiteral("ProjectFolder_%1").arg(i));
+            QVERIFY(QDir().mkpath(bDir));
+            if (!backend.isBookmarked(bDir))
+                backend.toggleBookmark(bDir);
+        }
+        win->setWidth(880);
+        win->setHeight(620);
+
+        QQuickItem *bmStrip = rootObj->findChild<QQuickItem *>(QStringLiteral("bookmarksStrip"));
+        QVERIFY(bmStrip != nullptr);
+        QTRY_VERIFY_WITH_TIMEOUT(bmStrip->property("overflowBookmarks").toList().size() > 0, 2000);
+        QVERIFY(bmStrip->property("visibleBookmarkCount").toInt() < backend.bookmarks().size());
     }
 };
 

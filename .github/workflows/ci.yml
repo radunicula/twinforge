@@ -55,7 +55,49 @@ jobs:
       - name: Build TwinForge
         run: ./bin/build
 
-      - name: Run Automated Test Suite (63 tests)
+      - name: Run Automated Test Suite (with Cross-FS Verification)
         env:
           QT_QPA_PLATFORM: offscreen
-        run: ./bin/test
+        run: |
+          set -o pipefail
+          XDEV_SRC="/dev/shm"
+          CREATED_MNT=""
+          if [ "$(stat -c %d "$XDEV_SRC")" = "$(stat -c %d "$PWD")" ]; then
+            CREATED_MNT="/tmp/twinforge-xdev-mnt"
+            sudo mkdir -p "$CREATED_MNT"
+            sudo mount -t tmpfs -o size=16m tmpfs "$CREATED_MNT"
+            sudo chmod 1777 "$CREATED_MNT"
+            XDEV_SRC="$CREATED_MNT"
+          fi
+          export TWINFORGE_XDEV_SRC_DIR="$XDEV_SRC"
+
+          cleanup_mnt() {
+            if [ -n "$CREATED_MNT" ]; then
+              sudo umount "$CREATED_MNT" || true
+              sudo rmdir "$CREATED_MNT" || true
+            fi
+          }
+          trap cleanup_mnt EXIT
+
+          ./bin/test | tee test_output.log
+
+          TOTALS_LINE=$(grep -m1 "Totals:" test_output.log || true)
+          PASSED=$(echo "$TOTALS_LINE" | sed -n 's/.*Totals: \([0-9]*\) passed.*/\1/p')
+          FAILED=$(echo "$TOTALS_LINE" | sed -n 's/.*passed, \([0-9]*\) failed.*/\1/p')
+          SKIPPED=$(echo "$TOTALS_LINE" | sed -n 's/.*failed, \([0-9]*\) skipped.*/\1/p')
+          QT_CONFIG=$(grep -m1 "Config: Using QtTest library" test_output.log || true)
+
+          echo "### TwinForge Automated Test Report" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Metric | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| :--- | :--- |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Environment | \`${QT_CONFIG}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Passed | **${PASSED:-0}** |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Failed | **${FAILED:-0}** |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Skipped | **${SKIPPED:-0}** |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Cross-FS Source | \`${XDEV_SRC}\` (dev \`$(stat -c %d "$XDEV_SRC")\` != workspace dev \`$(stat -c %d "$PWD")\`) |" >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "${SKIPPED:-1}" -ne 0 ] || [ "${FAILED:-1}" -ne 0 ]; then
+            echo "::error::Expected 0 skipped and 0 failed tests (got passed=$PASSED, failed=$FAILED, skipped=$SKIPPED)"
+            exit 1
+          fi
